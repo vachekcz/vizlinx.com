@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vizlinx — 5 způsobů zobrazení vazeb</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f1f1f0;
+        color: #151515;
+        font-family: Arial, sans-serif;
+      }
+      header,
+      main,
+      footer {
+        max-width: 1540px;
+        margin: auto;
+        padding: 32px;
+      }
+      header {
+        padding-top: 50px;
+      }
+      .brand {
+        font-weight: 750;
+        letter-spacing: -1px;
+        font-size: 24px;
+        text-decoration: none;
+        color: inherit;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #666;
+        margin: 38px 0 12px;
+      }
+      h1 {
+        font-size: clamp(30px, 4vw, 54px);
+        letter-spacing: -2px;
+        font-weight: 550;
+        margin: 0;
+      }
+      header > p:last-child {
+        color: #656565;
+        line-height: 1.7;
+        max-width: 640px;
+        font-size: 15px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        padding-top: 8px;
+      }
+      article {
+        border: 1px solid #d7d7d3;
+        border-radius: 12px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .preview {
+        display: block;
+        background: #fff;
+        border-bottom: 1px solid #ddd;
+      }
+      .preview img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .card-body {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 24px;
+      }
+      .number {
+        font-size: 12px;
+        color: #929292;
+        padding-top: 5px;
+      }
+      h2 {
+        font-size: 22px;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+      }
+      .card-body p {
+        font-size: 12px;
+        color: #777;
+        line-height: 1.6;
+        margin: 9px 0 16px;
+      }
+      .links {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .links a {
+        font-size: 11px;
+        color: #333;
+        text-decoration: none;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 3px;
+      }
+      .swatches {
+        display: flex;
+        margin-left: auto;
+        padding-top: 4px;
+      }
+      .swatches i {
+        display: block;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        border: 1px solid #9995;
+        margin-left: -3px;
+      }
+      footer {
+        font-size: 12px;
+        color: #888;
+        padding-top: 0;
+        padding-bottom: 50px;
+      }
+      a:focus-visible {
+        outline: 3px solid #2457ff;
+        outline-offset: 3px;
+      }
+      @media (max-width: 850px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        header,
+        main,
+        footer {
+          padding: 22px;
+        }
+        header {
+          padding-top: 30px;
+        }
+        .card-body {
+          padding: 20px;
+        }
+        .swatches {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">vizlinx.</a>
+      <p class="eyebrow">INTERAKTIVNÍ STUDIE / 01–05</p>
+      <h1>Jak silně jsou weby propojené?</h1>
+      <p>
+        Pět způsobů, jak zobrazit sílu a směr vazeb. V každé variantě můžete
+        domény chytit a odtáhnout od sebe. Zobrazení rozlišuje až pět odkazů,
+        silnější vazby označuje 5+. Přesný počet zůstává v detailu. Vyzkoušejte
+        denní Signal i noční Midnight.
+      </p>
+    </header>
+    <main>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=signal&connections=strands"
+          aria-label="Vyzkoušet Vlákna"
+          ><img
+            src="strands.png"
+            alt="Zobrazení vazeb Vlákna"
+            width="1600"
+            height="1160"
+        /></a>
+        <div class="card-body">
+          <span class="number">01</span>
+          <div>
+            <h2>Vlákna</h2>
+            <p>Až pět jemných souběžných čar. Každý odkaz má vlastní šipku.</p>
+            <div class="links">
+              <a href="/?theme=signal&connections=strands">Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=strands"
+                >Vyzkoušet v noci ↗</a
+              ><a href="strands.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=signal&connections=fan"
+          aria-label="Vyzkoušet Vějíř"
+          ><img
+            src="fan.png"
+            alt="Zobrazení vazeb Vějíř"
+            width="1600"
+            height="1160"
+        /></a>
+        <div class="card-body">
+          <span class="number">02</span>
+          <div>
+            <h2>Vějíř</h2>
+            <p>
+              Odkazy se rozbíhají do samostatných oblouků. Silná vazba zabere
+              více prostoru.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=fan">Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=fan">Vyzkoušet v noci ↗</a
+              ><a href="fan.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=signal&connections=ribbon"
+          aria-label="Vyzkoušet Pásy"
+          ><img
+            src="ribbon.png"
+            alt="Zobrazení vazeb Pásy"
+            width="1600"
+            height="1160"
+        /></a>
+        <div class="card-body">
+          <span class="number">03</span>
+          <div>
+            <h2>Pásy</h2>
+            <p>
+              Šířka barevného pásu vyjadřuje sílu vazby. Šipka ukazuje směr.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=ribbon">Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=ribbon"
+                >Vyzkoušet v noci ↗</a
+              ><a href="ribbon.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=signal&connections=pulses"
+          aria-label="Vyzkoušet Proud"
+          ><img
+            src="pulses.png"
+            alt="Zobrazení vazeb Proud"
+            width="1600"
+            height="1160"
+        /></a>
+        <div class="card-body">
+          <span class="number">04</span>
+          <div>
+            <h2>Proud</h2>
+            <p>
+              Výrazné směrové značky vedou oko po vazbě. Více odkazů zesiluje
+              proud.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=pulses">Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=pulses"
+                >Vyzkoušet v noci ↗</a
+              ><a href="pulses.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=signal&connections=metro"
+          aria-label="Vyzkoušet Metro"
+          ><img
+            src="metro.png"
+            alt="Zobrazení vazeb Metro"
+            width="1600"
+            height="1160"
+        /></a>
+        <div class="card-body">
+          <span class="number">05</span>
+          <div>
+            <h2>Metro</h2>
+            <p>
+              Oddělené přerušované linky s klidnějšími ohyby. Každý směr má
+              vlastní svazek.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=metro">Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=metro"
+                >Vyzkoušet v noci ↗</a
+              ><a href="metro.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+    </main>
+    <footer>
+      Tažení domény mění její polohu, tažení pozadí posouvá mapu. Návrat do
+      přehledu obnoví rozložení. Po výběru domény ji lze posouvat i šipkami na
+      klávesnici.
+    </footer>
+  </body>
+</html>

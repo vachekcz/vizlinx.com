@@ -35,11 +35,21 @@ import {
 } from './data';
 import type { Selection } from './data';
 import { useTheme } from './themes';
+import { connectionStyles } from './connectionStyles';
+import type { ConnectionStyleId } from './connectionStyles';
 
 const scannedSites = sites.filter((site) => site.scanned);
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const [connectionStyle, setConnectionStyle] = useState<ConnectionStyleId>(
+    () =>
+      connectionStyles.find(
+        (style) =>
+          style.id ===
+          new URLSearchParams(window.location.search).get('connections'),
+      )?.id ?? 'strands',
+  );
   const [view, setView] = useState<'map' | 'table'>('map');
   const [selection, setSelection] = useState<Selection | null>({
     type: 'site',
@@ -424,6 +434,41 @@ export default function App() {
                   : 'Simulace pozastavena'}
             </div>
           </div>
+          <section
+            className="connection-studies"
+            aria-label="Varianty zobrazení vazeb"
+          >
+            <div className="connection-studies-heading">
+              <strong>Jak zobrazit sílu vazeb?</strong>
+              <a href="/connections/">
+                Porovnat 5 návrhů <ArrowRight size={13} />
+              </a>
+            </div>
+            <div className="connection-style-options">
+              {connectionStyles.map((style, index) => (
+                <button
+                  key={style.id}
+                  aria-pressed={style.id === connectionStyle}
+                  onClick={() => {
+                    setConnectionStyle(style.id);
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('connections', style.id);
+                    window.history.replaceState(null, '', url);
+                  }}
+                >
+                  <span>0{index + 1}</span>
+                  {style.name}
+                </button>
+              ))}
+            </div>
+            <p>
+              {
+                connectionStyles.find((style) => style.id === connectionStyle)
+                  ?.description
+              }{' '}
+              Domény lze přetahovat; přesný počet vazeb najdete v detailu.
+            </p>
+          </section>
           <div className={`explorer ${selection ? 'with-inspector' : ''}`}>
             <section
               className="map-workspace"
@@ -477,6 +522,7 @@ export default function App() {
                   onExpandedChange={setExpanded}
                   running={running}
                   resetKey={resetKey}
+                  connectionStyle={connectionStyle}
                 />
               ) : (
                 <div className="table-view">

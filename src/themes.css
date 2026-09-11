@@ -341,3 +341,87 @@
 body {
   background: var(--app-bg);
 }
+
+.connection-studies {
+  margin: 0 0 18px;
+  padding: 15px 17px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.connection-studies-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.connection-studies-heading strong {
+  font-size: 12px;
+}
+.connection-studies-heading a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+}
+.connection-style-options {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.connection-style-options button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.connection-style-options button span {
+  opacity: 0.55;
+  font-size: 9px;
+}
+.connection-style-options button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+.connection-studies p {
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+.graph .site-hit {
+  cursor: grab;
+}
+.graph.is-dragging .site-hit {
+  cursor: grabbing;
+}
+@media (max-width: 760px) {
+  .connection-studies {
+    padding: 12px;
+  }
+  .connection-studies-heading {
+    align-items: flex-start;
+  }
+  .connection-studies-heading a {
+    font-size: 9px;
+    white-space: nowrap;
+  }
+  .connection-style-options {
+    gap: 6px;
+  }
+  .connection-style-options button {
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+  .map-hint {
+    padding: 0 8px;
+    text-align: center;
+  }
+}

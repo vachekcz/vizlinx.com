@@ -12,6 +12,8 @@ První interaktivní grafické demo v Reactu a TypeScriptu. Pět ukázkových we
 
 **Vzhled:** Signal pro denní režim, Midnight pro noční. Přepínač měsíce/slunce v hlavičce ukládá ruční volbu v prohlížeči; bez ní vzhled sleduje nastavení systému. [Denní demo](https://vizlinx.com/?theme=signal), [noční demo s 20 stránkami](https://vizlinx.com/?theme=midnight&detail=index). [Původních pět mockupů](https://vizlinx.com/palettes/) zůstává jako archiv návrhů.
 
+**Interaktivní varianty vazeb:** [pět návrhů k porovnání](https://vizlinx.com/connections/) — Vlákna, Vějíř, Pásy, Proud a Metro. V demu lze přepínat styl, přetahovat domény myší i dotykem a sledovat průběžné přepočítání spojnic. Mapa ukazuje sílu do pěti vazeb, vyšší počet označuje `5+`; detail zachovává přesný počet.
+
 **První milník je grafické demo:** interaktivní mapa s ukázkovými daty, na které doladíme vzhled, rozložení a ovládání. Z tohoto základu pak vyjde funkční aplikace. Skener, rozšíření a backend následují až po doladění dema. Rozsah a kritéria jsou v [produktovém zadání](docs/product-specification.md#první-milník-grafické-demo).
 
 ## Spuštění
@@ -27,7 +29,7 @@ Lokální demo: http://127.0.0.1:5173. Pro lokální prohlížení není potřeb
 
 ## Ovládání dema
 
-- Klik na doménu otevře detail; dvojklik nebo „Prozkoumat stránky“ rozbalí její stránky.
+- Klik na doménu otevře detail; dvojklik nebo „Prozkoumat stránky“ rozbalí její stránky. Tažení domény mění její polohu, tažení pozadí posouvá celou mapu. Po zaměření domény klávesou Tab ji posouvají šipky (Shift zvětší krok). Přehled obnoví výchozí rozložení.
 - Klik na číslo nebo čáru propojení zobrazí směrové vazby. Výběr konkrétní vazby odhalí zdrojovou i cílovou URL a metadata.
 - Mapa podporuje tažení, zoom kolečkem a tlačítky, automatické zobrazení stránek při přiblížení a návrat do přehledu. Uzly a vazby lze vybrat i klávesnicí.
 - „Ukázka: 20 stránek“ otevře zvětšený cluster `index.example`. Karty jsou rozmístěné podle počtu stránek a velikosti obrazovky. Pohled ukazuje vazby této domény; výběr stránky zvýrazní její spojnice a ostatní ztlumí. „Přehled“ obnoví celou mapu.

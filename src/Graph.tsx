@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { aggregateConnections, pages } from './data';
 import type { Link, Page, Selection, Site } from './data';
+import ConnectionStroke from './ConnectionStroke';
+import type { ConnectionStyleId } from './connectionStyles';
 
 type Props = {
   sites: Site[];
@@ -20,6 +22,7 @@ type Props = {
   onExpandedChange: (ids: string[]) => void;
   running: boolean;
   resetKey: number;
+  connectionStyle: ConnectionStyleId;
 };
 
 function activate(event: KeyboardEvent<SVGGElement>, action: () => void) {
@@ -61,12 +64,22 @@ export default function Graph({
   onExpandedChange,
   running,
   resetKey,
+  connectionStyle,
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const [dragging, setDragging] = useState(false);
-  const drag = useRef<{ x: number; y: number } | null>(null);
+  const [positions, setPositions] = useState<
+    Record<string, { x: number; y: number }>
+  >({});
+  const drag = useRef<{
+    x: number;
+    y: number;
+    pointerId: number;
+    siteId?: string;
+  } | null>(null);
+  const dragged = useRef(false);
   const autoExpanded = camera.zoom >= 1.65;
   const isExpanded = (id: string) => expanded.includes(id) || autoExpanded;
   const connections = aggregateConnections(links);
@@ -85,7 +98,7 @@ export default function Graph({
     index: [460, 565],
     archive: [300, 710],
   };
-  const sites = inputSites.map((site) =>
+  const layoutSites = inputSites.map((site) =>
     denseSite
       ? (() => {
           if (site.id === denseSite.id)
@@ -125,6 +138,23 @@ export default function Graph({
           }
         : site,
   );
+
+  const sites = layoutSites.map((site) => ({
+    ...site,
+    x: site.x + (positions[site.id]?.x ?? 0),
+    y: site.y + (positions[site.id]?.y ?? 0),
+  }));
+  const layoutKey = `${compact}:${denseSite?.id ?? 'overview'}`;
+  useEffect(() => {
+    setPositions({});
+  }, [resetKey, layoutKey]);
+
+  const moveSite = (id: string, dx: number, dy: number) => {
+    setPositions((previous) => ({
+      ...previous,
+      [id]: { x: (previous[id]?.x ?? 0) + dx, y: (previous[id]?.y ?? 0) + dy },
+    }));
+  };
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 760px)');
@@ -170,6 +200,7 @@ export default function Graph({
       zoom: Math.min(2.8, Math.max(0.6, previous.zoom * factor)),
     }));
   const reset = () => {
+    setPositions({});
     setCamera({ x: 0, y: 0, zoom: 1 });
     onExpandedChange([]);
   };
@@ -182,33 +213,50 @@ export default function Graph({
       : null;
   };
   const startDrag = (event: PointerEvent<SVGSVGElement>) => {
-    if (
-      event.button !== 0 ||
-      (event.target as Element).closest('[data-interactive]')
-    )
-      return;
+    if (event.button !== 0 || drag.current) return;
+    dragged.current = false;
+    const target = event.target as Element;
+    const siteId =
+      target.closest('[data-drag-site]')?.getAttribute('data-drag-site') ??
+      undefined;
+    if (!siteId && target.closest('[data-interactive]')) return;
     const point = pointFromEvent(event);
     if (!point) return;
-    drag.current = point;
-    setDragging(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = {
+      x: point.x,
+      y: point.y,
+      pointerId: event.pointerId,
+      siteId,
+    };
   };
   const moveDrag = (event: PointerEvent<SVGSVGElement>) => {
-    if (!drag.current) return;
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
     const point = pointFromEvent(event);
     if (!point) return;
-    const dx = point.x - drag.current.x;
-    const dy = point.y - drag.current.y;
-    setCamera((previous) => ({
-      ...previous,
-      x: previous.x + dx,
-      y: previous.y + dy,
-    }));
-    drag.current = point;
+    const dx = point.x - current.x;
+    const dy = point.y - current.y;
+    if (!dragged.current && Math.hypot(dx, dy) < 4) return;
+    if (!dragged.current)
+      event.currentTarget.setPointerCapture(event.pointerId);
+    dragged.current = true;
+    setDragging(true);
+    if (current.siteId)
+      moveSite(current.siteId, dx / camera.zoom, dy / camera.zoom);
+    else
+      setCamera((previous) => ({
+        ...previous,
+        x: previous.x + dx,
+        y: previous.y + dy,
+      }));
+    drag.current = { ...current, x: point.x, y: point.y };
   };
-  const stopDrag = () => {
+  const stopDrag = (event: PointerEvent<SVGSVGElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
     drag.current = null;
     setDragging(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   return (
@@ -235,11 +283,19 @@ export default function Graph({
         className={`graph ${dragging ? 'is-dragging' : ''}`}
         viewBox={compact ? `0 0 600 ${denseSite ? 1000 : 820}` : '0 0 1000 760'}
         aria-label="Interaktivní mapa odkazů mezi weby"
+        onClickCapture={(event) => {
+          if (dragged.current && event.detail !== 0) {
+            event.stopPropagation();
+            dragged.current = false;
+          }
+        }}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={stopDrag}
         onPointerCancel={stopDrag}
-        onLostPointerCapture={stopDrag}
+        onLostPointerCapture={(event) => {
+          if (event.target === event.currentTarget) stopDrag(event);
+        }}
       >
         <defs>
           {sites.map((site) => (
@@ -318,7 +374,7 @@ export default function Graph({
             )!;
             const dx = target.x - source.x;
             const dy = target.y - source.y;
-            const length = Math.hypot(dx, dy);
+            const length = Math.max(1, Math.hypot(dx, dy));
             const normal = { x: -dy / length, y: dx / length };
             const selected =
               selection?.type === 'connection' &&
@@ -385,6 +441,7 @@ export default function Graph({
             return (
               <g
                 key={connection.id}
+                data-connection={connection.id}
                 className={`connection ${selected || related ? 'is-related' : ''}`}
               >
                 {showPages ? (
@@ -458,21 +515,21 @@ export default function Graph({
                       )
                     }
                   >
-                    <path
-                      className="connection-line"
-                      d={curve}
-                      fill="none"
-                      stroke={source.color}
-                      strokeWidth={
-                        selected ? 3.5 : 1 + connection.links.length * 0.3
-                      }
-                      markerEnd={`url(#arrow-${source.id})`}
+                    <ConnectionStroke
+                      variant={connectionStyle}
+                      from={from}
+                      to={to}
+                      control={control}
+                      color={source.color}
+                      count={connection.links.length}
+                      selected={selected || related}
+                      markerId={`arrow-${source.id}`}
                     />
                     <path
                       d={curve}
                       fill="none"
                       stroke="transparent"
-                      strokeWidth="22"
+                      strokeWidth="12"
                     />
                     <rect
                       x={label.x - 12}
@@ -490,7 +547,9 @@ export default function Graph({
                       className="edge-count"
                       fill={source.color}
                     >
-                      {connection.links.length}
+                      {connection.links.length > 5
+                        ? '5+'
+                        : connection.links.length}
                     </text>
                   </g>
                 )}
@@ -541,8 +600,22 @@ export default function Graph({
                   aria-pressed={selected}
                   onClick={select}
                   onDoubleClick={toggle}
-                  onKeyDown={(event) => activate(event, select)}
+                  onKeyDown={(event) => {
+                    const direction: Record<string, [number, number]> = {
+                      ArrowLeft: [-1, 0],
+                      ArrowRight: [1, 0],
+                      ArrowUp: [0, -1],
+                      ArrowDown: [0, 1],
+                    };
+                    if (direction[event.key]) {
+                      event.preventDefault();
+                      const [dx, dy] = direction[event.key];
+                      const step = event.shiftKey ? 50 : 15;
+                      moveSite(site.id, dx * step, dy * step);
+                    } else activate(event, select);
+                  }}
                   className="site-hit"
+                  data-drag-site={site.id}
                 >
                   <circle
                     cx={site.x}
@@ -721,7 +794,7 @@ export default function Graph({
         <MousePointer2 size={12} />{' '}
         {denseSite
           ? `Zobrazeny vazby ${denseSite.domain}. Kliknutím vyberete stránku.`
-          : 'Tažením posunete mapu. Dvojklik rozbalí stránky.'}{' '}
+          : 'Táhněte domény od sebe. Pozadím posunete mapu. 5+ = více než 5 vazeb.'}{' '}
         <button onClick={reset} aria-label="Obnovit pohled">
           <RotateCcw size={12} />
         </button>
