@@ -27,12 +27,12 @@ test('loads all five mockups and opens a matching twenty-page demo', async ({
   });
   await page
     .locator('article')
-    .filter({ hasText: 'Carbon' })
-    .locator('a[href="/?theme=carbon&detail=index"]')
+    .filter({ hasText: 'Midnight' })
+    .locator('a[href="/?theme=midnight&detail=index"]')
     .click();
   await expect(page.locator('.app-shell')).toHaveAttribute(
     'data-theme',
-    'carbon',
+    'midnight',
   );
   await expect(
     page.getByRole('button', { name: /^Stránka index.example/ }),
@@ -304,36 +304,96 @@ test('fits all twenty index pages inside their cluster and explores the last pag
   await expect(nodes).toHaveCount(20);
 });
 
-test('switches through the five contrast palettes and preserves the map', async ({
+test('switches day and night without losing the map and remembers the choice', async ({
   page,
 }, testInfo) => {
-  await page.goto('/');
-  const variants = [
-    ['signal', 'Signal'],
-    ['carbon', 'Carbon'],
-    ['midnight', 'Midnight'],
-    ['electric', 'Electric'],
-    ['editorial', 'Editorial'],
-  ];
-  for (const [id, name] of variants) {
-    await page.getByRole('button', { name: 'Změnit barevnou paletu' }).click();
-    await page
-      .getByRole('dialog')
-      .getByRole('button', { name: new RegExp(`^${name}`) })
-      .click();
-    await expect(page.locator('.app-shell')).toHaveAttribute('data-theme', id);
-    await expect(page.getByTestId('link-count')).toHaveText('51');
-    await expect(page.getByRole('button', { name: /^Doména / })).toHaveCount(5);
-    await page.evaluate(() => document.fonts.ready);
-    if (testInfo.project.name === 'desktop')
-      await page.screenshot({
-        path: testInfo.outputPath(`${id}.png`),
-        fullPage: true,
-      });
-  }
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/?detail=index');
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'signal',
+  );
+  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'midnight',
+  );
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  await expect(
+    page.getByRole('button', { name: /^Stránka index.example/ }),
+  ).toHaveCount(20);
+  await expect(page.getByTestId('link-count')).toHaveText('51');
   await page.reload();
   await expect(page.locator('.app-shell')).toHaveAttribute(
     'data-theme',
-    'editorial',
+    'midnight',
+  );
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({
+    path: testInfo.outputPath('midnight.png'),
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Zapnout denní režim' }).click();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.reload();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'signal',
+  );
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light');
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({
+    path: testInfo.outputPath('signal.png'),
+    fullPage: true,
+  });
+});
+
+test('follows the system until a manual choice and lets shared links override it', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'midnight',
+  );
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'signal',
+  );
+  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page.goto('/?theme=signal&detail=index');
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'signal',
+  );
+  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await expect(page).toHaveURL(/\?detail=index$/);
+  await page.reload();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'midnight',
+  );
+});
+
+test('can toggle when browser storage is blocked', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new DOMException('Storage unavailable', 'SecurityError');
+      },
+    });
+  });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/?theme=invalid');
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'signal',
+  );
+  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'midnight',
   );
 });

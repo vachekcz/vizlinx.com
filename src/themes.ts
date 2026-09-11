@@ -1,51 +1,61 @@
-export type ThemeId =
-  'original' | 'signal' | 'carbon' | 'midnight' | 'electric' | 'editorial';
+import { useEffect, useState } from 'react';
 
-export const themes: {
-  id: ThemeId;
-  name: string;
-  description: string;
-  colors: string[];
-}[] = [
-  {
-    id: 'signal',
-    name: 'Signal',
-    description: 'Čistá bílá, ostrá modrá, výrazné barvy webů.',
-    colors: ['#ffffff', '#172139', '#2457ff', '#d73763'],
-  },
-  {
-    id: 'carbon',
-    name: 'Carbon',
-    description: 'Grafitová plocha s elektrickou limetkou.',
-    colors: ['#101114', '#24272d', '#c0ff45', '#7197ff'],
-  },
-  {
-    id: 'midnight',
-    name: 'Midnight',
-    description: 'Hluboká námořní modř a zářivý tyrkys.',
-    colors: ['#071023', '#162543', '#39d9ef', '#ff827a'],
-  },
-  {
-    id: 'electric',
-    name: 'Electric',
-    description: 'Tmavá fialová, magenta a digitální kontrast.',
-    colors: ['#100b21', '#261b3b', '#bda0ff', '#ff71d7'],
-  },
-  {
-    id: 'editorial',
-    name: 'Editorial',
-    description: 'Černobílá přesnost s výrazným oranžovým akcentem.',
-    colors: ['#ffffff', '#171717', '#df3d1a', '#124ed8'],
-  },
-  {
-    id: 'original',
-    name: 'Původní',
-    description: 'Původní pastelová varianta pro porovnání.',
-    colors: ['#f7f8f5', '#e5efe3', '#285c46', '#eee7f6'],
-  },
-];
+export type ThemeId = 'signal' | 'midnight';
+const storageKey = 'vizlinx-theme';
+const darkQuery = '(prefers-color-scheme: dark)';
+
+function isTheme(value: string | null): value is ThemeId {
+  return value === 'signal' || value === 'midnight';
+}
+
+function preferredTheme(): ThemeId | null {
+  const query = new URLSearchParams(window.location.search).get('theme');
+  if (isTheme(query)) return query;
+  try {
+    const saved = window.localStorage.getItem(storageKey);
+    return isTheme(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+function systemTheme(): ThemeId {
+  return window.matchMedia(darkQuery).matches ? 'midnight' : 'signal';
+}
 
 export function initialTheme(): ThemeId {
-  const id = new URLSearchParams(window.location.search).get('theme');
-  return themes.find((theme) => theme.id === id)?.id ?? 'original';
+  return preferredTheme() ?? systemTheme();
+}
+
+export function useTheme() {
+  const [preference, setPreference] = useState(preferredTheme);
+  const [system, setSystem] = useState(systemTheme);
+  const theme = preference ?? system;
+
+  useEffect(() => {
+    const query = window.matchMedia(darkQuery);
+    const update = () => setSystem(query.matches ? 'midnight' : 'signal');
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const next = theme === 'signal' ? 'midnight' : 'signal';
+    setPreference(next);
+    try {
+      window.localStorage.setItem(storageKey, next);
+    } catch {
+      // The toggle still works when browser storage is unavailable.
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('theme');
+    window.history.replaceState(null, '', url);
+  };
+
+  return { theme, toggleTheme };
 }

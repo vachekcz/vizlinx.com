@@ -14,7 +14,8 @@ import {
   List,
   Network,
   Pause,
-  Palette,
+  Moon,
+  Sun,
   Play,
   RotateCcw,
   Search,
@@ -33,14 +34,12 @@ import {
   sites,
 } from './data';
 import type { Selection } from './data';
-import { initialTheme, themes } from './themes';
-import type { ThemeId } from './themes';
+import { useTheme } from './themes';
 
 const scannedSites = sites.filter((site) => site.scanned);
 
 export default function App() {
-  const [theme, setTheme] = useState<ThemeId>(initialTheme);
-  const themeDialog = useRef<HTMLDialogElement>(null);
+  const { theme, toggleTheme } = useTheme();
   const [view, setView] = useState<'map' | 'table'>('map');
   const [selection, setSelection] = useState<Selection | null>({
     type: 'site',
@@ -187,12 +186,17 @@ export default function App() {
         </div>
         <div className="header-actions">
           <button
-            className="palette-button"
-            onClick={() => themeDialog.current?.showModal()}
-            aria-label="Změnit barevnou paletu"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={
+              theme === 'signal' ? 'Zapnout noční režim' : 'Zapnout denní režim'
+            }
+            title={
+              theme === 'signal' ? 'Zapnout noční režim' : 'Zapnout denní režim'
+            }
           >
-            <Palette size={16} />
-            <span>{themes.find((item) => item.id === theme)?.name}</span>
+            {theme === 'signal' ? <Moon size={16} /> : <Sun size={16} />}
+            <span>{theme === 'signal' ? 'Noční režim' : 'Denní režim'}</span>
           </button>
           <span className="local-indicator">
             <i /> Ukázková data
@@ -618,48 +622,6 @@ export default function App() {
         </main>
       </div>
 
-      <dialog ref={themeDialog} className="help-dialog palette-dialog">
-        <form method="dialog">
-          <button
-            className="icon-button dialog-close"
-            aria-label="Zavřít výběr palety"
-          >
-            <X size={20} />
-          </button>
-        </form>
-        <span className="eyebrow">VIZUÁLNÍ SMĚRY</span>
-        <h2>Pět nových pohledů.</h2>
-        <p>
-          Stejná mapa, jiné barvy. Vyberte paletu a vyzkoušejte ji přímo v demu.
-        </p>
-        <div className="palette-options">
-          {themes.map((item) => (
-            <button
-              key={item.id}
-              aria-pressed={theme === item.id}
-              onClick={() => {
-                setTheme(item.id);
-                const url = new URL(window.location.href);
-                url.searchParams.set('theme', item.id);
-                window.history.replaceState(null, '', url);
-                themeDialog.current?.close();
-              }}
-            >
-              <span className="palette-swatches">
-                {item.colors.map((color) => (
-                  <i key={color} style={{ background: color }} />
-                ))}
-              </span>
-              <strong>{item.name}</strong>
-              <small>{item.description}</small>
-              {theme === item.id && <Check size={15} />}
-            </button>
-          ))}
-        </div>
-        <a className="outline-button" href="/palettes/">
-          Porovnat všech pět náhledů <ArrowRight size={15} />
-        </a>
-      </dialog>
       <dialog ref={helpRef} className="help-dialog">
         <form method="dialog">
           <button

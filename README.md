@@ -10,7 +10,7 @@ První interaktivní grafické demo v Reactu a TypeScriptu. Pět ukázkových we
 
 **Živé demo:** [vizlinx.com](https://vizlinx.com), také [www.vizlinx.com](https://www.vizlinx.com). Záložní adresa: [vizlinx-com.pvpvpv.workers.dev](https://vizlinx-com.pvpvpv.workers.dev).
 
-**Barevné varianty:** [pět mockupů vedle sebe](https://vizlinx.com/palettes/) — Signal, Carbon, Midnight, Electric a Editorial. Paletu lze přepnout také přímo v hlavičce aplikace. [Ukázka 20 stránek v paletě Carbon](https://vizlinx.com/?theme=carbon&detail=index).
+**Vzhled:** Signal pro denní režim, Midnight pro noční. Přepínač měsíce/slunce v hlavičce ukládá ruční volbu v prohlížeči; bez ní vzhled sleduje nastavení systému. [Denní demo](https://vizlinx.com/?theme=signal), [noční demo s 20 stránkami](https://vizlinx.com/?theme=midnight&detail=index). [Původních pět mockupů](https://vizlinx.com/palettes/) zůstává jako archiv návrhů.
 
 **První milník je grafické demo:** interaktivní mapa s ukázkovými daty, na které doladíme vzhled, rozložení a ovládání. Z tohoto základu pak vyjde funkční aplikace. Skener, rozšíření a backend následují až po doladění dema. Rozsah a kritéria jsou v [produktovém zadání](docs/product-specification.md#první-milník-grafické-demo).
 
