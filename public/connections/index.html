@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Vizlinx — 5 způsobů zobrazení vazeb</title>
+    <title>Vizlinx — 8 způsobů zobrazení vazeb</title>
     <link rel="icon" href="/favicon.svg" />
     <style>
       * {
@@ -154,16 +154,126 @@
   <body>
     <header>
       <a class="brand" href="/">vizlinx.</a>
-      <p class="eyebrow">INTERAKTIVNÍ STUDIE / 01–05</p>
+      <p class="eyebrow">INTERAKTIVNÍ STUDIE / 01–08</p>
       <h1>Jak silně jsou weby propojené?</h1>
       <p>
-        Pět způsobů, jak zobrazit sílu a směr vazeb. V každé variantě můžete
-        domény chytit a odtáhnout od sebe. Zobrazení rozlišuje až pět odkazů,
-        silnější vazby označuje 5+. Přesný počet zůstává v detailu. Vyzkoušejte
-        denní Signal i noční Midnight.
+        Tři nové jemné varianty: Hedvábí, Kontury a Kabel. Jedna až pět tenkých
+        čar se postupně spojuje do silnějších vazeb 10+, 25+, 50+ a 100+. Každý
+        návrh jde otevřít jako celá interaktivní mapa v denním i nočním režimu.
+      </p>
+      <p>
+        <a
+          href="/connections/lab/"
+          style="
+            display: inline-block;
+            padding: 14px 20px;
+            background: #2457ff;
+            color: white;
+            border-radius: 7px;
+            text-decoration: none;
+          "
+          >Jen spojnice: porovnat škálu 1–100+ ↗</a
+        >
       </p>
     </header>
     <main>
+      <article id="silk">
+        <a
+          class="preview"
+          href="/?theme=signal&connections=silk&density=scale"
+          aria-label="Vyzkoušet Hedvábí"
+          ><img
+            src="silk.png"
+            alt="Celá mapa s jemnými vazbami Hedvábí"
+            width="1600"
+            height="1176"
+        /></a>
+        <div class="card-body">
+          <span class="number">06</span>
+          <div>
+            <h2>Hedvábí</h2>
+            <p>
+              Jednotlivá tenká vlákna se postupně slévají do hustého svazku.
+              Síla roste až do 100+.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=silk&density=scale"
+                >Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=silk&density=scale"
+                >Vyzkoušet v noci ↗</a
+              ><a href="silk.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article id="contour">
+        <a
+          class="preview"
+          href="/?theme=signal&connections=contour&density=scale"
+          aria-label="Vyzkoušet Kontury"
+          ><img
+            src="contour.png"
+            alt="Celá mapa s jemnými vazbami Kontury"
+            width="1600"
+            height="1176"
+        /></a>
+        <div class="card-body">
+          <span class="number">07</span>
+          <div>
+            <h2>Kontury</h2>
+            <p>
+              Jemné čáry u slabých vazeb, průsvitný pás s tenkými obrysy u
+              silných.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=contour&density=scale"
+                >Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=contour&density=scale"
+                >Vyzkoušet v noci ↗</a
+              ><a href="contour.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <article id="cable">
+        <a
+          class="preview"
+          href="/?theme=signal&connections=cable&density=scale"
+          aria-label="Vyzkoušet Kabel"
+          ><img
+            src="cable.png"
+            alt="Celá mapa s jemnými vazbami Kabel"
+            width="1600"
+            height="1176"
+        /></a>
+        <div class="card-body">
+          <span class="number">08</span>
+          <div>
+            <h2>Kabel</h2>
+            <p>
+              Tenké větve se u silnějších vazeb spojují do společného výrazného
+              středu.
+            </p>
+            <div class="links">
+              <a href="/?theme=signal&connections=cable&density=scale"
+                >Vyzkoušet ve dne ↗</a
+              ><a href="/?theme=midnight&connections=cable&density=scale"
+                >Vyzkoušet v noci ↗</a
+              ><a href="cable.png">Plný náhled ↗</a>
+            </div>
+          </div>
+        </div>
+      </article>
+      <div
+        style="
+          grid-column: 1/-1;
+          padding-top: 20px;
+          font-size: 20px;
+          font-weight: 600;
+        "
+      >
+        Původních pět variant
+      </div>
       <article>
         <a
           class="preview"

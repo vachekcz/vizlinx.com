@@ -28,7 +28,8 @@ import Inspector, { SiteMark } from './Inspector';
 import {
   aggregateConnections,
   getSite,
-  links,
+  links as defaultLinks,
+  strengthLinks,
   pages,
   pageUrl,
   sites,
@@ -42,6 +43,11 @@ const scannedSites = sites.filter((site) => site.scanned);
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
+  const [strengthDemo, setStrengthDemo] = useState(
+    () =>
+      new URLSearchParams(window.location.search).get('density') === 'scale',
+  );
+  const links = strengthDemo ? strengthLinks : defaultLinks;
   const [connectionStyle, setConnectionStyle] = useState<ConnectionStyleId>(
     () =>
       connectionStyles.find(
@@ -118,7 +124,7 @@ export default function App() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [running, pausedSites, intervals]);
+  }, [running, pausedSites, intervals, links]);
 
   useEffect(() => {
     if (complete) setRunning(false);
@@ -441,8 +447,39 @@ export default function App() {
             <div className="connection-studies-heading">
               <strong>Jak zobrazit sílu vazeb?</strong>
               <a href="/connections/">
-                Porovnat 5 návrhů <ArrowRight size={13} />
+                Porovnat 8 návrhů <ArrowRight size={13} />
               </a>
+            </div>
+            <div className="connection-study-tools">
+              <a href="/connections/lab/">
+                Jen spojnice · škála 1–100+ <ArrowRight size={13} />
+              </a>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={strengthDemo}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setStrengthDemo(enabled);
+                    setRevealedIds(
+                      (enabled ? strengthLinks : defaultLinks).map(
+                        (link) => link.id,
+                      ),
+                    );
+                    setRunning(false);
+                    setPausedSites([]);
+                    elapsed.current = {};
+                    setExpanded([]);
+                    setSelection({ type: 'site', id: 'atlas' });
+                    setResetKey((previous) => previous + 1);
+                    const url = new URL(window.location.href);
+                    if (enabled) url.searchParams.set('density', 'scale');
+                    else url.searchParams.delete('density');
+                    window.history.replaceState(null, '', url);
+                  }}
+                />
+                Ukázková data 1–100+
+              </label>
             </div>
             <div className="connection-style-options">
               {connectionStyles.map((style, index) => (

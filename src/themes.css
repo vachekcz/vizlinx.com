@@ -425,3 +425,29 @@ body {
     text-align: center;
   }
 }
+
+.connection-study-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+.connection-study-tools a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.connection-study-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+.connection-study-tools input {
+  accent-color: var(--accent);
+}

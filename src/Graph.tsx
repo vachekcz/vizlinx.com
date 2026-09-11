@@ -11,6 +11,10 @@ import {
 import { aggregateConnections, pages } from './data';
 import type { Link, Page, Selection, Site } from './data';
 import ConnectionStroke from './ConnectionStroke';
+import {
+  connectionStrengthLabel,
+  isFineConnectionStyle,
+} from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
 
 type Props = {
@@ -433,6 +437,12 @@ export default function Graph({
               x: (from.x + to.x) / 2 + normal.x * bend,
               y: (from.y + to.y) / 2 + normal.y * bend,
             };
+            const countLabel = isFineConnectionStyle(connectionStyle)
+              ? connectionStrengthLabel(connection.links.length)
+              : connection.links.length > 5
+                ? '5+'
+                : String(connection.links.length);
+            const labelWidth = countLabel.length > 2 ? 38 : 24;
             const curve = `M ${from.x} ${from.y} Q ${control.x} ${control.y} ${to.x} ${to.y}`;
             const label = {
               x: (from.x + 2 * control.x + to.x) / 4,
@@ -532,9 +542,9 @@ export default function Graph({
                       strokeWidth="12"
                     />
                     <rect
-                      x={label.x - 12}
+                      x={label.x - labelWidth / 2}
                       y={label.y - 10}
-                      width="24"
+                      width={labelWidth}
                       height="20"
                       rx="7"
                       fill="var(--surface, #fcfdf9)"
@@ -547,9 +557,7 @@ export default function Graph({
                       className="edge-count"
                       fill={source.color}
                     >
-                      {connection.links.length > 5
-                        ? '5+'
-                        : connection.links.length}
+                      {countLabel}
                     </text>
                   </g>
                 )}
@@ -794,7 +802,7 @@ export default function Graph({
         <MousePointer2 size={12} />{' '}
         {denseSite
           ? `Zobrazeny vazby ${denseSite.domain}. Kliknutím vyberete stránku.`
-          : 'Táhněte domény od sebe. Pozadím posunete mapu. 5+ = více než 5 vazeb.'}{' '}
+          : `Táhněte domény od sebe. Síla vazeb: ${isFineConnectionStyle(connectionStyle) ? '1–100+' : '1–5+'}. Přesné počty v detailu.`}{' '}
         <button onClick={reset} aria-label="Obnovit pohled">
           <RotateCcw size={12} />
         </button>

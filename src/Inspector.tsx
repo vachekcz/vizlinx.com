@@ -8,14 +8,7 @@ import {
   Link2,
   X,
 } from 'lucide-react';
-import {
-  aggregateConnections,
-  getPage,
-  getSite,
-  links as allLinks,
-  pages,
-  pageUrl,
-} from './data';
+import { aggregateConnections, getPage, getSite, pages, pageUrl } from './data';
 import type { Link, Selection, Site } from './data';
 
 export function SiteMark({
@@ -156,7 +149,7 @@ export default function Inspector({
       : null;
   const link =
     selection.type === 'link'
-      ? allLinks.find((item) => item.id === selection.id)
+      ? links.find((item) => item.id === selection.id)
       : null;
 
   return (

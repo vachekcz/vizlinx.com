@@ -1,4 +1,8 @@
-import type { ConnectionStyleId } from './connectionStyles';
+import {
+  isFineConnectionStyle,
+  type ConnectionStyleId,
+} from './connectionStyles';
+import FineConnectionStroke from './FineConnectionStroke';
 
 type Point = { x: number; y: number };
 
@@ -46,6 +50,20 @@ export default function ConnectionStroke({
   selected,
   markerId,
 }: Props) {
+  if (isFineConnectionStyle(variant)) {
+    return (
+      <FineConnectionStroke
+        variant={variant}
+        from={from}
+        to={to}
+        control={control}
+        color={color}
+        count={count}
+        selected={selected}
+      />
+    );
+  }
+
   const strength = Math.min(5, Math.max(1, Math.floor(count)));
   const distance = Math.hypot(to.x - from.x, to.y - from.y) || 1;
   const normal = {

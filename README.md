@@ -12,7 +12,7 @@ První interaktivní grafické demo v Reactu a TypeScriptu. Pět ukázkových we
 
 **Vzhled:** Signal pro denní režim, Midnight pro noční. Přepínač měsíce/slunce v hlavičce ukládá ruční volbu v prohlížeči; bez ní vzhled sleduje nastavení systému. [Denní demo](https://vizlinx.com/?theme=signal), [noční demo s 20 stránkami](https://vizlinx.com/?theme=midnight&detail=index). [Původních pět mockupů](https://vizlinx.com/palettes/) zůstává jako archiv návrhů.
 
-**Interaktivní varianty vazeb:** [pět návrhů k porovnání](https://vizlinx.com/connections/) — Vlákna, Vějíř, Pásy, Proud a Metro. V demu lze přepínat styl, přetahovat domény myší i dotykem a sledovat průběžné přepočítání spojnic. Mapa ukazuje sílu do pěti vazeb, vyšší počet označuje `5+`; detail zachovává přesný počet.
+**Interaktivní varianty vazeb:** [osm návrhů k porovnání](https://vizlinx.com/connections/). Nové Hedvábí, Kontury a Kabel používají stejně tenké čáry pro 1–5 vazeb a postupně rostoucí svazky pro `5+`, `10+`, `25+`, `50+` a `100+`. [Samostatná studie spojnic](https://vizlinx.com/connections/lab/) ukazuje všechny stupně bez okolní mapy a umožňuje měnit počet posuvníkem. V celé mapě přepínač „Ukázková data 1–100+“ načte 230 unikátních dvojic stránek, nejsilnější propojení má 120 vazeb. Detaily a export ukazují skutečné počty. Původních pět stylů zůstává dostupných.
 
 **První milník je grafické demo:** interaktivní mapa s ukázkovými daty, na které doladíme vzhled, rozložení a ovládání. Z tohoto základu pak vyjde funkční aplikace. Skener, rozšíření a backend následují až po doladění dema. Rozsah a kritéria jsou v [produktovém zadání](docs/product-specification.md#první-milník-grafické-demo).
 

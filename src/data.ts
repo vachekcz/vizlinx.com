@@ -241,3 +241,37 @@ export function aggregateConnections(visibleLinks: Link[]): Connection[] {
   }
   return [...connections.values()];
 }
+
+// Distinct page pairs let the strength study keep map, detail and export consistent.
+const strengthRelationships: [string, string, number][] = [
+  ['atlas', 'journal', 1],
+  ['journal', 'atlas', 2],
+  ['atlas', 'index', 3],
+  ['atlas', 'objects', 4],
+  ['objects', 'atlas', 5],
+  ['journal', 'collective', 8],
+  ['index', 'journal', 12],
+  ['index', 'collective', 25],
+  ['index', 'objects', 50],
+  ['index', 'atlas', 120],
+];
+
+export const strengthLinks: Link[] = strengthRelationships.flatMap(
+  ([sourceId, targetId, count]) => {
+    const sourcePages = pages.filter((page) => page.siteId === sourceId);
+    const targetPages = pages.filter((page) => page.siteId === targetId);
+    return Array.from({ length: count }, (_, index) => {
+      const source = sourcePages[Math.floor(index / targetPages.length)];
+      const target = targetPages[index % targetPages.length];
+      return {
+        id: `strength-${sourceId}-${targetId}-${index}`,
+        source,
+        target,
+        anchor: target.title,
+        rel: '',
+        region: 'Obsah',
+        occurrences: 1,
+      };
+    });
+  },
+);

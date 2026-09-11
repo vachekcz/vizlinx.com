@@ -131,18 +131,18 @@ test('moves an expanded domain and all its pages together with the keyboard', as
   await expect(cards).toHaveCount(20);
 });
 
-test('opens the comparison gallery with five loaded previews and live night links', async ({
+test('opens the comparison gallery with eight loaded previews and live night links', async ({
   page,
 }, testInfo) => {
   await page.goto('/connections/');
-  await expect(page.locator('article')).toHaveCount(5);
+  await expect(page.locator('article')).toHaveCount(8);
   await expect
     .poll(() =>
       page
         .locator('img')
         .evaluateAll(
           (images) =>
-            images.length === 5 &&
+            images.length === 8 &&
             images.every((image) => image.complete && image.naturalWidth > 0),
         ),
     )
