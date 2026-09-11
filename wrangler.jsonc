@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vizlinx",
+  "name": "vizlinx-com",
   "account_id": "6d98272604827024f82f94b330498ae7",
   "compatibility_date": "2026-09-11",
   "workers_dev": true,

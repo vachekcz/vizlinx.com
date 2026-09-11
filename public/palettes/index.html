@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vizlinx — 5 barevných variant</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f1f1f0;
+        color: #151515;
+        font-family: Arial, sans-serif;
+      }
+      header,
+      main,
+      footer {
+        max-width: 1540px;
+        margin: auto;
+        padding: 32px;
+      }
+      header {
+        padding-top: 50px;
+      }
+      .brand {
+        font-weight: 750;
+        letter-spacing: -1px;
+        font-size: 24px;
+        text-decoration: none;
+        color: inherit;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #666;
+        margin: 38px 0 12px;
+      }
+      h1 {
+        font-size: clamp(30px, 4vw, 54px);
+        letter-spacing: -2px;
+        font-weight: 550;
+        margin: 0;
+      }
+      header > p:last-child {
+        color: #656565;
+        line-height: 1.7;
+        max-width: 640px;
+        font-size: 15px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 28px;
+        padding-top: 8px;
+      }
+      article {
+        border: 1px solid #d7d7d3;
+        border-radius: 12px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .preview {
+        display: block;
+        background: #fff;
+        border-bottom: 1px solid #ddd;
+      }
+      .preview img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .card-body {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        padding: 24px;
+      }
+      .number {
+        font-size: 12px;
+        color: #929292;
+        padding-top: 5px;
+      }
+      h2 {
+        font-size: 22px;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+      }
+      .card-body p {
+        font-size: 12px;
+        color: #777;
+        line-height: 1.6;
+        margin: 9px 0 16px;
+      }
+      .links {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .links a {
+        font-size: 11px;
+        color: #333;
+        text-decoration: none;
+        border-bottom: 1px solid #ccc;
+        padding-bottom: 3px;
+      }
+      .swatches {
+        display: flex;
+        margin-left: auto;
+        padding-top: 4px;
+      }
+      .swatches i {
+        display: block;
+        width: 15px;
+        height: 15px;
+        border-radius: 50%;
+        border: 1px solid #9995;
+        margin-left: -3px;
+      }
+      footer {
+        font-size: 12px;
+        color: #888;
+        padding-top: 0;
+        padding-bottom: 50px;
+      }
+      a:focus-visible {
+        outline: 3px solid #2457ff;
+        outline-offset: 3px;
+      }
+      @media (max-width: 850px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        header,
+        main,
+        footer {
+          padding: 22px;
+        }
+        header {
+          padding-top: 30px;
+        }
+        .card-body {
+          padding: 20px;
+        }
+        .swatches {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">vizlinx.</a>
+      <p class="eyebrow">BAREVNÉ STUDIE / 01–05</p>
+      <h1>Pět směrů. Jedna mapa.</h1>
+      <p>
+        Dvě světlé a tři tmavé palety s výraznějším kontrastem. Každý mockup
+        můžete otevřít jako interaktivní demo, včetně rozbalené domény s 20
+        stránkami.
+      </p>
+    </header>
+    <main>
+      <article>
+        <a class="preview" href="/?theme=signal" aria-label="Vyzkoušet Signal"
+          ><img
+            src="signal.png"
+            alt="Mockup Vizlinx v paletě Signal"
+            width="1600"
+            height="1007"
+            loading="lazy"
+        /></a>
+        <div class="card-body">
+          <span class="number">01</span>
+          <div>
+            <h2>Signal</h2>
+            <p>Čistá bílá, ostrá modrá, výrazné barvy webů.</p>
+            <div class="links">
+              <a href="/?theme=signal">Otevřít demo ↗</a
+              ><a href="/?theme=signal&detail=index">20 stránek ↗</a
+              ><a href="signal.png">Plný náhled ↗</a>
+            </div>
+          </div>
+          <div class="swatches">
+            <i style="background: #ffffff"></i
+            ><i style="background: #172139"></i
+            ><i style="background: #2457ff"></i
+            ><i style="background: #d73763"></i>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a class="preview" href="/?theme=carbon" aria-label="Vyzkoušet Carbon"
+          ><img
+            src="carbon.png"
+            alt="Mockup Vizlinx v paletě Carbon"
+            width="1600"
+            height="1007"
+            loading="lazy"
+        /></a>
+        <div class="card-body">
+          <span class="number">02</span>
+          <div>
+            <h2>Carbon</h2>
+            <p>Grafitová plocha s elektrickou limetkou.</p>
+            <div class="links">
+              <a href="/?theme=carbon">Otevřít demo ↗</a
+              ><a href="/?theme=carbon&detail=index">20 stránek ↗</a
+              ><a href="carbon.png">Plný náhled ↗</a>
+            </div>
+          </div>
+          <div class="swatches">
+            <i style="background: #101114"></i
+            ><i style="background: #24272d"></i
+            ><i style="background: #c0ff45"></i
+            ><i style="background: #7197ff"></i>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=midnight"
+          aria-label="Vyzkoušet Midnight"
+          ><img
+            src="midnight.png"
+            alt="Mockup Vizlinx v paletě Midnight"
+            width="1600"
+            height="1007"
+            loading="lazy"
+        /></a>
+        <div class="card-body">
+          <span class="number">03</span>
+          <div>
+            <h2>Midnight</h2>
+            <p>Hluboká námořní modř a zářivý tyrkys.</p>
+            <div class="links">
+              <a href="/?theme=midnight">Otevřít demo ↗</a
+              ><a href="/?theme=midnight&detail=index">20 stránek ↗</a
+              ><a href="midnight.png">Plný náhled ↗</a>
+            </div>
+          </div>
+          <div class="swatches">
+            <i style="background: #071023"></i
+            ><i style="background: #162543"></i
+            ><i style="background: #39d9ef"></i
+            ><i style="background: #ff827a"></i>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=electric"
+          aria-label="Vyzkoušet Electric"
+          ><img
+            src="electric.png"
+            alt="Mockup Vizlinx v paletě Electric"
+            width="1600"
+            height="1007"
+            loading="lazy"
+        /></a>
+        <div class="card-body">
+          <span class="number">04</span>
+          <div>
+            <h2>Electric</h2>
+            <p>Tmavá fialová, magenta a digitální kontrast.</p>
+            <div class="links">
+              <a href="/?theme=electric">Otevřít demo ↗</a
+              ><a href="/?theme=electric&detail=index">20 stránek ↗</a
+              ><a href="electric.png">Plný náhled ↗</a>
+            </div>
+          </div>
+          <div class="swatches">
+            <i style="background: #100b21"></i
+            ><i style="background: #261b3b"></i
+            ><i style="background: #bda0ff"></i
+            ><i style="background: #ff71d7"></i>
+          </div>
+        </div>
+      </article>
+      <article>
+        <a
+          class="preview"
+          href="/?theme=editorial"
+          aria-label="Vyzkoušet Editorial"
+          ><img
+            src="editorial.png"
+            alt="Mockup Vizlinx v paletě Editorial"
+            width="1600"
+            height="1007"
+            loading="lazy"
+        /></a>
+        <div class="card-body">
+          <span class="number">05</span>
+          <div>
+            <h2>Editorial</h2>
+            <p>Černobílá přesnost s výrazným oranžovým akcentem.</p>
+            <div class="links">
+              <a href="/?theme=editorial">Otevřít demo ↗</a
+              ><a href="/?theme=editorial&detail=index">20 stránek ↗</a
+              ><a href="editorial.png">Plný náhled ↗</a>
+            </div>
+          </div>
+          <div class="swatches">
+            <i style="background: #ffffff"></i
+            ><i style="background: #171717"></i
+            ><i style="background: #df3d1a"></i
+            ><i style="background: #124ed8"></i>
+          </div>
+        </div>
+      </article>
+    </main>
+    <footer>
+      Grafické demo · fiktivní data · původní pastelová paleta zůstává dostupná
+      v přepínači vzhledu.
+    </footer>
+  </body>
+</html>

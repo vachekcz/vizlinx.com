@@ -14,6 +14,7 @@ import {
   List,
   Network,
   Pause,
+  Palette,
   Play,
   RotateCcw,
   Search,
@@ -32,16 +33,27 @@ import {
   sites,
 } from './data';
 import type { Selection } from './data';
+import { initialTheme, themes } from './themes';
+import type { ThemeId } from './themes';
 
 const scannedSites = sites.filter((site) => site.scanned);
 
 export default function App() {
+  const [theme, setTheme] = useState<ThemeId>(initialTheme);
+  const themeDialog = useRef<HTMLDialogElement>(null);
   const [view, setView] = useState<'map' | 'table'>('map');
   const [selection, setSelection] = useState<Selection | null>({
     type: 'site',
-    id: 'atlas',
+    id:
+      new URLSearchParams(window.location.search).get('detail') === 'index'
+        ? 'index'
+        : 'atlas',
   });
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string[]>(() =>
+    new URLSearchParams(window.location.search).get('detail') === 'index'
+      ? ['index']
+      : [],
+  );
   const [showExternal, setShowExternal] = useState(false);
   const [siteSearch, setSiteSearch] = useState('');
   const [linkSearch, setLinkSearch] = useState('');
@@ -159,7 +171,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-theme={theme}>
       <header className="app-header">
         <a href="/" className="brand" aria-label="Vizlinx — úvod">
           <img src="/favicon.svg" alt="" />
@@ -174,6 +186,14 @@ export default function App() {
           <span className="demo-badge">DEMO</span>
         </div>
         <div className="header-actions">
+          <button
+            className="palette-button"
+            onClick={() => themeDialog.current?.showModal()}
+            aria-label="Změnit barevnou paletu"
+          >
+            <Palette size={16} />
+            <span>{themes.find((item) => item.id === theme)?.name}</span>
+          </button>
           <span className="local-indicator">
             <i /> Ukázková data
           </span>
@@ -598,6 +618,48 @@ export default function App() {
         </main>
       </div>
 
+      <dialog ref={themeDialog} className="help-dialog palette-dialog">
+        <form method="dialog">
+          <button
+            className="icon-button dialog-close"
+            aria-label="Zavřít výběr palety"
+          >
+            <X size={20} />
+          </button>
+        </form>
+        <span className="eyebrow">VIZUÁLNÍ SMĚRY</span>
+        <h2>Pět nových pohledů.</h2>
+        <p>
+          Stejná mapa, jiné barvy. Vyberte paletu a vyzkoušejte ji přímo v demu.
+        </p>
+        <div className="palette-options">
+          {themes.map((item) => (
+            <button
+              key={item.id}
+              aria-pressed={theme === item.id}
+              onClick={() => {
+                setTheme(item.id);
+                const url = new URL(window.location.href);
+                url.searchParams.set('theme', item.id);
+                window.history.replaceState(null, '', url);
+                themeDialog.current?.close();
+              }}
+            >
+              <span className="palette-swatches">
+                {item.colors.map((color) => (
+                  <i key={color} style={{ background: color }} />
+                ))}
+              </span>
+              <strong>{item.name}</strong>
+              <small>{item.description}</small>
+              {theme === item.id && <Check size={15} />}
+            </button>
+          ))}
+        </div>
+        <a className="outline-button" href="/palettes/">
+          Porovnat všech pět náhledů <ArrowRight size={15} />
+        </a>
+      </dialog>
       <dialog ref={helpRef} className="help-dialog">
         <form method="dialog">
           <button

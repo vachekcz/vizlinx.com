@@ -106,7 +106,11 @@ export const sites: Site[] = [
     radius: 47,
     scanned: false,
   },
-];
+].map((site) => ({
+  ...site,
+  color: `var(--site-${site.id}, ${site.color})`,
+  tint: `var(--site-${site.id}-tint, ${site.tint})`,
+}));
 
 const pageDefinitions: Record<string, [string, string][]> = {
   atlas: [
@@ -148,6 +152,20 @@ const pageDefinitions: Record<string, [string, string][]> = {
     ['/editorial', 'Redakční výběr'],
     ['/collections', 'Kolekce'],
     ['/submit', 'Přidat do indexu'],
+    ['/architecture', 'Architektura'],
+    ['/interiors', 'Interiéry'],
+    ['/typography', 'Typografie'],
+    ['/branding', 'Vizuální identity'],
+    ['/photography', 'Fotografie'],
+    ['/illustration', 'Ilustrace'],
+    ['/furniture', 'Nábytek'],
+    ['/lighting', 'Světla'],
+    ['/ceramics', 'Keramika'],
+    ['/materials', 'Materiály'],
+    ['/exhibitions', 'Výstavy'],
+    ['/interviews', 'Rozhovory s tvůrci'],
+    ['/resources', 'Zdroje a odkazy'],
+    ['/about', 'O Design Indexu'],
   ],
   archive: [
     ['/design', 'Archiv designu'],
@@ -164,7 +182,7 @@ export const pages: Page[] = sites.flatMap((site) =>
   })),
 );
 
-const relationships: [string, string, number][] = [
+const relationships: [string, string, number, number?][] = [
   ['atlas', 'journal', 5],
   ['journal', 'atlas', 3],
   ['atlas', 'objects', 4],
@@ -173,6 +191,9 @@ const relationships: [string, string, number][] = [
   ['collective', 'atlas', 3],
   ['atlas', 'index', 2],
   ['index', 'atlas', 4],
+  ['index', 'journal', 6, 4],
+  ['index', 'objects', 5, 10],
+  ['index', 'collective', 5, 15],
   ['journal', 'collective', 2],
   ['objects', 'index', 3],
   ['collective', 'index', 2],
@@ -180,12 +201,12 @@ const relationships: [string, string, number][] = [
 ];
 
 export const links: Link[] = relationships.flatMap(
-  ([sourceId, targetId, count]) => {
+  ([sourceId, targetId, count, sourceOffset = 0]) => {
     const sourcePages = pages.filter((page) => page.siteId === sourceId);
     const targetPages = pages.filter((page) => page.siteId === targetId);
     return Array.from({ length: count }, (_, index) => ({
       id: `${sourceId}-${targetId}-${index}`,
-      source: sourcePages[index % sourcePages.length],
+      source: sourcePages[(index + sourceOffset) % sourcePages.length],
       target: targetPages[(index + 1) % targetPages.length],
       anchor: targetPages[(index + 1) % targetPages.length].title,
       rel: index === 2 ? 'nofollow' : '',

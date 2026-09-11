@@ -1,6 +1,44 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
+test('loads all five mockups and opens a matching twenty-page demo', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/palettes/');
+  await expect(page.locator('article')).toHaveCount(5);
+  await expect(page.locator('img')).toHaveCount(5);
+  await expect
+    .poll(() =>
+      page
+        .locator('img')
+        .evaluateAll((images) =>
+          images.every((image) => image.complete && image.naturalWidth > 0),
+        ),
+    )
+    .toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath('palettes.png'),
+    fullPage: true,
+  });
+  await page
+    .locator('article')
+    .filter({ hasText: 'Carbon' })
+    .locator('a[href="/?theme=carbon&detail=index"]')
+    .click();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'carbon',
+  );
+  await expect(
+    page.getByRole('button', { name: /^Stránka index.example/ }),
+  ).toHaveCount(20);
+});
+
 test('renders the map without external requests, errors or horizontal overflow', async ({
   page,
 }, testInfo) => {
@@ -18,7 +56,7 @@ test('renders the map without external requests, errors or horizontal overflow',
   await expect(
     page.getByRole('heading', { name: 'Mapa souvislostí.' }),
   ).toBeVisible();
-  await expect(page.getByTestId('link-count')).toHaveText('35');
+  await expect(page.getByTestId('link-count')).toHaveText('51');
   await expect(page.getByRole('button', { name: /^Doména / })).toHaveCount(5);
   await page.evaluate(() => document.fonts.ready);
   expect(
@@ -79,7 +117,7 @@ test('zooms, pans, resets and opens a page with the keyboard', async ({
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click({ clickCount: 3 });
   await expect(page.getByLabel('Přiblížení mapy')).toHaveText('173 %');
-  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(30);
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(44);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expect(page.getByLabel('Přiblížení mapy')).toHaveText('100 %');
   if (testInfo.project.name === 'desktop') {
@@ -113,7 +151,7 @@ test('distinguishes unscanned external targets and keeps table and export consis
 }) => {
   await page.goto('/');
   await page.getByLabel('Další odkazované weby').check();
-  await expect(page.getByTestId('link-count')).toHaveText('37');
+  await expect(page.getByTestId('link-count')).toHaveText('53');
   await page
     .getByRole('button', { name: 'Doména archive.example', exact: true })
     .click();
@@ -181,4 +219,121 @@ test('opens and dismisses the help dialog', async ({ page }) => {
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Jdu objevovat' }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
+});
+
+test('fits all twenty index pages inside their cluster and explores the last page', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/?detail=index');
+  const nodes = page.getByRole('button', { name: /^Stránka index.example/ });
+  await expect(nodes).toHaveCount(20);
+  const bounds = await nodes.locator('rect').evaluateAll((rects) =>
+    rects.map((rect) => {
+      const box = rect.getBoundingClientRect();
+      return { x: box.x, y: box.y, right: box.right, bottom: box.bottom };
+    }),
+  );
+  const viewport = (await page
+    .getByLabel('Interaktivní mapa odkazů mezi weby')
+    .boundingBox())!;
+  for (const [index, box] of bounds.entries()) {
+    expect(box.x).toBeGreaterThanOrEqual(viewport.x);
+    expect(box.right).toBeLessThanOrEqual(viewport.x + viewport.width);
+    expect(box.y).toBeGreaterThanOrEqual(viewport.y);
+    expect(box.bottom).toBeLessThanOrEqual(viewport.y + viewport.height);
+    for (const other of bounds.slice(index + 1)) {
+      expect(
+        box.right <= other.x ||
+          other.right <= box.x ||
+          box.bottom <= other.y ||
+          other.bottom <= box.y,
+      ).toBe(true);
+    }
+  }
+  expect(
+    await page.evaluate(() => {
+      const cluster = document.querySelector<SVGCircleElement>(
+        '.cluster-fill[data-site="index"]',
+      )!;
+      const { x, y } = {
+        x: cluster.cx.baseVal.value,
+        y: cluster.cy.baseVal.value,
+      };
+      return [
+        ...document.querySelectorAll<SVGRectElement>(
+          '[aria-label^="Stránka index.example"] rect',
+        ),
+      ].every((rect) => {
+        const box = rect.getBBox();
+        return [
+          [box.x, box.y],
+          [box.x + box.width, box.y],
+          [box.x, box.y + box.height],
+          [box.x + box.width, box.y + box.height],
+        ].every(
+          ([px, py]) => Math.hypot(px - x, py - y) < cluster.r.baseVal.value,
+        );
+      });
+    }),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath('twenty-pages.png'),
+    fullPage: true,
+  });
+  await page
+    .getByRole('button', { name: 'Stránka index.example/about', exact: true })
+    .click();
+  const detail = page.getByRole('complementary', { name: 'Detail výběru' });
+  await expect(
+    detail.getByRole('heading', { name: 'O Design Indexu' }),
+  ).toBeVisible();
+  await detail
+    .getByRole('button', {
+      name: 'index.example/about → collective.example/join',
+      exact: true,
+    })
+    .click();
+  await expect(
+    detail.getByText('https://index.example/about', { exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Přehled', exact: true }).click();
+  await expect(nodes).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Ukázka: 20 stránek', exact: true })
+    .click();
+  await expect(nodes).toHaveCount(20);
+});
+
+test('switches through the five contrast palettes and preserves the map', async ({
+  page,
+}, testInfo) => {
+  await page.goto('/');
+  const variants = [
+    ['signal', 'Signal'],
+    ['carbon', 'Carbon'],
+    ['midnight', 'Midnight'],
+    ['electric', 'Electric'],
+    ['editorial', 'Editorial'],
+  ];
+  for (const [id, name] of variants) {
+    await page.getByRole('button', { name: 'Změnit barevnou paletu' }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: new RegExp(`^${name}`) })
+      .click();
+    await expect(page.locator('.app-shell')).toHaveAttribute('data-theme', id);
+    await expect(page.getByTestId('link-count')).toHaveText('51');
+    await expect(page.getByRole('button', { name: /^Doména / })).toHaveCount(5);
+    await page.evaluate(() => document.fonts.ready);
+    if (testInfo.project.name === 'desktop')
+      await page.screenshot({
+        path: testInfo.outputPath(`${id}.png`),
+        fullPage: true,
+      });
+  }
+  await page.reload();
+  await expect(page.locator('.app-shell')).toHaveAttribute(
+    'data-theme',
+    'editorial',
+  );
 });
