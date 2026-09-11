@@ -54,8 +54,17 @@ export default function App() {
         (style) =>
           style.id ===
           new URLSearchParams(window.location.search).get('connections'),
-      )?.id ?? 'strands',
+      )?.id ?? 'silk',
   );
+  const [showConnectionStudies] = useState(() =>
+    connectionStyles.some(
+      (style) =>
+        style.id ===
+        new URLSearchParams(window.location.search).get('connections'),
+    ),
+  );
+  const selectedAppearanceUrl = new URL(window.location.href);
+  selectedAppearanceUrl.searchParams.delete('connections');
   const [view, setView] = useState<'map' | 'table'>('map');
   const [selection, setSelection] = useState<Selection | null>({
     type: 'site',
@@ -440,72 +449,74 @@ export default function App() {
                   : 'Simulace pozastavena'}
             </div>
           </div>
-          <section
-            className="connection-studies"
-            aria-label="Varianty zobrazení vazeb"
-          >
-            <div className="connection-studies-heading">
-              <strong>Jak zobrazit sílu vazeb?</strong>
-              <a href="/connections/">
-                Porovnat 8 návrhů <ArrowRight size={13} />
-              </a>
-            </div>
-            <div className="connection-study-tools">
-              <a href="/connections/lab/">
-                Jen spojnice · škála 1–100+ <ArrowRight size={13} />
-              </a>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={strengthDemo}
-                  onChange={(event) => {
-                    const enabled = event.target.checked;
-                    setStrengthDemo(enabled);
-                    setRevealedIds(
-                      (enabled ? strengthLinks : defaultLinks).map(
-                        (link) => link.id,
-                      ),
-                    );
-                    setRunning(false);
-                    setPausedSites([]);
-                    elapsed.current = {};
-                    setExpanded([]);
-                    setSelection({ type: 'site', id: 'atlas' });
-                    setResetKey((previous) => previous + 1);
-                    const url = new URL(window.location.href);
-                    if (enabled) url.searchParams.set('density', 'scale');
-                    else url.searchParams.delete('density');
-                    window.history.replaceState(null, '', url);
-                  }}
-                />
-                Ukázková data 1–100+
-              </label>
-            </div>
-            <div className="connection-style-options">
-              {connectionStyles.map((style, index) => (
-                <button
-                  key={style.id}
-                  aria-pressed={style.id === connectionStyle}
-                  onClick={() => {
-                    setConnectionStyle(style.id);
-                    const url = new URL(window.location.href);
-                    url.searchParams.set('connections', style.id);
-                    window.history.replaceState(null, '', url);
-                  }}
-                >
-                  <span>0{index + 1}</span>
-                  {style.name}
-                </button>
-              ))}
-            </div>
-            <p>
-              {
-                connectionStyles.find((style) => style.id === connectionStyle)
-                  ?.description
-              }{' '}
-              Domény lze přetahovat; přesný počet vazeb najdete v detailu.
-            </p>
-          </section>
+          <div className="connection-study-tools">
+            <a href="/connections/lab/">
+              Jen spojnice · škála 1–100+ <ArrowRight size={13} />
+            </a>
+            <label>
+              <input
+                type="checkbox"
+                checked={strengthDemo}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  setStrengthDemo(enabled);
+                  setRevealedIds(
+                    (enabled ? strengthLinks : defaultLinks).map(
+                      (link) => link.id,
+                    ),
+                  );
+                  setRunning(false);
+                  setPausedSites([]);
+                  elapsed.current = {};
+                  setExpanded([]);
+                  setSelection({ type: 'site', id: 'atlas' });
+                  setResetKey((previous) => previous + 1);
+                  const url = new URL(window.location.href);
+                  if (enabled) url.searchParams.set('density', 'scale');
+                  else url.searchParams.delete('density');
+                  window.history.replaceState(null, '', url);
+                }}
+              />
+              Ukázková data 1–100+
+            </label>
+          </div>
+          {showConnectionStudies && (
+            <section
+              className="connection-studies"
+              aria-label="Varianty zobrazení vazeb"
+            >
+              <div className="connection-studies-heading">
+                <strong>Archiv návrhů spojnic</strong>
+                <a href={selectedAppearanceUrl.toString()}>
+                  Použít vybrané Hedvábí <ArrowRight size={13} />
+                </a>
+              </div>
+              <div className="connection-style-options">
+                {connectionStyles.map((style, index) => (
+                  <button
+                    key={style.id}
+                    aria-pressed={style.id === connectionStyle}
+                    onClick={() => {
+                      setConnectionStyle(style.id);
+                      const url = new URL(window.location.href);
+                      url.searchParams.set('connections', style.id);
+                      window.history.replaceState(null, '', url);
+                    }}
+                  >
+                    <span>0{index + 1}</span>
+                    {style.name}
+                  </button>
+                ))}
+              </div>
+              <p>
+                {
+                  connectionStyles.find((style) => style.id === connectionStyle)
+                    ?.description
+                }{' '}
+                Domény lze přetahovat; přesný počet vazeb najdete v detailu.
+              </p>
+            </section>
+          )}
           <div className={`explorer ${selection ? 'with-inspector' : ''}`}>
             <section
               className="map-workspace"

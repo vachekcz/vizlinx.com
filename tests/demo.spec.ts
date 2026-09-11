@@ -58,6 +58,12 @@ test('renders the map without external requests, errors or horizontal overflow',
   ).toBeVisible();
   await expect(page.getByTestId('link-count')).toHaveText('51');
   await expect(page.getByRole('button', { name: /^Doména / })).toHaveCount(5);
+  await expect(
+    page.getByRole('region', { name: 'Varianty zobrazení vazeb' }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-connection="atlas:journal"] [data-fine-style="silk"]'),
+  ).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
   expect(
     await page.evaluate(

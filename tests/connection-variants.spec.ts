@@ -11,7 +11,7 @@ const variants = [
 test('compares five edge styles with capped counts and exact details', async ({
   page,
 }, testInfo) => {
-  await page.goto('/?theme=signal');
+  await page.goto('/?theme=signal&connections=strands');
   const connection = page.locator('[data-connection="index:journal"]');
   for (const [id, name] of variants) {
     await page
@@ -50,9 +50,7 @@ test('drags a domain independently at zoom and updates its connections', async (
   const node = page.locator('[data-drag-site="atlas"] circle');
   const other = page.locator('[data-drag-site="journal"] circle');
   const edge = page
-    .locator(
-      '[data-connection="atlas:journal"] [data-testid="aggregate-strand"]',
-    )
+    .locator('[data-connection="atlas:journal"] [data-testid="fine-strand"]')
     .first();
   const originalEdge = await edge.getAttribute('d');
   const otherX = await other.getAttribute('cx');
@@ -99,7 +97,7 @@ test('drags a domain independently at zoom and updates its connections', async (
     camera!,
   );
   await expect(edge).not.toHaveAttribute('d', originalEdge!);
-  await page.getByRole('button', { name: /02\s*Vějíř/ }).click();
+  await page.getByRole('button', { name: 'Zapnout denní režim' }).click();
   expect(Math.round((await node.boundingBox())!.x - before.x)).toBe(dx);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expect(node).toHaveAttribute(

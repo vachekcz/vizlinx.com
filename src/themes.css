@@ -451,3 +451,7 @@ body {
 .connection-study-tools input {
   accent-color: var(--accent);
 }
+
+.main > .connection-study-tools {
+  margin-bottom: 16px;
+}
