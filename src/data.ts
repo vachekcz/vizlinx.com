@@ -1,3 +1,5 @@
+import type { PageStatus } from '../shared/scan';
+
 export type Site = {
   id: string;
   domain: string;
@@ -9,16 +11,25 @@ export type Site = {
   y: number;
   radius: number;
   scanned: boolean;
+  origin?: string;
 };
 
-export type Page = { id: string; siteId: string; path: string; title: string };
+export type Page = {
+  id: string;
+  siteId: string;
+  path: string;
+  title: string;
+  url?: string;
+  status?: PageStatus | 'known';
+  error?: string;
+};
 export type Link = {
   id: string;
   source: Page;
   target: Page;
   anchor: string;
   rel: string;
-  region: 'Obsah' | 'Navigace' | 'Patička';
+  region: 'Obsah' | 'Navigace' | 'Patička' | 'Neznámé';
   occurrences: number;
   observedAt: string;
 };
@@ -28,6 +39,7 @@ export type Connection = {
   target: Site;
   links: Link[];
 };
+export type GraphDataset = { sites: Site[]; pages: Page[]; links: Link[] };
 export type Selection =
   | { type: 'site'; id: string }
   | { type: 'page'; id: string }
@@ -223,28 +235,6 @@ export const links: Link[] = relationships
     }));
   })
   .map((link, index) => ({ ...link, observedAt: demoObservedAt(index) }));
-
-export const getSite = (id: string) => sites.find((site) => site.id === id)!;
-export const getPage = (id: string) => pages.find((page) => page.id === id)!;
-export const pageUrl = (page: Page) =>
-  `https://${getSite(page.siteId).domain}${page.path}`;
-
-export function aggregateConnections(visibleLinks: Link[]): Connection[] {
-  const connections = new Map<string, Connection>();
-  for (const link of visibleLinks) {
-    const id = `${link.source.siteId}:${link.target.siteId}`;
-    const connection = connections.get(id);
-    if (connection) connection.links.push(link);
-    else
-      connections.set(id, {
-        id,
-        source: getSite(link.source.siteId),
-        target: getSite(link.target.siteId),
-        links: [link],
-      });
-  }
-  return [...connections.values()];
-}
 
 // Distinct page pairs let the strength study keep map, detail and export consistent.
 const strengthRelationships: [string, string, number][] = [

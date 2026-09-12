@@ -1080,6 +1080,31 @@ h1 > span {
   color: #b1b8a6;
   font-size: 8px;
 }
+.page-limit-control {
+  margin: 21px 0 22px;
+}
+.page-limit-control label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.page-limit-control input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+.page-limit-control input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .detail-section-heading {
   display: flex;
   align-items: center;

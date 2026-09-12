@@ -26,6 +26,9 @@ jobs:
       - run: npm run format:check
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - run: npm run test:api
+      - run: npm run test:extension
+      - run: npm run test:prototype
       - run: npm run build
       - run: npx wrangler deploy --dry-run
       - uses: actions/upload-artifact@v7
@@ -56,6 +59,9 @@ jobs:
         with:
           name: site
           path: dist/
+      - run: npm run db:remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

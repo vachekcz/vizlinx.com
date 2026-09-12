@@ -23,10 +23,10 @@ Pavlovým důvodem je omezení závislosti na společné serverové IP a její b
 
 - Serverový crawler nebo proxy by změnily potvrzené umístění exekuce.
 - Čistá webová stránka má omezení CORS a bez spolupráce cílového webu obecně nepřečte jeho HTML.
-- Web s rozšířením je doporučený implementační návrh; jeho přijetí zatím není součástí tohoto rozhodnutí.
+- Web s rozšířením pro Chrome byl 2026-09-12 přijat pro první funkční prototyp. Ruční instalace rozbaleného rozšíření slouží k ověření; veřejná distribuce zůstává další etapou.
 - Lokální aplikace je další možnost, pokud bude přijatelnější než rozšíření.
 
-Uživatel nepotřebuje účet; návrh anonymní relace, doba uchování, stack a limity zůstávají implementačními a produktovými návrhy. Serverové uložení výsledků neznamená nepřetržitý serverový běh.
+Uživatel nepotřebuje účet. První prototyp používá anonymní cookie, Cloudflare D1 a omezení popsaná v [aktuálním kontraktu](../tasks/local-scan-prototype.md). Serverové uložení výsledků neznamená nepřetržitý serverový běh.
 
 ## Související
 

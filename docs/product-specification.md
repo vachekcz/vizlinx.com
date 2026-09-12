@@ -1,7 +1,7 @@
 ---
 type: note
 created: 2026-09-10
-last_updated: 2026-09-11
+last_updated: 2026-09-12
 ---
 
 # Vizlinx.com — produktové zadání
@@ -49,7 +49,17 @@ Demo je připravené k navazující implementaci, když:
 
 Běžná webová stránka nemůže číst HTML libovolného cizího webu bez jeho CORS povolení. Navržená realizace je **web Vizlinx + malé rozšíření do prohlížeče**, které po povolení vybraných domén provádí skenování lokálně. Podklady a alternativy jsou v [technické specifikaci](technical-specification.md#proveditelnost-v-prohlížeči).
 
-Přijatelnost instalace rozšíření je otevřená produktová otázka, ne potvrzený požadavek. Níže popsaný průchod počítá s touto variantou. Čistý web bez instalace by vyžadoval omezení na weby s povoleným CORS nebo jinou změnu zadání.
+Pavel 2026-09-12 odsouhlasil rozšíření pro Chrome v prvním funkčním prototypu. Veřejná distribuce a přijatelnost instalace pro širší publikum zůstávají otevřené. Čistý web bez instalace by vyžadoval omezení na weby s povoleným CORS nebo jinou změnu zadání.
+
+### Aktuální funkční prototyp
+
+Navazuje na schválený Signal/Midnight, spojnice Silk a rozbalování domén na jejich současné pozici. Na `/scan` lze založit anonymní mapu a spárovat ručně instalované rozšíření. Skener načítá statické HTML z počítače návštěvníka, průběžně ukládá výsledky a současná mapa z nich zobrazuje skutečné vazby.
+
+Pro tento milník platí menší rozsah než níže navržené MVP: 3 přesné originy, 50 stránek na origin (výchozí 20), interval 1–60 sekund, jeden aktivní skener a jeden síťový požadavek současně. Mapa se uchovává 30 dní od založení; přístup závisí také na platné anonymní relaci. Cluster odpovídá přesnému originu, bez slučování subdomén přes PSL. Přesměrování se nenásledují. Mapa omezuje počet externích clusterů a karet, úplná uložená data zůstávají v tabulce a CSV. Konkrétní kontrakt a hranice jsou v [task dokumentu](tasks/local-scan-prototype.md).
+
+Tlačítko **Přidat web** doplní další origin do existující mapy, včetně již dokončené. Zachová výsledky a pozice, pozastaví běh a vyžádá nové párování s potvrzením přístupu v rozšíření. Celkový limit tří originů platí i po přidání. Odstraňování nebo nahrazování existujících originů zatím není součástí prototypu.
+
+Následující širší návrhy (větší limity, sdílení a pokročilejší scheduler) nejsou tvrzením o hotové implementaci prototypu.
 
 ## Průchod uživatele
 
@@ -170,7 +180,7 @@ Při smazání dat prohlížeče může přístup zaniknout; serverové uložen�
 
 ## Otevřené produktové otázky
 
-- Je přijatelné rozšíření do prohlížeče jako podmínka skenování libovolných webů?
+- Jak distribuovat rozšíření a je jeho instalace přijatelná pro širší publikum? Pro prototyp je potvrzená.
 - Stačí první verze pro desktopový Chrome a Edge? Mobil může zatím sloužit k prohlížení výsledků.
 - Je hlavní případ kontrola vlastních webů, nebo průzkum cizích webů a konkurence?
 - Stačí statické HTML, nebo je podpora webů s odkazy vytvořenými JavaScriptem podmínkou uvedení?

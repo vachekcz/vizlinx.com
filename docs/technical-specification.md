@@ -1,14 +1,33 @@
 ---
 type: note
 created: 2026-09-11
-last_updated: 2026-09-11
+last_updated: 2026-09-12
 ---
 
 # Vizlinx.com — technická specifikace
 
-Návrh pro [produktové zadání](product-specification.md). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření, stack a číselné limity jsou doporučení k ověření. Funkční skener a backend zatím nevznikly. [Grafické demo](../README.md#stav) používá React, TypeScript a SVG nad malou pevnou sadou ukázkových dat; jeho hosting zajišťují Workers Static Assets. Volba knihovny pro graf skutečných skenů zůstává otevřená.
+Návrh pro [produktové zadání](product-specification.md). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření pro Chrome bylo přijato 2026-09-12 pro první funkční prototyp. [Grafické demo](../README.md#stav) a skutečné mapy sdílejí React, TypeScript a SVG; hosting a API běží na Cloudflare Workers.
 
 **Pořadí práce:** nejprve [grafické demo s ukázkovými daty](product-specification.md#první-milník-grafické-demo), potom technické PoC a funkční implementace vycházející z doladěného rozhraní. Níže popsaná architektura je návrh pro funkční produkt; její realizace není podmínkou grafického dema.
+
+## Implementovaný prototyp a vztah k návrhu
+
+Zdroj pravdy pro současné API je [kontrakt prototypu](tasks/local-scan-prototype.md), typy v `shared/scan.ts` a migrace v `migrations/`. Zbývající části dokumentu zachycují širší návrh a budoucí rozšíření.
+
+| Oblast | Současná implementace |
+| --- | --- |
+| Graf | Stávající SVG mapa, Signal/Midnight, Silk; stabilní identity a ruční pozice při příchodu výsledků |
+| Rozsah | 3 přesné HTTP(S) originy, 50 stránek na origin; bez PSL agregace |
+| Runner | Otevřená karta Chrome MV3, jeden globální Web Lock a sériové požadavky; bez serverového lease |
+| Obnova | `chrome.storage.local`: fronta a outbox; identický upload je idempotentní; heartbeat 10 s, přerušení po 90 s |
+| Ukládání | Celý strukturovaný výsledek stránky do 256 KiB v jedné D1 transakci; bez chunků a historie pokusů |
+| Limity | HTML 2 MiB, 500 skupin odkazů a 500 objevených URL na stránku, 4 MiB výsledků na sken |
+| Retence | Čtení jen 30 dní od založení skenu a s platnou relací; omezený fyzický úklid při zakládání relace/mapy |
+| Ochrana kapacity | Denně 20 nových relací a 50 skenů na hash IP; globálně 1 000 skenů a 10 000 relací |
+| Párování | Cookie vlastní mapu, ticket 60 s, rotovaný token omezený na sken 24 h; prod bridge jen apex a www |
+| Síť | Bez cookies, automatických redirectů, JS renderingu a serverového fetch cílových webů |
+
+Rozšíření je pro ruční instalaci v desktopovém Chrome. Ověření na kontrolovaných fixture webech a izolovaném Chromiu nenahrazuje veřejné vydání ani záruku proti DNS rebindingu. Návod a konkrétní testy jsou v [README rozšíření](../extension/README.md).
 
 ## Proveditelnost v prohlížeči
 

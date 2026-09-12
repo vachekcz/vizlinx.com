@@ -1,0 +1,2 @@
+# Preserve Wrangler output verbatim and collapse generated runtime declarations in reviews.
+worker-configuration.d.ts linguist-generated=true -whitespace
