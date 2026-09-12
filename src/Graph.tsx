@@ -780,11 +780,13 @@ export default function Graph({
                 {!open &&
                   sitePages.slice(0, 24).map((page, index) => {
                     const angle =
-                      (index / sitePages.length) * Math.PI * 2 + 0.3;
+                      (index / Math.min(sitePages.length, 24)) * Math.PI * 2 +
+                      0.3;
                     const distance = radius * 0.71;
                     return (
                       <circle
                         key={page.id}
+                        className="page-summary-dot"
                         cx={site.x + Math.cos(angle) * distance}
                         cy={site.y + Math.sin(angle) * distance}
                         r={index === 0 ? 4 : 2.7}

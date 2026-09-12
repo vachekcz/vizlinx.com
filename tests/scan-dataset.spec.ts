@@ -271,8 +271,8 @@ test('renders a live arbitrary dataset and keeps a moved expanded origin stable 
 
 test('limits live map detail while preserving every discovered link in table and CSV', async ({
   page,
-}) => {
-  const found = Array.from({ length: 80 }, (_, index) => ({
+}, testInfo) => {
+  const found = Array.from({ length: 240 }, (_, index) => ({
     targetUrl: `https://external.cz/page-${index}`,
     anchor: index === 0 ? '=1+1' : `Page ${index}`,
     rel: ['nofollow', 'sponsored'],
@@ -291,7 +291,7 @@ test('limits live map detail while preserving every discovered link in table and
   const current = snapshot([result({ links: found })]);
   await mockScan(page, () => current);
   await page.goto('/scan?id=adapter-test');
-  await expect(page.getByTestId('link-count')).toHaveText('92');
+  await expect(page.getByTestId('link-count')).toHaveText('252');
   await expect(page.locator('.site-node')).toHaveCount(12);
   await expect(
     page.getByText('Dalších 3 odkazovaných webů najdete v tabulce.'),
@@ -300,6 +300,45 @@ test('limits live map detail while preserving every discovered link in table and
     name: 'Doména external.cz',
     exact: true,
   });
+  await expect(page.locator('.sidebar-section-label > span').last()).toHaveText(
+    '12',
+  );
+  if (testInfo.project.name === 'desktop') {
+    await page.getByLabel('Hledat doménu v seznamu').fill('other-11.cz');
+    await expect(
+      page.getByText('Žádná doména neodpovídá hledání.', { exact: true }),
+    ).toBeVisible();
+    await page.getByLabel('Hledat doménu v seznamu').fill('');
+  }
+  const center = await external.locator('circle').evaluate((circle) => ({
+    x: Number(circle.getAttribute('cx')),
+    y: Number(circle.getAttribute('cy')),
+  }));
+  const dots = external.locator('..').locator('.page-summary-dot');
+  await expect(dots).toHaveCount(24);
+  const quadrants = await dots.evaluateAll((circles, center) => {
+    const counts = [0, 0, 0, 0];
+    for (const circle of circles) {
+      const x = Number(circle.getAttribute('cx')) - center.x;
+      const y = Number(circle.getAttribute('cy')) - center.y;
+      counts[(x < 0 ? 1 : 0) + (y < 0 ? 2 : 0)]++;
+    }
+    return counts;
+  }, center);
+  expect(quadrants).toEqual([6, 6, 6, 6]);
+  await page
+    .getByRole('button', { name: /^Propojení alpha.cz → external.cz/ })
+    .press('Enter');
+  await expect(
+    page.getByText('240 unikátních dvojic stránek', { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('.detail-link-list > button')).toHaveCount(200);
+  await expect(
+    page.getByText(
+      'Zobrazeno 200 z 240 vazeb. Všechny vazby najdeš v tabulce a CSV.',
+      { exact: true },
+    ),
+  ).toBeVisible();
   await external.focus();
   await external.press('Enter');
   await page
@@ -309,7 +348,7 @@ test('limits live map detail while preserving every discovered link in table and
     page.getByRole('button', { name: /^Stránka external.cz/ }),
   ).toHaveCount(60);
   await page.getByRole('button', { name: 'Zobrazit tabulku' }).click();
-  await expect(page.locator('tbody tr')).toHaveCount(92);
+  await expect(page.locator('tbody tr')).toHaveCount(252);
   const downloadPromise = page.waitForEvent('download');
   await page
     .getByRole('button', { name: 'Exportovat zobrazené odkazy do CSV' })
@@ -318,10 +357,10 @@ test('limits live map detail while preserving every discovered link in table and
   const stream = await download.createReadStream();
   let csv = '';
   for await (const chunk of stream!) csv += chunk.toString();
-  expect(csv.split('\r\n')).toHaveLength(93);
+  expect(csv.split('\r\n')).toHaveLength(253);
   expect(csv).toContain('local_scan');
   expect(csv).toContain('"\'=1+1"');
   expect(csv).toContain('https://other-11.cz/');
   await page.getByRole('button', { name: 'nofollow', exact: true }).click();
-  await expect(page.locator('tbody tr')).toHaveCount(80);
+  await expect(page.locator('tbody tr')).toHaveCount(240);
 });

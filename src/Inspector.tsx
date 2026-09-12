@@ -49,6 +49,8 @@ type Props = {
   pausedSites?: string[];
   onPauseSite?: (id: string) => void;
   controlsDisabled?: boolean;
+  pageLimits?: Record<string, number>;
+  onPageLimitChange?: (id: string, limit: number) => void;
 };
 
 function IntervalControl({
@@ -106,6 +108,51 @@ function IntervalControl({
         <span>Rychleji</span>
         <span>Pomaleji</span>
       </div>
+    </div>
+  );
+}
+
+function PageLimitControl({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: number;
+  disabled: boolean;
+  onChange: (limit: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    if (!disabled) setDraft(String(value));
+  }, [value, disabled]);
+  return (
+    <div className="interval-control">
+      <label htmlFor="site-page-limit">Limit stránek skenu</label>
+      <input
+        id="site-page-limit"
+        type="number"
+        min={1}
+        max={50}
+        required
+        disabled={disabled}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+        }}
+        onBlur={(event) => {
+          if (disabled) return;
+          if (!event.currentTarget.checkValidity()) {
+            setDraft(String(value));
+            return;
+          }
+          const next = Number(event.currentTarget.value);
+          if (next !== value) onChange(next);
+        }}
+      />
+      <p className="empty-note">
+        1–50 stránek. Změna se uloží po opuštění pole nebo klávesou Enter.
+      </p>
     </div>
   );
 }
@@ -190,7 +237,7 @@ function LinkList({
     );
   return (
     <div className="detail-link-list">
-      {links.map((link) => (
+      {links.slice(0, live ? 200 : undefined).map((link) => (
         <button
           key={link.id}
           onClick={() => onSelect({ type: 'link', id: link.id })}
@@ -209,6 +256,12 @@ function LinkList({
           <ChevronRight size={14} />
         </button>
       ))}
+      {live && links.length > 200 && (
+        <p className="empty-note">
+          Zobrazeno 200 z {links.length} vazeb. Všechny vazby najdeš v tabulce a
+          CSV.
+        </p>
+      )}
     </div>
   );
 }
@@ -225,6 +278,8 @@ export default function Inspector({
   pausedSites = [],
   onPauseSite,
   controlsDisabled = false,
+  pageLimits = {},
+  onPageLimitChange,
 }: Props) {
   const { aggregateConnections, getSite, getPage, pageUrl, pages, live } =
     useGraphData();
@@ -322,6 +377,14 @@ export default function Inspector({
               live={live}
               disabled={controlsDisabled}
               onChange={(value) => onIntervalChange(site.id, value)}
+            />
+          )}
+          {site.scanned && onPageLimitChange && (
+            <PageLimitControl
+              key={site.id}
+              value={pageLimits[site.id] ?? 20}
+              disabled={controlsDisabled}
+              onChange={(limit) => onPageLimitChange(site.id, limit)}
             />
           )}
           {site.scanned && onPauseSite && (

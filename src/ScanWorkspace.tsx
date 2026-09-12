@@ -239,6 +239,7 @@ export default function ScanWorkspace() {
   const [newSiteLimit, setNewSiteLimit] = useState(20);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const refreshEpoch = useRef(0);
+  const actionInFlight = useRef(false);
   const dataset = useMemo(
     () => (scan ? scanToDataset(scan) : undefined),
     [scan],
@@ -274,18 +275,21 @@ export default function ScanWorkspace() {
     let fetching = false;
     let finished = false;
     const refresh = async () => {
-      if (fetching || finished) return;
+      if (fetching || finished || actionInFlight.current) return;
       fetching = true;
       const epoch = refreshEpoch.current;
-      const current = () => !cancelled && epoch === refreshEpoch.current;
+      const current = () =>
+        !cancelled && !actionInFlight.current && epoch === refreshEpoch.current;
       try {
         if (scanId) {
           const snapshot = await api<ScanSnapshot>(
             `/scans/${encodeURIComponent(scanId)}`,
           );
-          if (current()) setScan(snapshot);
-          finished =
-            snapshot.status === 'completed' || snapshot.status === 'limited';
+          if (current()) {
+            setScan(snapshot);
+            finished =
+              snapshot.status === 'completed' || snapshot.status === 'limited';
+          }
         } else {
           const maps = await api<ScanSummary[]>('/scans');
           if (current()) setSaved(maps);
@@ -331,7 +335,9 @@ export default function ScanWorkspace() {
     );
   };
   const action = async (work: () => Promise<void>) => {
-    if (busy) return;
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    refreshEpoch.current += 1;
     setBusy(true);
     setError('');
     setNotice('');
@@ -342,7 +348,10 @@ export default function ScanWorkspace() {
         cause instanceof Error ? cause.message : 'Akci se nepodařilo dokončit.',
       );
     } finally {
+      refreshEpoch.current += 1;
+      actionInFlight.current = false;
       setBusy(false);
+      setRefreshRevision((revision) => revision + 1);
     }
   };
   const checkExtension = () => {
@@ -375,16 +384,25 @@ export default function ScanWorkspace() {
   };
   const changeSite = (
     id: string,
-    change: Partial<Pick<ScanSite, 'intervalMs' | 'paused'>>,
+    change: Partial<Pick<ScanSite, 'intervalMs' | 'paused' | 'maxPages'>>,
   ) => {
     void action(async () => {
       if (!scan) return;
       const sites = scan.sites.map((site) =>
         site.origin === id ? { ...site, ...change } : site,
       );
+      const raisesLimit =
+        change.maxPages !== undefined &&
+        change.maxPages >
+          (scan.sites.find((site) => site.origin === id)?.maxPages ?? 50);
       await api(`/scans/${scan.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ sites }),
+        body: JSON.stringify({
+          sites,
+          ...(scan.status === 'limited' && raisesLimit
+            ? { status: 'paused' }
+            : {}),
+        }),
       });
       setScan(await api<ScanSnapshot>(`/scans/${scan.id}`));
     });
@@ -409,9 +427,7 @@ export default function ScanWorkspace() {
         method: 'POST',
         body: JSON.stringify({ site }),
       });
-      refreshEpoch.current += 1;
       setScan(updated);
-      setRefreshRevision((revision) => revision + 1);
       setRefreshError('');
       setAddingSite(false);
       setNewSiteUrl('');
@@ -562,6 +578,13 @@ export default function ScanWorkspace() {
           Čteme odkazy ze statického HTML. Skenovací kartu nech otevřenou;
           zavření nebo uspání běh přeruší. Uložené výsledky zůstanou dostupné.
         </p>
+        {scan.status === 'limited' && (
+          <p className="scan-note">
+            Dosažen limit skenu. V detailu webu můžeš zvýšit limit stránek až na
+            50 a pokračovat. Pokud už máš 50 stránek nebo je plné úložiště mapy,
+            vytvoř novou mapu.
+          </p>
+        )}
         {(error || refreshError) && (
           <p className="scan-error" role="alert">
             {error || refreshError}
@@ -617,6 +640,10 @@ export default function ScanWorkspace() {
           status: statusLabels[scan.status],
           toolbar,
           controlsDisabled: busy,
+          pageLimits: Object.fromEntries(
+            scan.sites.map((site) => [site.origin, site.maxPages]),
+          ),
+          onPageLimitChange: (id, maxPages) => changeSite(id, { maxPages }),
           pausedSites: scan.sites
             .filter((site) => site.paused)
             .map((site) => site.origin),

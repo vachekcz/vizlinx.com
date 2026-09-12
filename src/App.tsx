@@ -42,6 +42,8 @@ export type LiveWorkspace = {
   pausedSites?: string[];
   intervals?: Record<string, number>;
   controlsDisabled?: boolean;
+  pageLimits?: Record<string, number>;
+  onPageLimitChange?: (id: string, limit: number) => void;
 };
 
 export default function App({
@@ -357,7 +359,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
             >
               <Network size={18} />
               Mapa propojení
-              <span className="nav-count">{visibleSites.length}</span>
+              <span className="nav-count">{mapSites.length}</span>
             </button>
             <button
               className={view === 'table' ? 'nav-item active' : 'nav-item'}
@@ -375,7 +377,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
           )}
           <div className="sidebar-section-label">
             <span>WEBY V MAPĚ</span>
-            <span>{visibleSites.length.toString().padStart(2, '0')}</span>
+            <span>{mapSites.length.toString().padStart(2, '0')}</span>
           </div>
           <label className="search-field">
             <Search size={15} />
@@ -459,7 +461,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   </div>
                 );
               })}
-            {!visibleSites.some((site) =>
+            {!mapSites.some((site) =>
               `${site.domain} ${site.name}`
                 .toLowerCase()
                 .includes(siteSearch.toLowerCase()),
@@ -851,6 +853,8 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                 pausedSites={pausedSites}
                 onPauseSite={live?.onPauseSite}
                 controlsDisabled={live?.controlsDisabled}
+                pageLimits={live?.pageLimits}
+                onPageLimitChange={live?.onPageLimitChange}
                 onIntervalChange={
                   live
                     ? live.onIntervalChange

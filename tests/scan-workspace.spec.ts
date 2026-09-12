@@ -40,6 +40,8 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
     snapshotFailure: 0,
     pairingRequests: 0,
     patchGate: undefined as Promise<void> | undefined,
+    nextSnapshotGate: undefined as Promise<void> | undefined,
+    heldSnapshotStarted: false,
   };
   await page.addInitScript(() => {
     // These tests deliberately exercise the installation path without a runner.
@@ -101,7 +103,18 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
       if (body.sites) scan.sites = body.sites;
       return send({ id: scan.id, status: scan.status, sites: scan.sites });
     }
-    return send(scan);
+    const responseSnapshot = structuredClone(scan);
+    const gate = state.nextSnapshotGate;
+    state.nextSnapshotGate = undefined;
+    if (gate) {
+      state.heldSnapshotStarted = true;
+      await gate;
+      return route.fulfill({
+        json: responseSnapshot,
+        headers: { 'X-Test-Snapshot': 'held' },
+      });
+    }
+    return send(responseSnapshot);
   });
   return state;
 }
@@ -535,4 +548,131 @@ test('preserves the map and new-web input when adding fails and accepts a retry'
     page.getByRole('button', { name: 'Doména third.org', exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId('link-count')).toHaveText('1');
+});
+
+test('ignores snapshots started before settings and pause mutations so later writes retain current settings', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000099', {
+    status: 'running',
+  });
+  const api = await mockApi(page, [scan]);
+  await page.clock.install();
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména example.com', exact: true })
+    .click();
+  const interval = page.getByRole('slider', { name: /Interval skenu/ });
+  const holdNextPoll = async () => {
+    let release = () => {};
+    api.heldSnapshotStarted = false;
+    api.nextSnapshotGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await expect
+      .poll(async () => {
+        await page.clock.fastForward(3000);
+        return api.heldSnapshotStarted;
+      })
+      .toBe(true);
+    return async () => {
+      const response = page.waitForResponse(
+        (response) => response.headers()['x-test-snapshot'] === 'held',
+      );
+      release();
+      await (await response).finished();
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => resolve()),
+          ),
+      );
+    };
+  };
+  const releaseOldSettings = await holdNextPoll();
+  await interval.focus();
+  await interval.press('ArrowRight');
+  await expect(interval).toBeEnabled();
+  await expect(interval).toHaveValue('4');
+  await releaseOldSettings();
+  await expect(interval).toHaveValue('4');
+  await page
+    .getByRole('button', { name: 'Pozastavit skenování webu', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', {
+      name: 'Pokračovat ve skenování webu',
+      exact: true,
+    }),
+  ).toBeEnabled();
+  expect(api.patches.at(-1)?.sites?.[0]).toMatchObject({
+    intervalMs: 4000,
+    paused: true,
+  });
+  const releaseOldStatus = await holdNextPoll();
+  await page
+    .getByRole('button', { name: 'Pozastavit sken', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', { name: 'Pokračovat v rozšíření' }),
+  ).toBeEnabled();
+  await releaseOldStatus();
+  await expect(
+    page.getByRole('button', { name: 'Pokračovat v rozšíření' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Pozastavit sken', exact: true }),
+  ).toHaveCount(0);
+  expect(api.maps.get(scan.id)?.status).toBe('paused');
+  expect(api.maps.get(scan.id)?.sites[0]).toMatchObject({
+    intervalMs: 4000,
+    paused: true,
+  });
+});
+
+test('raises a limited scan page budget through existing settings and retains results for resume', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000099', {
+    status: 'limited',
+    pageCount: 1,
+    results: [savedResult],
+  });
+  const api = await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména example.com', exact: true })
+    .click();
+  const limit = page.getByRole('spinbutton', {
+    name: 'Limit stránek skenu',
+    exact: true,
+  });
+  await expect(limit).toHaveValue('20');
+  await limit.fill('51');
+  await limit.press('Enter');
+  await expect(limit).toHaveValue('20');
+  expect(api.patches).toHaveLength(0);
+  await limit.fill('30');
+  await limit.press('Enter');
+  await expect(
+    page.getByRole('button', { name: 'Pokračovat v rozšíření' }),
+  ).toBeEnabled();
+  expect(api.patches).toEqual([
+    { status: 'paused', sites: [{ ...site, maxPages: 30 }] },
+  ]);
+  expect(api.maps.get(scan.id)?.results).toEqual([savedResult]);
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await page.reload();
+  await page
+    .getByRole('button', { name: 'Doména example.com', exact: true })
+    .click();
+  await expect(limit).toHaveValue('30');
+  api.maps.get(scan.id)!.sites[0].maxPages = 50;
+  api.maps.get(scan.id)!.status = 'limited';
+  await page.reload();
+  await expect(
+    page.getByText(
+      /Pokud už máš 50 stránek nebo je plné úložiště mapy, vytvoř novou mapu/,
+    ),
+  ).toBeVisible();
 });
