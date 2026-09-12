@@ -1,0 +1,143 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  color: #111827;
+  background: #f3f5f7;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 780px;
+  margin: 48px auto;
+  padding: 40px;
+  background: #fff;
+  border: 1px solid #d8dee8;
+  border-radius: 24px;
+}
+.brand {
+  color: inherit;
+  font-size: 30px;
+  font-weight: 800;
+  text-decoration: none;
+  letter-spacing: -1.5px;
+}
+.brand span {
+  color: #e75525;
+  padding-left: 3px;
+}
+.eyebrow {
+  margin-top: 48px;
+  color: #b73b15;
+  font-size: 11px;
+  letter-spacing: 2px;
+  font-weight: 800;
+}
+h1 {
+  font-size: clamp(32px, 5vw, 48px);
+  line-height: 1.08;
+  letter-spacing: -2px;
+  margin: 16px 0;
+}
+.intro,
+aside {
+  color: #596273;
+  line-height: 1.65;
+}
+ul {
+  padding: 0;
+  margin: 32px 0;
+  list-style: none;
+}
+li {
+  border-top: 1px solid #d8dee8;
+  padding: 16px 0;
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+li span,
+#progress {
+  color: #596273;
+  font-size: 13px;
+}
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+button {
+  cursor: pointer;
+  background: #e34b20;
+  color: #fff;
+  border: 1px solid transparent;
+  padding: 13px 18px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 14px;
+}
+button.secondary {
+  background: transparent;
+  color: inherit;
+  border-color: #adb6c5;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid #2563eb;
+  outline-offset: 3px;
+}
+#status {
+  margin-top: 28px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+#map {
+  color: #b73b15;
+  font-weight: 700;
+}
+aside {
+  border-top: 1px solid #d8dee8;
+  margin-top: 32px;
+  padding-top: 20px;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  main {
+    margin: 0;
+    padding: 24px;
+    border: 0;
+    border-radius: 0;
+    min-height: 100vh;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #edf2ff;
+    background: #0b101d;
+  }
+  main {
+    background: #141c2d;
+    border-color: #344058;
+  }
+  .intro,
+  aside,
+  li span,
+  #progress {
+    color: #aebbd1;
+  }
+  li,
+  aside {
+    border-color: #344058;
+  }
+  .eyebrow,
+  #map {
+    color: #ff8b64;
+  }
+}

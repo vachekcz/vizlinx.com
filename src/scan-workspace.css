@@ -1,0 +1,282 @@
+.scan-workspace {
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--app-bg);
+}
+.scan-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 5%;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.scan-header > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.scan-header .theme-toggle {
+  margin-left: auto;
+}
+.scan-brand {
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -2px;
+}
+.scan-brand span,
+.scan-intro h1 span {
+  color: var(--accent);
+}
+.scan-content {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 52px 24px;
+}
+.scan-intro {
+  max-width: 760px;
+  margin-bottom: 34px;
+}
+.scan-eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+}
+.scan-intro h1 {
+  font-size: clamp(30px, 4vw, 46px);
+  line-height: 1.15;
+  margin: 14px 0;
+  letter-spacing: -1.5px;
+}
+.scan-intro > p {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.7;
+}
+.scan-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.scan-card,
+.scan-install {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 26px;
+}
+.scan-card h2 {
+  font-size: 19px;
+  margin: 0 0 22px;
+}
+.scan-card label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 9px;
+}
+.scan-card textarea,
+.scan-card input {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--app-bg);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 400;
+  padding: 12px;
+  margin: 8px 0;
+}
+.scan-card textarea {
+  resize: vertical;
+  min-height: 125px;
+  line-height: 1.6;
+}
+.scan-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 22px;
+}
+.scan-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.scan-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.scan-button:hover {
+  background: var(--raised);
+}
+.scan-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.scan-button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.scan-button-primary:hover {
+  background: var(--accent);
+  filter: brightness(1.07);
+}
+.scan-card form > .scan-button {
+  margin-top: 14px;
+}
+.scan-install {
+  padding: 22px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.scan-install summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.scan-install p,
+.scan-install li {
+  color: var(--muted);
+}
+.scan-install ol {
+  padding-left: 20px;
+}
+.scan-install li {
+  margin: 10px 0;
+}
+.scan-install a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+}
+.scan-install code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.scan-saved {
+  margin-top: 22px;
+}
+.scan-saved ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.scan-saved li + li {
+  border-top: 1px solid var(--line);
+}
+.scan-saved li button {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 7px;
+  width: 100%;
+  padding: 15px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.scan-saved strong {
+  font-size: 13px;
+}
+.scan-saved span,
+.scan-saved small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.scan-error,
+.scan-notice {
+  padding: 12px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.scan-error {
+  color: var(--site-journal);
+}
+.scan-notice {
+  color: var(--accent);
+}
+.scan-live-controls {
+  padding: 12px 0 18px;
+}
+.scan-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+}
+.scan-stats {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.scan-live-controls .scan-install {
+  margin-top: 12px;
+  max-width: 720px;
+}
+.scan-issues {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.scan-issues ul {
+  max-height: 180px;
+  overflow: auto;
+  padding-left: 20px;
+}
+.scan-issues li {
+  padding: 5px 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .scan-header {
+    padding: 16px;
+    gap: 12px;
+  }
+  .scan-header > span {
+    display: none;
+  }
+  .scan-content {
+    padding: 32px 16px;
+  }
+  .scan-columns {
+    grid-template-columns: 1fr;
+  }
+  .scan-card {
+    padding: 21px;
+  }
+  .scan-form-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .scan-stats {
+    width: 100%;
+    margin: 6px 0 0;
+  }
+}

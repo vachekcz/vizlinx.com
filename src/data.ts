@@ -1,3 +1,5 @@
+import type { PageStatus } from '../shared/scan';
+
 export type Site = {
   id: string;
   domain: string;
@@ -9,16 +11,25 @@ export type Site = {
   y: number;
   radius: number;
   scanned: boolean;
+  origin?: string;
 };
 
-export type Page = { id: string; siteId: string; path: string; title: string };
+export type Page = {
+  id: string;
+  siteId: string;
+  path: string;
+  title: string;
+  url?: string;
+  status?: PageStatus | 'known';
+  error?: string;
+};
 export type Link = {
   id: string;
   source: Page;
   target: Page;
   anchor: string;
   rel: string;
-  region: 'Obsah' | 'Navigace' | 'Patička';
+  region: 'Obsah' | 'Navigace' | 'Patička' | 'Neznámé';
   occurrences: number;
   observedAt: string;
 };
@@ -28,6 +39,7 @@ export type Connection = {
   target: Site;
   links: Link[];
 };
+export type GraphDataset = { sites: Site[]; pages: Page[]; links: Link[] };
 export type Selection =
   | { type: 'site'; id: string }
   | { type: 'page'; id: string }

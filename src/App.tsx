@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -25,29 +26,69 @@ import {
 } from 'lucide-react';
 import Graph from './Graph';
 import Inspector, { SiteMark } from './Inspector';
-import {
-  aggregateConnections,
-  getSite,
-  links as defaultLinks,
-  strengthLinks,
-  pages,
-  pageUrl,
-  sites,
-} from './data';
-import type { Selection } from './data';
+import { links as defaultLinks, strengthLinks } from './data';
+import type { GraphDataset, Selection } from './data';
+import { demoDataset, GraphDataProvider, useGraphData } from './graph-data';
 import { useTheme } from './themes';
 import { connectionStyles } from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
 
-const scannedSites = sites.filter((site) => site.scanned);
+export type LiveWorkspace = {
+  title: string;
+  status: string;
+  toolbar?: ReactNode;
+  onPauseSite?: (id: string) => void;
+  onIntervalChange?: (id: string, seconds: number) => void;
+  pausedSites?: string[];
+  intervals?: Record<string, number>;
+  controlsDisabled?: boolean;
+};
 
-export default function App() {
+export default function App({
+  dataset = demoDataset,
+  live,
+}: {
+  dataset?: GraphDataset;
+  live?: LiveWorkspace;
+}) {
+  return (
+    <GraphDataProvider dataset={dataset} live={Boolean(live)}>
+      <Workspace live={live} />
+    </GraphDataProvider>
+  );
+}
+
+function Workspace({ live }: { live?: LiveWorkspace }) {
+  const {
+    sites,
+    pages,
+    links: datasetLinks,
+    getSite,
+    pageUrl,
+    aggregateConnections,
+  } = useGraphData();
+  const scannedSites = sites.filter((site) => site.scanned);
+  const firstSiteId = scannedSites[0]?.id ?? sites[0]?.id;
+  const initialSelection: Selection | null = firstSiteId
+    ? {
+        type: 'site',
+        id:
+          !live &&
+          new URLSearchParams(window.location.search).get('detail') === 'index'
+            ? 'index'
+            : firstSiteId,
+      }
+    : null;
   const { theme, toggleTheme } = useTheme();
   const [strengthDemo, setStrengthDemo] = useState(
     () =>
       new URLSearchParams(window.location.search).get('density') === 'scale',
   );
-  const links = strengthDemo ? strengthLinks : defaultLinks;
+  const links = live
+    ? datasetLinks
+    : strengthDemo
+      ? strengthLinks
+      : datasetLinks;
   const [connectionStyle, setConnectionStyle] = useState<ConnectionStyleId>(
     () =>
       connectionStyles.find(
@@ -66,14 +107,11 @@ export default function App() {
   const selectedAppearanceUrl = new URL(window.location.href);
   selectedAppearanceUrl.searchParams.delete('connections');
   const [view, setView] = useState<'map' | 'table'>('map');
-  const [selection, setSelection] = useState<Selection | null>({
-    type: 'site',
-    id:
-      new URLSearchParams(window.location.search).get('detail') === 'index'
-        ? 'index'
-        : 'atlas',
-  });
+  const [selection, setSelection] = useState<Selection | null>(
+    initialSelection,
+  );
   const [expanded, setExpanded] = useState<string[]>(() =>
+    !live &&
     new URLSearchParams(window.location.search).get('detail') === 'index'
       ? ['index']
       : [],
@@ -108,41 +146,60 @@ export default function App() {
     );
     setView('map');
   };
-  const [showExternal, setShowExternal] = useState(false);
+  const [showExternal, setShowExternal] = useState(Boolean(live));
   const [siteSearch, setSiteSearch] = useState('');
   const [linkSearch, setLinkSearch] = useState('');
   const [nofollowOnly, setNofollowOnly] = useState(false);
   const [running, setRunning] = useState(false);
-  const [pausedSites, setPausedSites] = useState<string[]>([]);
+  const [demoPausedSites, setPausedSites] = useState<string[]>([]);
   const [revealedIds, setRevealedIds] = useState<string[]>(
     links.map((link) => link.id),
   );
-  const [intervals, setIntervals] = useState<Record<string, number>>(
+  const [demoIntervals, setIntervals] = useState<Record<string, number>>(
     Object.fromEntries(sites.map((site) => [site.id, 3])),
   );
+  const pausedSites = live?.pausedSites ?? demoPausedSites;
+  const intervals = live?.intervals ?? demoIntervals;
+  const pauseSite = (id: string) => {
+    if (live) live.onPauseSite?.(id);
+    else
+      setPausedSites((previous) =>
+        previous.includes(id)
+          ? previous.filter((item) => item !== id)
+          : [...previous, id],
+      );
+  };
   const [resetKey, setResetKey] = useState(0);
   const elapsed = useRef<Record<string, number>>({});
   const helpRef = useRef<HTMLDialogElement>(null);
   const complete = revealedIds.length === links.length;
   const visibleSites = sites.filter((site) => site.scanned || showExternal);
+  const mapSites = live
+    ? [
+        ...visibleSites.filter((site) => site.scanned),
+        ...visibleSites.filter((site) => !site.scanned).slice(0, 10),
+      ]
+    : visibleSites;
+  const hiddenMapSites = visibleSites.length - mapSites.length;
+  const mapSiteIds = new Set(mapSites.map((site) => site.id));
   const visibleSiteIds = new Set(visibleSites.map((site) => site.id));
   const visibleLinks = links.filter(
     (link) =>
-      revealedIds.includes(link.id) &&
+      (Boolean(live) || revealedIds.includes(link.id)) &&
       visibleSiteIds.has(link.source.siteId) &&
       visibleSiteIds.has(link.target.siteId),
   );
   const connections = aggregateConnections(visibleLinks);
   const filteredLinks = visibleLinks.filter(
     (link) =>
-      (!nofollowOnly || link.rel === 'nofollow') &&
+      (!nofollowOnly || link.rel.split(/\s+/).includes('nofollow')) &&
       `${pageUrl(link.source)} ${pageUrl(link.target)} ${link.anchor}`
         .toLowerCase()
         .includes(linkSearch.toLowerCase()),
   );
 
   useEffect(() => {
-    if (!running) return;
+    if (live || !running) return;
     const timer = window.setInterval(() => {
       const readySites = scannedSites.filter((site) => {
         if (pausedSites.includes(site.id)) return false;
@@ -163,7 +220,7 @@ export default function App() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [running, pausedSites, intervals, links]);
+  }, [running, pausedSites, intervals, links, live]);
 
   useEffect(() => {
     if (complete) setRunning(false);
@@ -173,17 +230,18 @@ export default function App() {
     elapsed.current = {};
     setRevealedIds([]);
     setPausedSites([]);
-    setSelection({ type: 'site', id: 'atlas' });
+    setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
     setRunning(true);
   };
   const select = (next: Selection) => setSelection(next);
   const overview = () => {
     setExpanded([]);
     setResetKey((previous) => previous + 1);
-    setSelection({ type: 'site', id: 'atlas' });
+    setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
   };
   const toggleExternal = () => {
-    if (showExternal) setSelection({ type: 'site', id: 'atlas' });
+    if (showExternal)
+      setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
     setShowExternal(!showExternal);
   };
   const exportCsv = () => {
@@ -206,14 +264,19 @@ export default function App() {
         link.region,
         String(link.occurrences),
         link.observedAt,
-        'demo',
+        live ? 'local_scan' : 'demo',
       ]),
     ];
     const csv =
       '\uFEFF' +
       rows
         .map((row) =>
-          row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(','),
+          row
+            .map((cell) => {
+              const literal = /^[=+\-@\t\r\n]/.test(cell) ? `'${cell}` : cell;
+              return `"${literal.replaceAll('"', '""')}"`;
+            })
+            .join(','),
         )
         .join('\r\n');
     const url = URL.createObjectURL(
@@ -221,7 +284,7 @@ export default function App() {
     );
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'vizlinx-demo.csv';
+    anchor.download = live ? 'vizlinx-scan.csv' : 'vizlinx-demo.csv';
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -238,8 +301,8 @@ export default function App() {
         <div className="breadcrumb">
           <span>Pracovní prostor</span>
           <ChevronRight size={13} />
-          <strong>Studio Atlas</strong>
-          <span className="demo-badge">DEMO</span>
+          <strong>{live?.title ?? 'Studio Atlas'}</strong>
+          <span className="demo-badge">{live ? 'SKEN' : 'DEMO'}</span>
         </div>
         <div className="header-actions">
           <button
@@ -255,16 +318,23 @@ export default function App() {
             <span>Noční režim</span>
           </button>
           <span className="local-indicator">
-            <i /> Ukázková data
+            <i /> {live ? 'Lokální sken' : 'Ukázková data'}
           </span>
-          <button
-            className="icon-button help-button"
-            aria-label="Jak demo funguje"
-            onClick={() => helpRef.current?.showModal()}
-          >
-            <CircleHelp size={19} />
-          </button>
-          <span className="avatar">A</span>
+          {!live && (
+            <a className="outline-button" href="/scan">
+              Skenovat vlastní weby
+            </a>
+          )}
+          {!live && (
+            <button
+              className="icon-button help-button"
+              aria-label="Jak demo funguje"
+              onClick={() => helpRef.current?.showModal()}
+            >
+              <CircleHelp size={19} />
+            </button>
+          )}
+          {!live && <span className="avatar">A</span>}
         </div>
       </header>
 
@@ -275,8 +345,8 @@ export default function App() {
               <Layers2 size={19} />
             </span>
             <span>
-              <strong>Studio Atlas</strong>
-              <small>Ukázkový projekt</small>
+              <strong>{live?.title ?? 'Studio Atlas'}</strong>
+              <small>{live ? 'Vlastní sken' : 'Ukázkový projekt'}</small>
             </span>
             <span className="project-dot" />
           </div>
@@ -298,6 +368,11 @@ export default function App() {
               <span className="nav-count">{visibleLinks.length}</span>
             </button>
           </nav>
+          {hiddenMapSites > 0 && (
+            <p className="empty-note">
+              Dalších {hiddenMapSites} odkazovaných webů najdete v tabulce.
+            </p>
+          )}
           <div className="sidebar-section-label">
             <span>WEBY V MAPĚ</span>
             <span>{visibleSites.length.toString().padStart(2, '0')}</span>
@@ -313,7 +388,7 @@ export default function App() {
             <span>⌕</span>
           </label>
           <div className="site-list">
-            {visibleSites
+            {mapSites
               .filter((site) =>
                 `${site.domain} ${site.name}`
                   .toLowerCase()
@@ -324,15 +399,21 @@ export default function App() {
                 const siteComplete = links
                   .filter((link) => link.source.siteId === site.id)
                   .every((link) => revealedIds.includes(link.id));
-                const state = !site.scanned
-                  ? 'Neprozkoumáno'
-                  : siteComplete
-                    ? 'Ukázka načtená'
+                const state = live
+                  ? !site.scanned
+                    ? 'Známý cíl odkazu'
                     : paused
                       ? 'Pozastaveno'
-                      : running
-                        ? 'Simulace běží'
-                        : 'Připraveno';
+                      : `${pages.filter((page) => page.siteId === site.id && page.status === 'ok').length} načteno · ${pages.filter((page) => page.siteId === site.id).length} URL`
+                  : !site.scanned
+                    ? 'Neprozkoumáno'
+                    : siteComplete
+                      ? 'Ukázka načtená'
+                      : paused
+                        ? 'Pozastaveno'
+                        : running
+                          ? 'Simulace běží'
+                          : 'Připraveno';
                 return (
                   <div
                     className={`site-list-row ${selection?.type === 'site' && selection.id === site.id ? 'selected' : ''}`}
@@ -358,22 +439,17 @@ export default function App() {
                         </small>
                       </span>
                     </button>
-                    {site.scanned && (
+                    {site.scanned && (!live || live.onPauseSite) && (
                       <button
                         className="site-pause icon-button"
                         aria-label={`${paused ? 'Pokračovat' : 'Pozastavit'} ${site.domain}`}
+                        disabled={live?.controlsDisabled}
                         aria-pressed={paused}
-                        onClick={() =>
-                          setPausedSites((previous) =>
-                            paused
-                              ? previous.filter((id) => id !== site.id)
-                              : [...previous, site.id],
-                          )
-                        }
+                        onClick={() => pauseSite(site.id)}
                       >
                         {paused ? (
                           <Play size={13} />
-                        ) : running && !siteComplete ? (
+                        ) : live || (running && !siteComplete) ? (
                           <Pause size={13} />
                         ) : (
                           <Check size={13} />
@@ -389,31 +465,33 @@ export default function App() {
                 .includes(siteSearch.toLowerCase()),
             ) && <p className="empty-note">Žádná doména neodpovídá hledání.</p>}
           </div>
-          <div className="sidebar-bottom">
-            <div className="discovery-card">
-              <span className="discovery-icon">
-                <Sparkles size={18} />
-              </span>
-              <h3>
-                Malé odkazy.
-                <br />
-                Velké souvislosti.
-              </h3>
-              <p>Prozkoumejte, co vaše weby spojuje.</p>
-              <button onClick={() => helpRef.current?.showModal()}>
-                Jak číst mapu <ArrowRight size={14} />
-              </button>
-              <div className="decorative-orbit" aria-hidden="true">
-                <i />
-                <i />
-                <i />
+          {!live && (
+            <div className="sidebar-bottom">
+              <div className="discovery-card">
+                <span className="discovery-icon">
+                  <Sparkles size={18} />
+                </span>
+                <h3>
+                  Malé odkazy.
+                  <br />
+                  Velké souvislosti.
+                </h3>
+                <p>Prozkoumejte, co vaše weby spojuje.</p>
+                <button onClick={() => helpRef.current?.showModal()}>
+                  Jak číst mapu <ArrowRight size={14} />
+                </button>
+                <div className="decorative-orbit" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+              </div>
+              <div className="sidebar-footnote">
+                <span>VIZLINX EXPLORER</span>
+                <span>v0.1</span>
               </div>
             </div>
-            <div className="sidebar-footnote">
-              <span>VIZLINX EXPLORER</span>
-              <span>v0.1</span>
-            </div>
-          </div>
+          )}
         </aside>
 
         <main className="main">
@@ -425,32 +503,38 @@ export default function App() {
               <h1>
                 Mapa souvislostí<span>.</span>
               </h1>
-              <p>Každý web je součástí většího příběhu.</p>
+              <p>
+                {live ? live.title : 'Každý web je součástí většího příběhu.'}
+              </p>
             </div>
-            <div className="scan-actions">
-              <button
-                className="icon-button restart-button"
-                aria-label="Přehrát demo od začátku"
-                onClick={restart}
-              >
-                <RotateCcw size={17} />
-              </button>
-              <button
-                className="primary-button"
-                onClick={() => (complete ? restart() : setRunning(!running))}
-              >
-                {running ? (
-                  <Pause size={15} />
-                ) : (
-                  <Play size={15} fill="currentColor" />
-                )}
-                {running
-                  ? 'Pozastavit demo'
-                  : complete
-                    ? 'Přehrát demo'
-                    : 'Pokračovat v demu'}
-              </button>
-            </div>
+            {live ? (
+              live.toolbar
+            ) : (
+              <div className="scan-actions">
+                <button
+                  className="icon-button restart-button"
+                  aria-label="Přehrát demo od začátku"
+                  onClick={restart}
+                >
+                  <RotateCcw size={17} />
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => (complete ? restart() : setRunning(!running))}
+                >
+                  {running ? (
+                    <Pause size={15} />
+                  ) : (
+                    <Play size={15} fill="currentColor" />
+                  )}
+                  {running
+                    ? 'Pozastavit demo'
+                    : complete
+                      ? 'Přehrát demo'
+                      : 'Pokračovat v demu'}
+                </button>
+              </div>
+            )}
           </section>
           <div className="workspace-stats">
             <span>
@@ -460,9 +544,13 @@ export default function App() {
             <span>
               <FileText size={15} />
               <strong>
-                {pages.filter((page) => getSite(page.siteId).scanned).length}
+                {
+                  pages.filter((page) =>
+                    live ? page.status === 'ok' : getSite(page.siteId).scanned,
+                  ).length
+                }
               </strong>{' '}
-              prozkoumaných stránek
+              {live ? 'úspěšně načtených stránek' : 'prozkoumaných stránek'}
             </span>
             <span>
               <Link2 size={15} />
@@ -473,45 +561,51 @@ export default function App() {
             </span>
             <div className="scan-status" role="status">
               <i className={running ? 'live-dot' : ''} />
-              {running
-                ? 'Simulovaný sken běží'
-                : complete
-                  ? 'Ukázka je připravená k prozkoumání'
-                  : 'Simulace pozastavena'}
+              {live
+                ? live.status
+                : running
+                  ? 'Simulovaný sken běží'
+                  : complete
+                    ? 'Ukázka je připravená k prozkoumání'
+                    : 'Simulace pozastavena'}
             </div>
           </div>
-          <div className="connection-study-tools">
-            <a href="/connections/lab/">
-              Jen spojnice · škála 1–100+ <ArrowRight size={13} />
-            </a>
-            <label>
-              <input
-                type="checkbox"
-                checked={strengthDemo}
-                onChange={(event) => {
-                  const enabled = event.target.checked;
-                  setStrengthDemo(enabled);
-                  setRevealedIds(
-                    (enabled ? strengthLinks : defaultLinks).map(
-                      (link) => link.id,
-                    ),
-                  );
-                  setRunning(false);
-                  setPausedSites([]);
-                  elapsed.current = {};
-                  setExpanded([]);
-                  setSelection({ type: 'site', id: 'atlas' });
-                  setResetKey((previous) => previous + 1);
-                  const url = new URL(window.location.href);
-                  if (enabled) url.searchParams.set('density', 'scale');
-                  else url.searchParams.delete('density');
-                  window.history.replaceState(null, '', url);
-                }}
-              />
-              Ukázková data 1–100+
-            </label>
-          </div>
-          {showConnectionStudies && (
+          {!live && (
+            <div className="connection-study-tools">
+              <a href="/connections/lab/">
+                Jen spojnice · škála 1–100+ <ArrowRight size={13} />
+              </a>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={strengthDemo}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setStrengthDemo(enabled);
+                    setRevealedIds(
+                      (enabled ? strengthLinks : defaultLinks).map(
+                        (link) => link.id,
+                      ),
+                    );
+                    setRunning(false);
+                    setPausedSites([]);
+                    elapsed.current = {};
+                    setExpanded([]);
+                    setSelection(
+                      firstSiteId ? { type: 'site', id: firstSiteId } : null,
+                    );
+                    setResetKey((previous) => previous + 1);
+                    const url = new URL(window.location.href);
+                    if (enabled) url.searchParams.set('density', 'scale');
+                    else url.searchParams.delete('density');
+                    window.history.replaceState(null, '', url);
+                  }}
+                />
+                Ukázková data 1–100+
+              </label>
+            </div>
+          )}
+          {!live && showConnectionStudies && (
             <section
               className="connection-studies"
               aria-label="Varianty zobrazení vazeb"
@@ -591,10 +685,24 @@ export default function App() {
                   </button>
                 )}
               </div>
+              {live && view === 'map' && (
+                <p className="empty-note">
+                  Mapa ukazuje nejvýše 10 odkazovaných webů; detail nejvýše 60
+                  URL a 200 vazeb v jednom směru.{' '}
+                  {hiddenMapSites > 0
+                    ? `${hiddenMapSites} webů je mimo mapu. `
+                    : ''}
+                  Všechny zjištěné vazby zůstávají v tabulce a CSV.
+                </p>
+              )}
               {view === 'map' ? (
                 <Graph
-                  sites={visibleSites}
-                  links={visibleLinks}
+                  sites={mapSites}
+                  links={visibleLinks.filter(
+                    (link) =>
+                      mapSiteIds.has(link.source.siteId) &&
+                      mapSiteIds.has(link.target.siteId),
+                  )}
                   selection={selection}
                   onSelect={select}
                   expanded={visibleExpanded}
@@ -713,7 +821,7 @@ export default function App() {
                   </div>
                   <div className="table-footer">
                     Zobrazeno {filteredLinks.length} z {visibleLinks.length}{' '}
-                    vazeb <span>Ukázková data</span>
+                    vazeb <span>{live ? 'Lokální sken' : 'Ukázková data'}</span>
                   </div>
                 </div>
               )}
@@ -740,10 +848,20 @@ export default function App() {
                 onSelect={select}
                 onClose={() => setSelection(null)}
                 intervals={intervals}
-                onIntervalChange={(id, interval) => {
-                  elapsed.current[id] = 0;
-                  setIntervals((previous) => ({ ...previous, [id]: interval }));
-                }}
+                pausedSites={pausedSites}
+                onPauseSite={live?.onPauseSite}
+                controlsDisabled={live?.controlsDisabled}
+                onIntervalChange={
+                  live
+                    ? live.onIntervalChange
+                    : (id, interval) => {
+                        elapsed.current[id] = 0;
+                        setIntervals((previous) => ({
+                          ...previous,
+                          [id]: interval,
+                        }));
+                      }
+                }
               />
             )}
           </div>

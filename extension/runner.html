@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lokální skener · Vizlinx</title>
+    <link rel="stylesheet" href="runner.css" />
+  </head>
+  <body>
+    <main>
+      <a
+        class="brand"
+        href="https://vizlinx.com"
+        target="_blank"
+        rel="noreferrer"
+        >vizlinx<span>●</span></a
+      >
+      <p class="eyebrow">LOKÁLNÍ SKENER · PROTOTYP</p>
+      <h1>Skutečné odkazy.<br />Z vašeho prohlížeče.</h1>
+      <p class="intro">
+        Rozšíření načítá veřejné HTML vybraných domén bez přihlašovacích
+        cookies. Do mapy odesílá nalezené odkazy a stav stránek.
+      </p>
+      <ul id="sites" aria-label="Povolený rozsah skenu"></ul>
+      <div class="actions">
+        <button id="start" disabled>Povolit domény a spustit</button>
+        <button id="pause" class="secondary" disabled>Pozastavit</button>
+      </div>
+      <p id="status" role="status">Načítám uložený sken…</p>
+      <p id="progress"></p>
+      <a id="map" hidden target="_blank" rel="noreferrer">Otevřít mapu ↗</a>
+      <aside>
+        Ponechte tuto kartu otevřenou po dobu skenování. Po zavření se práce
+        přeruší; rozšíření můžete znovu otevřít jeho ikonou a pokračovat.
+        JavaScript stránek se nespouští a přesměrování se nenásledují.
+      </aside>
+    </main>
+    <script type="module" src="runner.js"></script>
+  </body>
+</html>

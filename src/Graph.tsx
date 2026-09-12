@@ -8,7 +8,7 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide-react';
-import { aggregateConnections, pages } from './data';
+import { pageStatusLabel, useGraphData } from './graph-data';
 import type { Link, Page, Selection, Site } from './data';
 import ConnectionStroke from './ConnectionStroke';
 import {
@@ -39,7 +39,7 @@ function activate(event: KeyboardEvent<SVGGElement>, action: () => void) {
   }
 }
 
-function pageLayout(site: Site, compact: boolean) {
+function calculatePageLayout(site: Site, compact: boolean, pages: Page[]) {
   const count = pages.filter((page) => page.siteId === site.id).length;
   const columns = count > 6 ? (compact ? 3 : 4) : 2;
   const rows = Math.ceil(count / columns);
@@ -51,11 +51,16 @@ function pageLayout(site: Site, compact: boolean) {
   return { columns, rows, width, radius };
 }
 
-function pagePosition(page: Page, site: Site, compact: boolean) {
+function calculatePagePosition(
+  page: Page,
+  site: Site,
+  compact: boolean,
+  pages: Page[],
+) {
   const index = pages
     .filter((item) => item.siteId === site.id)
     .findIndex((item) => item.id === page.id);
-  const { columns, rows, width } = pageLayout(site, compact);
+  const { columns, rows, width } = calculatePageLayout(site, compact, pages);
   return {
     x: site.x - width / 2 + 15 + (index % columns) * 112,
     y: site.y - ((rows - 1) * 43) / 2 + Math.floor(index / columns) * 43,
@@ -67,10 +72,13 @@ function makeRoomForExpansion(
   expanded: string[],
   anchorId: string,
   compact: boolean,
+  pages: Page[],
 ) {
   const placed = sites.map((site) => ({ ...site }));
   const radii = placed.map((site) =>
-    expanded.includes(site.id) ? pageLayout(site, compact).radius : site.radius,
+    expanded.includes(site.id)
+      ? calculatePageLayout(site, compact, pages).radius
+      : site.radius,
   );
   // Only overlapping neighbours move; the newly expanded domain stays pinned.
   for (let pass = 0; pass < 60; pass += 1) {
@@ -113,6 +121,26 @@ export default function Graph({
   resetKey,
   connectionStyle,
 }: Props) {
+  const { pages: allPages, aggregateConnections, live } = useGraphData();
+  const pageCounts = new Map<string, number>();
+  const pages = live
+    ? allPages.filter((page) => {
+        const count = pageCounts.get(page.siteId) ?? 0;
+        pageCounts.set(page.siteId, count + 1);
+        return count < 60;
+      })
+    : allPages;
+  const renderedPageIds = new Set(pages.map((page) => page.id));
+  const markerId = (id: string) =>
+    live
+      ? `arrow-${Array.from(id)
+          .map((character) => character.charCodeAt(0).toString(16))
+          .join('-')}`
+      : `arrow-${id}`;
+  const pageLayout = (site: Site, compact: boolean) =>
+    calculatePageLayout(site, compact, pages);
+  const pagePosition = (page: Page, site: Site, compact: boolean) =>
+    calculatePagePosition(page, site, compact, pages);
   const svgRef = useRef<SVGSVGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
@@ -155,8 +183,8 @@ export default function Graph({
     compact
       ? {
           ...site,
-          x: mobilePositions[site.id][0],
-          y: mobilePositions[site.id][1],
+          x: mobilePositions[site.id]?.[0] ?? site.x * 0.6,
+          y: mobilePositions[site.id]?.[1] ?? site.y,
         }
       : site,
   );
@@ -165,6 +193,7 @@ export default function Graph({
     resetKey: number;
     expanded: string[];
     visibleIds: string[];
+    pageCounts: string;
   } | null>(null);
   useLayoutEffect(() => {
     const previous = previousLayout.current;
@@ -177,13 +206,20 @@ export default function Graph({
     const newVisibleSite = inputSites.some(
       (site) => !previous?.visibleIds.includes(site.id),
     );
+    const pageCounts = focusedExpanded
+      .map((id) => `${id}:${pages.filter((page) => page.siteId === id).length}`)
+      .join('|');
+    const resizedExpansion =
+      previous !== null && previous.pageCounts !== pageCounts;
     previousLayout.current = {
       compact,
       resetKey,
       expanded: focusedExpanded,
       visibleIds: inputSites.map((site) => site.id),
+      pageCounts,
     };
-    if (!reset && added.length === 0 && !newVisibleSite) return;
+    if (!reset && added.length === 0 && !newVisibleSite && !resizedExpansion)
+      return;
     const anchorId = [...added, ...focusedExpanded].find((id) =>
       inputSites.some((site) => site.id === id),
     );
@@ -196,7 +232,13 @@ export default function Graph({
         y: site.y + (offsets[site.id]?.y ?? 0),
       }));
       const placed = anchorId
-        ? makeRoomForExpansion(positioned, focusedExpanded, anchorId, compact)
+        ? makeRoomForExpansion(
+            positioned,
+            focusedExpanded,
+            anchorId,
+            compact,
+            pages,
+          )
         : positioned;
       return {
         ...offsets,
@@ -211,7 +253,7 @@ export default function Graph({
         ),
       };
     });
-  }, [compact, resetKey, focusedExpanded, inputSites]);
+  }, [compact, resetKey, focusedExpanded, inputSites, pages]);
 
   const sites = layoutSites.map((site) => ({
     ...site,
@@ -359,19 +401,21 @@ export default function Graph({
       className={`graph-area ${running ? 'is-running' : ''} ${denseSite ? 'has-dense-site' : ''}`}
     >
       <div className="map-caption">
-        <span className="tiny-cross">+</span> STUDIO ATLAS <span>/</span>{' '}
-        EKOSYSTÉM WEBŮ
+        <span className="tiny-cross">+</span>{' '}
+        {live ? 'LOKÁLNÍ SKEN' : 'STUDIO ATLAS'} <span>/</span> EKOSYSTÉM WEBŮ
       </div>
-      <button
-        className="dense-demo-button"
-        onClick={() => {
-          onSelect({ type: 'site', id: 'index' });
-          onFocusSite('index');
-        }}
-      >
-        <Layers2 size={13} />
-        Ukázka: 20 stránek
-      </button>
+      {!live && (
+        <button
+          className="dense-demo-button"
+          onClick={() => {
+            onSelect({ type: 'site', id: 'index' });
+            onFocusSite('index');
+          }}
+        >
+          <Layers2 size={13} />
+          Ukázka: 20 stránek
+        </button>
+      )}
       <svg
         ref={svgRef}
         className={`graph ${dragging ? 'is-dragging' : ''}`}
@@ -399,7 +443,7 @@ export default function Graph({
           {sites.map((site) => (
             <marker
               key={site.id}
-              id={`arrow-${site.id}`}
+              id={markerId(site.id)}
               viewBox="0 0 10 10"
               refX="8"
               refY="5"
@@ -549,61 +593,72 @@ export default function Graph({
                 className={`connection ${selected || related ? 'is-related' : ''}`}
               >
                 {showPages ? (
-                  connection.links.map((link) => {
-                    const a = isExpanded(source.id)
-                      ? pagePosition(link.source, source, compact)
-                      : from;
-                    const b = isExpanded(target.id)
-                      ? pagePosition(link.target, target, compact)
-                      : to;
-                    const path = `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 + normal.x * 22} ${(a.y + b.y) / 2 + normal.y * 22} ${b.x} ${b.y}`;
-                    const active =
-                      (selection?.type === 'link' &&
-                        selection.id === link.id) ||
-                      (selection?.type === 'page' &&
-                        (selection.id === link.source.id ||
-                          selection.id === link.target.id));
-                    return (
-                      <g
-                        key={link.id}
-                        data-interactive="true"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Odkaz ${source.domain}${link.source.path} → ${target.domain}${link.target.path}`}
-                        onClick={() => onSelect({ type: 'link', id: link.id })}
-                        onKeyDown={(event) =>
-                          activate(event, () =>
-                            onSelect({ type: 'link', id: link.id }),
-                          )
-                        }
-                        className="page-edge"
-                      >
-                        <path
-                          d={path}
-                          stroke={source.color}
-                          strokeWidth={active ? 2.8 : 1.1}
-                          opacity={
-                            active
-                              ? 1
-                              : selection?.type === 'page' ||
-                                  selection?.type === 'link'
-                                ? 0.06
-                                : denseSite
-                                  ? 0.18
-                                  : 0.34
+                  connection.links
+                    .filter(
+                      (link) =>
+                        (!isExpanded(source.id) ||
+                          renderedPageIds.has(link.source.id)) &&
+                        (!isExpanded(target.id) ||
+                          renderedPageIds.has(link.target.id)),
+                    )
+                    .slice(0, live ? 200 : undefined)
+                    .map((link) => {
+                      const a = isExpanded(source.id)
+                        ? pagePosition(link.source, source, compact)
+                        : from;
+                      const b = isExpanded(target.id)
+                        ? pagePosition(link.target, target, compact)
+                        : to;
+                      const path = `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 + normal.x * 22} ${(a.y + b.y) / 2 + normal.y * 22} ${b.x} ${b.y}`;
+                      const active =
+                        (selection?.type === 'link' &&
+                          selection.id === link.id) ||
+                        (selection?.type === 'page' &&
+                          (selection.id === link.source.id ||
+                            selection.id === link.target.id));
+                      return (
+                        <g
+                          key={link.id}
+                          data-interactive="true"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Odkaz ${source.domain}${link.source.path} → ${target.domain}${link.target.path}`}
+                          onClick={() =>
+                            onSelect({ type: 'link', id: link.id })
                           }
-                          fill="none"
-                          markerEnd={`url(#arrow-${source.id})`}
-                        />
-                        <path
-                          d={path}
-                          stroke="transparent"
-                          strokeWidth="12"
-                          fill="none"
-                        />
-                      </g>
-                    );
-                  })
+                          onKeyDown={(event) =>
+                            activate(event, () =>
+                              onSelect({ type: 'link', id: link.id }),
+                            )
+                          }
+                          className="page-edge"
+                        >
+                          <path
+                            d={path}
+                            stroke={source.color}
+                            strokeWidth={active ? 2.8 : 1.1}
+                            opacity={
+                              active
+                                ? 1
+                                : selection?.type === 'page' ||
+                                    selection?.type === 'link'
+                                  ? 0.06
+                                  : denseSite
+                                    ? 0.18
+                                    : 0.34
+                            }
+                            fill="none"
+                            markerEnd={`url(#${markerId(source.id)})`}
+                          />
+                          <path
+                            d={path}
+                            stroke="transparent"
+                            strokeWidth="12"
+                            fill="none"
+                          />
+                        </g>
+                      );
+                    })
                 ) : (
                   <g
                     data-interactive="true"
@@ -627,7 +682,7 @@ export default function Graph({
                       color={source.color}
                       count={connection.links.length}
                       selected={selected || related}
-                      markerId={`arrow-${source.id}`}
+                      markerId={markerId(source.id)}
                     />
                     {running && (
                       <path
@@ -675,6 +730,10 @@ export default function Graph({
             const selected =
               selection?.type === 'site' && selection.id === site.id;
             const sitePages = pages.filter((page) => page.siteId === site.id);
+            const knownSitePages = allPages.filter(
+              (page) => page.siteId === site.id,
+            );
+            const knownPageCount = knownSitePages.length;
             const radius = open
               ? pageLayout(site, compact).radius
               : site.radius;
@@ -691,7 +750,7 @@ export default function Graph({
                 className={`site-node ${selected ? 'is-selected' : ''} ${open ? 'is-expanded' : ''}`}
               >
                 {!open &&
-                  sitePages.map((page, index) => {
+                  sitePages.slice(0, 24).map((page, index) => {
                     const angle =
                       (index / sitePages.length) * Math.PI * 2 + 0.3;
                     const distance = radius * 0.71;
@@ -754,7 +813,9 @@ export default function Graph({
                         fill="var(--badge-ink, white)"
                         className="node-initial"
                       >
-                        {site.name === 'Studio Atlas' ? 'a' : site.id.charAt(0)}
+                        {site.name === 'Studio Atlas'
+                          ? 'a'
+                          : site.domain.charAt(0)}
                       </text>
                       <text
                         x={site.x}
@@ -771,9 +832,11 @@ export default function Graph({
                         textAnchor="middle"
                         className="node-meta"
                       >
-                        {site.scanned
-                          ? `${sitePages.length} stránek`
-                          : 'neprozkoumáno'}
+                        {live
+                          ? `${knownSitePages.filter((page) => page.status === 'ok').length} načteno · ${knownPageCount} URL`
+                          : site.scanned
+                            ? `${sitePages.length} stránek`
+                            : 'neprozkoumáno'}
                       </text>
                     </>
                   )}
@@ -795,7 +858,11 @@ export default function Graph({
                       textAnchor="middle"
                       className="node-meta"
                     >
-                      {sitePages.length} stránek · vyberte stránku a sledujte
+                      {sitePages.length}
+                      {live && knownPageCount > sitePages.length
+                        ? ` z ${knownPageCount}`
+                        : ''}{' '}
+                      {live ? 'URL' : 'stránek'} · vyberte stránku a sledujte
                       její vazby
                     </text>
                   )}
@@ -816,9 +883,15 @@ export default function Graph({
                         aria-label={`Stránka ${site.domain}${page.path}`}
                         aria-pressed={active}
                         className="page-node"
+                        data-page-status={page.status}
                         onClick={action}
                         onKeyDown={(event) => activate(event, action)}
                       >
+                        {live && (
+                          <title>
+                            {page.url} · {pageStatusLabel(page)}
+                          </title>
+                        )}
                         <rect
                           x={position.x - 15}
                           y={position.y - 14}
@@ -828,6 +901,11 @@ export default function Graph({
                           fill={active ? site.color : 'var(--surface, #ffffff)'}
                           stroke={site.color}
                           strokeOpacity={active ? 1 : 0.23}
+                          strokeDasharray={
+                            page.status && page.status !== 'ok'
+                              ? '3 2'
+                              : undefined
+                          }
                         />
                         <circle
                           cx={position.x - 4}
@@ -868,7 +946,8 @@ export default function Graph({
       <div className="map-bottom">
         <div className="map-legend">
           <span>
-            <i className="legend-dot" /> Prozkoumaný web
+            <i className="legend-dot" />{' '}
+            {live ? 'Povolený origin' : 'Prozkoumaný web'}
           </span>
           <span>
             <i className="legend-line" /> Směr odkazu

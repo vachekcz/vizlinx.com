@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -6,9 +7,11 @@ import {
   FileText,
   Layers2,
   Link2,
+  Pause,
+  Play,
   X,
 } from 'lucide-react';
-import { aggregateConnections, getPage, getSite, pages, pageUrl } from './data';
+import { pageStatusLabel, useGraphData } from './graph-data';
 import type { Link, Selection, Site } from './data';
 
 const observationFormatter = new Intl.DateTimeFormat('cs-CZ', {
@@ -29,7 +32,7 @@ export function SiteMark({
       className={`site-mark ${small ? 'small' : ''}`}
       style={{ color: site.color, background: site.tint }}
     >
-      {site.id.charAt(0)}
+      {site.domain.charAt(0)}
     </span>
   );
 }
@@ -42,10 +45,73 @@ type Props = {
   onSelect: (selection: Selection) => void;
   onClose: () => void;
   intervals: Record<string, number>;
-  onIntervalChange: (id: string, interval: number) => void;
+  onIntervalChange?: (id: string, interval: number) => void;
+  pausedSites?: string[];
+  onPauseSite?: (id: string) => void;
+  controlsDisabled?: boolean;
 };
 
+function IntervalControl({
+  value,
+  live,
+  disabled,
+  onChange,
+}: {
+  value: number;
+  live: boolean;
+  disabled: boolean;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing && !disabled) setDraft(value);
+  }, [value, editing, disabled]);
+  const commit = (next: number) => {
+    if (!live || disabled) return;
+    setEditing(false);
+    if (next !== value) onChange(next);
+  };
+  return (
+    <div className="interval-control">
+      <label htmlFor="site-interval">
+        {live ? 'Interval skenu' : 'Interval simulace'}{' '}
+        <strong>{live ? draft : value} s</strong>
+      </label>
+      <input
+        id="site-interval"
+        type="range"
+        min="1"
+        max={live ? 60 : 10}
+        disabled={disabled}
+        value={live ? draft : value}
+        onPointerDown={() => setEditing(true)}
+        onPointerUp={(event) => commit(Number(event.currentTarget.value))}
+        onPointerCancel={() => {
+          setEditing(false);
+          setDraft(value);
+        }}
+        onKeyDown={() => setEditing(true)}
+        onKeyUp={(event) => commit(Number(event.currentTarget.value))}
+        onBlur={(event) => commit(Number(event.currentTarget.value))}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (live) {
+            setEditing(true);
+            setDraft(next);
+          } else onChange(next);
+        }}
+      />
+      <div>
+        <span>Rychleji</span>
+        <span>Pomaleji</span>
+      </div>
+    </div>
+  );
+}
+
 function LinkDetails({ link }: { link: Link }) {
+  const { getSite, pageUrl, live } = useGraphData();
   return (
     <div className="link-details">
       <div className="url-stop">
@@ -86,13 +152,15 @@ function LinkDetails({ link }: { link: Link }) {
         <div>
           <dt>Stav cíle</dt>
           <dd>
-            {getSite(link.target.siteId).scanned
-              ? 'Prozkoumaný'
-              : 'Neprozkoumaný'}
+            {live
+              ? pageStatusLabel(link.target)
+              : getSite(link.target.siteId).scanned
+                ? 'Prozkoumaný'
+                : 'Neprozkoumaný'}
           </dd>
         </div>
         <div>
-          <dt>Zjištěno (ukázka, Praha)</dt>
+          <dt>{live ? 'Zjištěno (Praha)' : 'Zjištěno (ukázka, Praha)'}</dt>
           <dd>
             <time dateTime={link.observedAt}>
               {observationFormatter.format(new Date(link.observedAt))}
@@ -111,9 +179,14 @@ function LinkList({
   links: Link[];
   onSelect: Props['onSelect'];
 }) {
+  const { getSite, live } = useGraphData();
   if (!links.length)
     return (
-      <p className="empty-note">V této části dema zatím nejsou žádné vazby.</p>
+      <p className="empty-note">
+        {live
+          ? 'Zatím nebyly zjištěny žádné vazby.'
+          : 'V této části dema zatím nejsou žádné vazby.'}
+      </p>
     );
   return (
     <div className="detail-link-list">
@@ -149,7 +222,12 @@ export default function Inspector({
   onClose,
   intervals,
   onIntervalChange,
+  pausedSites = [],
+  onPauseSite,
+  controlsDisabled = false,
 }: Props) {
+  const { aggregateConnections, getSite, getPage, pageUrl, pages, live } =
+    useGraphData();
   const connections = aggregateConnections(links);
   const site = selection.type === 'site' ? getSite(selection.id) : null;
   const page = selection.type === 'page' ? getPage(selection.id) : null;
@@ -188,7 +266,11 @@ export default function Inspector({
             <SiteMark site={site} />
             <span className={`status-chip ${site.scanned ? '' : 'unexplored'}`}>
               <i />
-              {site.scanned ? 'Ukázkový web' : 'Neprozkoumáno'}
+              {site.scanned
+                ? live
+                  ? 'Povolený origin'
+                  : 'Ukázkový web'
+                : 'Neprozkoumáno'}
             </span>
             <h2>{site.domain}</h2>
             <p>
@@ -227,30 +309,36 @@ export default function Inspector({
                 ? 'Sbalit stránky'
                 : 'Sbalit známé cílové URL'
               : site.scanned
-                ? `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`
+                ? live
+                  ? `Zobrazit ${pages.filter((item) => item.siteId === site.id).length} známých URL`
+                  : `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`
                 : 'Zobrazit známé cílové URL'}
             <ArrowUpRight size={16} />
           </button>
-          {site.scanned && (
-            <div className="interval-control">
-              <label htmlFor="site-interval">
-                Interval simulace <strong>{intervals[site.id]} s</strong>
-              </label>
-              <input
-                id="site-interval"
-                type="range"
-                min="1"
-                max="10"
-                value={intervals[site.id]}
-                onChange={(event) =>
-                  onIntervalChange(site.id, Number(event.target.value))
-                }
-              />
-              <div>
-                <span>Rychleji</span>
-                <span>Pomaleji</span>
-              </div>
-            </div>
+          {site.scanned && onIntervalChange && (
+            <IntervalControl
+              key={site.id}
+              value={intervals[site.id] ?? 3}
+              live={live}
+              disabled={controlsDisabled}
+              onChange={(value) => onIntervalChange(site.id, value)}
+            />
+          )}
+          {site.scanned && onPauseSite && (
+            <button
+              className="outline-button"
+              disabled={controlsDisabled}
+              onClick={() => onPauseSite(site.id)}
+            >
+              {pausedSites.includes(site.id) ? (
+                <Play size={15} />
+              ) : (
+                <Pause size={15} />
+              )}
+              {pausedSites.includes(site.id)
+                ? 'Pokračovat ve skenování webu'
+                : 'Pozastavit skenování webu'}
+            </button>
           )}
           <div className="detail-section-heading">
             <h3>Propojené weby</h3>
@@ -278,7 +366,9 @@ export default function Inspector({
                 item.source.id === site.id || item.target.id === site.id,
             ) && (
               <p className="empty-note">
-                Zatím žádné vazby. Objeví se v průběhu simulace.
+                {live
+                  ? 'Zatím nebyly zjištěny žádné vazby.'
+                  : 'Zatím žádné vazby. Objeví se v průběhu simulace.'}
               </p>
             )}
             {connections
@@ -324,11 +414,14 @@ export default function Inspector({
             <h2>{page.title}</h2>
             <code>{pageUrl(page)}</code>
             <span className="status-chip">
-              {getSite(page.siteId).scanned
-                ? 'Prozkoumaná stránka · ukázka'
-                : 'Pouze známý cíl odkazu'}
+              {live
+                ? pageStatusLabel(page)
+                : getSite(page.siteId).scanned
+                  ? 'Prozkoumaná stránka · ukázka'
+                  : 'Pouze známý cíl odkazu'}
             </span>
           </div>
+          {page.error && <p className="empty-note">{page.error}</p>}
           <div className="detail-section-heading">
             <h3>Vazby této stránky</h3>
             <Link2 size={15} />
@@ -401,12 +494,16 @@ export default function Inspector({
       )}
       {!site && !page && !connection && !link && (
         <p className="empty-note">
-          Tato vazba se objeví v průběhu simulace. Mezitím vyberte některou
-          doménu.
+          {live
+            ? 'Vyberte doménu nebo odkaz v mapě.'
+            : 'Tato vazba se objeví v průběhu simulace. Mezitím vyberte některou doménu.'}
         </p>
       )}
       <div className="inspector-footer">
-        <i /> Pouze ukázková data. Žádné požadavky na cílové weby.
+        <i />{' '}
+        {live
+          ? 'Výsledky lokálního skenu. Známá URL neznamená načtenou stránku.'
+          : 'Pouze ukázková data. Žádné požadavky na cílové weby.'}
       </div>
     </aside>
   );
