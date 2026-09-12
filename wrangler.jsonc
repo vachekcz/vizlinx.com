@@ -16,7 +16,9 @@
     {
       "binding": "DB",
       "database_name": "vizlinx-scans",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "4f40989f-9a62-4310-9df4-46d964db72f5",
+      // Keep the existing local database identity when production is configured.
+      "preview_database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations",
     },
   ],

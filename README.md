@@ -80,7 +80,9 @@ Hosting: Workers Static Assets a API Worker `vizlinx-com` (název Workeru nepovo
 
 Do ignorovaného `.env` patří `CLOUDFLARE_API_TOKEN` podle [.env.example](.env.example). Token musí umožňovat nasazení Workers, **Account → D1 → Edit** a správu vlastních domén pro cílový účet a zónu. Klíč se používá pouze pro nasazení; není součástí aplikace ani assets. Skutečný `.env` udržujte v hlavním projektovém adresáři, mimo dočasné worktrees.
 
-Při prvním nasazení vytvořte `npx wrangler d1 create vizlinx-scans`, vložte vrácené `database_id` do konfigurace a spusťte `npm run typegen`. Nulové ID je pouze lokální placeholder a nesmí být nasazeno. `npm run deploy` připraví web i ZIP rozšíření, aplikuje vzdálené migrace a teprve potom nasadí Worker.
+Produkční databáze `vizlinx-scans` je vytvořená v regionu WEUR a její `database_id` je v konfiguraci. Prototyp běží na [vizlinx.com/scan](https://vizlinx.com/scan). `npm run deploy` připraví web i ZIP rozšíření, aplikuje vzdálené migrace a teprve potom nasadí Worker.
+
+`preview_database_id` zachovává původní nulové ID lokální databáze, aby připojení produkce nezměnilo lokální mapy. Příkazy `dev:api` a `db:local` používají tuto lokální identitu; `db:remote` a deploy používají skutečné produkční `database_id`. Nulové preview ID není vzdálená databáze pro `--preview` či `dev --remote`. Po změně konfigurace regenerujte typy příkazem `npm run typegen`.
 
 ```sh
 npm run deploy

@@ -6,7 +6,7 @@ Schváleno Pavlem 2026-09-12: po grafickém demu ověřit lokální skener a př
 
 Implementováno a lokálně ověřeno: skutečný web → spárované rozšíření → kontrolované HTML weby → Worker/D1 → živá mapa a návrat po reloadu. Samostatné testy ověřují vlastnictví, obnovu relace, kvóty, idempotenci, robots, intervaly, chyby i outbox po ztraceném potvrzení uploadu.
 
-**Nasazení čeká na Cloudflare oprávnění:** projektový token úspěšně identifikuje účet, ale D1 list/create vrací Authentication error 10000. Je třeba přidat `Account → D1 → Edit`, vytvořit `vizlinx-scans`, nahradit nulové `database_id`, regenerovat typy a aplikovat obě migrace. Totéž oprávnění musí mít GitHub repository secret pro deploy po merge. Do té doby PR zůstává draft; aktuální produkční demo se nemění.
+**Nasazeno 2026-09-12:** [vizlinx.com/scan](https://vizlinx.com/scan), Worker `vizlinx-com`, D1 `vizlinx-scans` v regionu WEUR. Obě vzdálené migrace jsou aplikované; API funguje na hlavní doméně i `www`. Produkční ZIP odpovídá sestavení. Izolovaný Chrome s produkčním rozšířením ověřil skutečné načtení kontrolovaných HTML webů, párování s živým API, uložení do produkční D1, přidání druhého webu se zachováním výsledků, graf, tabulku i reload. Čtení mapy bez vlastní relace je odmítnuté. Lokální databáze zůstává zachovaná přes původní `preview_database_id`; produkce používá skutečné `database_id`.
 
 ## Rozsah a kontrakt
 
