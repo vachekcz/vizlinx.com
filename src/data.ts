@@ -20,6 +20,7 @@ export type Link = {
   rel: string;
   region: 'Obsah' | 'Navigace' | 'Patička';
   occurrences: number;
+  observedAt: string;
 };
 export type Connection = {
   id: string;
@@ -200,6 +201,9 @@ const relationships: [string, string, number, number?][] = [
   ['collective', 'archive', 2],
 ];
 
+const demoObservedAt = (index: number) =>
+  new Date(Date.UTC(2026, 8, 11, 8, 24) + index * 60_000).toISOString();
+
 export const links: Link[] = relationships.flatMap(
   ([sourceId, targetId, count, sourceOffset = 0]) => {
     const sourcePages = pages.filter((page) => page.siteId === sourceId);
@@ -216,6 +220,7 @@ export const links: Link[] = relationships.flatMap(
           ? 'Patička'
           : 'Obsah') as Link['region'],
       occurrences: index === 0 ? 2 : 1,
+      observedAt: demoObservedAt(index),
     }));
   },
 );
@@ -271,6 +276,7 @@ export const strengthLinks: Link[] = strengthRelationships.flatMap(
         rel: '',
         region: 'Obsah',
         occurrences: 1,
+        observedAt: demoObservedAt(index),
       };
     });
   },

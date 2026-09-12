@@ -165,6 +165,7 @@ export default function App() {
         'rel',
         'region',
         'occurrences',
+        'observed_at',
         'data_source',
       ],
       ...filteredLinks.map((link) => [
@@ -174,6 +175,7 @@ export default function App() {
         link.rel,
         link.region,
         String(link.occurrences),
+        link.observedAt,
         'demo',
       ]),
     ];

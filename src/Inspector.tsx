@@ -11,6 +11,12 @@ import {
 import { aggregateConnections, getPage, getSite, pages, pageUrl } from './data';
 import type { Link, Selection, Site } from './data';
 
+const observationFormatter = new Intl.DateTimeFormat('cs-CZ', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Europe/Prague',
+});
+
 export function SiteMark({
   site,
   small = false,
@@ -86,8 +92,12 @@ function LinkDetails({ link }: { link: Link }) {
           </dd>
         </div>
         <div>
-          <dt>Zjištěno (ukázka)</dt>
-          <dd>11. 9. 2026, 10:24</dd>
+          <dt>Zjištěno (ukázka, Praha)</dt>
+          <dd>
+            <time dateTime={link.observedAt}>
+              {observationFormatter.format(new Date(link.observedAt))}
+            </time>
+          </dd>
         </div>
       </dl>
     </div>
@@ -213,8 +223,12 @@ export default function Inspector({
           >
             <Layers2 size={16} />
             {expanded.includes(site.id)
-              ? 'Sbalit stránky'
-              : `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`}
+              ? site.scanned
+                ? 'Sbalit stránky'
+                : 'Sbalit známé cílové URL'
+              : site.scanned
+                ? `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`
+                : 'Zobrazit známé cílové URL'}
             <ArrowUpRight size={16} />
           </button>
           {site.scanned && (
@@ -259,6 +273,14 @@ export default function Inspector({
             </span>
           </div>
           <div className="connection-list">
+            {!connections.some(
+              (item) =>
+                item.source.id === site.id || item.target.id === site.id,
+            ) && (
+              <p className="empty-note">
+                Zatím žádné vazby. Objeví se v průběhu simulace.
+              </p>
+            )}
             {connections
               .filter(
                 (item) =>
