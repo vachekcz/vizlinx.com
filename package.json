@@ -19,7 +19,7 @@
     "test:api": "node scripts/test-api.mjs",
     "test:extension": "node scripts/test-extension.mjs",
     "test:prototype": "node scripts/test-prototype.mjs",
-    "dev:api": "wrangler dev --port 8797",
+    "dev:api": "wrangler dev --port 8797 --env-file=/dev/null",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
     "typegen": "wrangler types --env-file=/dev/null"
