@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { zipSync } from 'fflate';
 import { resolve } from 'node:path';
 import { EXTENSION_KEY } from '../shared/extension.ts';
 
@@ -62,20 +62,17 @@ for (const development of [false, true]) {
 await mkdir('dist/downloads', { recursive: true });
 // A fresh archive avoids retaining files from a previous package revision.
 const archive = resolve('dist/downloads/vizlinx-extension.zip');
-execFileSync(
-  'zip',
-  [
-    '-q',
-    '-FS',
-    archive,
-    'manifest.json',
-    'background.js',
-    'runner.js',
-    'runner.html',
-    'runner.css',
-  ],
-  { cwd: resolve('build/extension') },
+const files = [
+  'manifest.json',
+  'background.js',
+  'runner.js',
+  'runner.html',
+  'runner.css',
+];
+const entries = await Promise.all(
+  files.map(async (file) => [file, await readFile(`build/extension/${file}`)]),
 );
+await writeFile(archive, zipSync(Object.fromEntries(entries)));
 console.log(
   'Built production ZIP and separate unpacked development extension.',
 );
