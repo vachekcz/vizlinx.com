@@ -35,7 +35,13 @@ const scan = {
 };
 let dropAcknowledgement = true;
 const ticket = 'controlled-fixture-pairing-ticket';
-const token = 'controlled-fixture-runner-token';
+let token = 'controlled-fixture-runner-token';
+let exchangeCount = 0;
+let holdNextExchange = false;
+let releaseExchange;
+let robotsDirective;
+let uploadLimitCode;
+let controlRequests = 0;
 
 function json(response, body, code = 200) {
   response.writeHead(code, { 'Content-Type': 'application/json' });
@@ -52,7 +58,9 @@ const fixture = createServer((request, response) => {
       { 'Content-Type': 'text/plain' },
     );
     response.end(
-      'User-agent: VizlinxBot\nAllow: /private\n\nUser-agent: *\nDisallow: /private\nCrawl-delay: 1\n',
+      robotsDirective === undefined
+        ? 'User-agent: VizlinxBot\nAllow: /private\n\nUser-agent: *\nDisallow: /private\nCrawl-delay: 1\n'
+        : `User-agent: *\nCrawl-delay: ${robotsDirective}\n`,
     );
     return;
   }
@@ -81,6 +89,11 @@ const fixture = createServer((request, response) => {
   if (path === '/error') {
     response.writeHead(503);
     response.end('Unavailable');
+    return;
+  }
+  if (path === '/robots-case' || path === '/upload-limit') {
+    response.writeHead(200, { 'Content-Type': 'text/html' });
+    response.end('<title>Single page</title>');
     return;
   }
   if (path === '/pdf') {
@@ -113,6 +126,7 @@ const fixture = createServer((request, response) => {
       <a href="/private">Private</a><a href="/redirect">Redirect</a><a href="/error">Error</a><a href="/pdf">PDF</a><a href="/large">Large</a><a href="/many">Many</a>
       <a href="http://b.vizlinx.com/page">Beta page</a><a href="http://outside.vizlinx.com/known">Outside</a>
       <a href="http://127.0.0.1/secret">Local link only</a><a href="javascript:alert(1)">Script URL</a>
+      <a href="http://a.vizlinx.com:8901/nonstandard-port">Same host on another port</a>
     </main>`);
     return;
   }
@@ -130,16 +144,32 @@ const api = createServer(async (request, response) => {
   for await (const chunk of request) raw += chunk;
   const body = raw ? JSON.parse(raw) : undefined;
   if (request.url === '/api/v1/runner/exchange') {
-    assert.equal(body.ticket, ticket);
+    assert.ok(
+      body.ticket === ticket ||
+        /^concurrent-fixture-ticket-[ab]$/.test(body.ticket),
+    );
     assert.equal(request.headers.cookie, undefined);
+    exchangeCount += 1;
+    token = `controlled-fixture-token-${exchangeCount}`;
+    const issuedToken = token;
+    if (holdNextExchange) {
+      holdNextExchange = false;
+      await new Promise((done) => {
+        releaseExchange = done;
+      });
+    }
     json(response, {
-      token,
+      token: issuedToken,
       scan: { ...scan, results: [...results.values()] },
     });
     return;
   }
-  assert.equal(request.headers.authorization, `Bearer ${token}`);
+  if (request.headers.authorization !== `Bearer ${token}`) {
+    json(response, { error: 'Runner token expired.' }, 401);
+    return;
+  }
   if (request.url.endsWith('/control')) {
+    controlRequests += 1;
     json(response, scan);
     return;
   }
@@ -151,6 +181,25 @@ const api = createServer(async (request, response) => {
   }
   if (request.url.endsWith('/results')) {
     uploads.push(body);
+    if (uploadLimitCode) {
+      if (uploadLimitCode !== 'transient') scan.status = 'limited';
+      json(
+        response,
+        {
+          error: 'Result quota exceeded.',
+          ...(uploadLimitCode === 'transient' ? {} : { code: uploadLimitCode }),
+          ...(uploadLimitCode === 'page_limit'
+            ? {
+                maxPages: scan.sites.find(
+                  (site) => site.origin === new URL(body.sourceUrl).origin,
+                ).maxPages,
+              }
+            : {}),
+        },
+        429,
+      );
+      return;
+    }
     const previous = results.get(body.sourceUrl);
     if (previous)
       assert.deepEqual(
@@ -218,10 +267,35 @@ try {
     ok: true,
     protocolVersion: 2,
   });
+  const originalSites = scan.sites;
+  for (const seedUrl of [
+    'http://127.0.0.1/secret',
+    'http://localhost/secret',
+    'https://a.vizlinx.com:8443/secret',
+    'https://name:password@a.vizlinx.com/',
+    'file:///private/secret',
+  ]) {
+    scan.sites = [
+      { ...originalSites[0], origin: new URL(seedUrl).origin, seedUrl },
+    ];
+    const tabsBefore = context.pages().length;
+    assert.equal(
+      (await send({ type: 'vizlinx:pair', ticket })).ok,
+      false,
+      `Valid pairing must reject unsafe scope ${seedUrl}`,
+    );
+    assert.equal(
+      context.pages().length,
+      tabsBefore,
+      'An invalid scope must never open a runner',
+    );
+  }
   assert.equal(
-    (await send({ type: 'fetch', url: 'http://127.0.0.1/secret' })).ok,
-    false,
+    requests.length,
+    0,
+    'Rejected scopes must not issue local crawl requests',
   );
+  scan.sites = originalSites;
   const runnerOpened = context.waitForEvent('page');
   assert.deepEqual(await send({ type: 'vizlinx:pair', ticket }), { ok: true });
   let runner = await runnerOpened;
@@ -323,6 +397,7 @@ try {
           '/image-leak',
           '/secret',
           '/leak',
+          '/nonstandard-port',
         ].includes(request.path),
     ),
     false,
@@ -406,6 +481,222 @@ try {
     requests.some((request) => request.path === '/after-throttle'),
     false,
     'HTTP 429 stops the affected origin instead of consuming its next URLs',
+  );
+  const pairFixture = async () => {
+    const opened = context.waitForEvent('page');
+    assert.deepEqual(await send({ type: 'vizlinx:pair', ticket }), {
+      ok: true,
+    });
+    const card = await opened;
+    await expect(card.locator('#sites li')).toHaveCount(scan.sites.length);
+    return card;
+  };
+  for (const directive of ['NaN', 'Infinity', '1e306']) {
+    scan.id = `fixture-robots-${directive}`;
+    scan.status = 'waiting';
+    scan.sites = [
+      { ...scan.sites[0], seedUrl: `${origins[0]}/robots-case`, maxPages: 1 },
+    ];
+    results.clear();
+    robotsDirective = directive;
+    const before = requests.length;
+    const card = await pairFixture();
+    await card.locator('#start').click();
+    await expect(card.locator('#status')).toContainText('Hotovo.', {
+      timeout: 10_000,
+    });
+    assert.equal(results.get(`${origins[0]}/robots-case`).status, 'ok');
+    const calls = requests.slice(before);
+    assert.equal(calls.length, 2);
+    assert.ok(
+      calls[1].at - calls[0].at >= 950,
+      `Invalid Crawl-delay ${directive} must retain the normal minimum interval`,
+    );
+  }
+  scan.id = 'fixture-robots-long';
+  scan.status = 'waiting';
+  results.clear();
+  robotsDirective = '120';
+  const longBefore = requests.length;
+  const longDelay = await pairFixture();
+  await longDelay.locator('#start').click();
+  await expect
+    .poll(() =>
+      requests
+        .slice(longBefore)
+        .some((request) => request.path === '/robots.txt'),
+    )
+    .toBe(true);
+  await new Promise((done) => setTimeout(done, 1200));
+  assert.equal(
+    requests.length - longBefore,
+    1,
+    'A valid 120-second crawl delay must not be capped to the manual interval limit',
+  );
+  assert.equal(
+    results.size,
+    0,
+    'A valid long crawl delay must not be treated as a denied page',
+  );
+  await longDelay.locator('#pause').click();
+  await expect(longDelay.locator('#status')).toContainText('Pozastaveno.');
+  robotsDirective = undefined;
+
+  scan.id = 'fixture-upload-transient';
+  scan.status = 'waiting';
+  scan.sites = [
+    { ...scan.sites[0], seedUrl: `${origins[0]}/upload-limit`, maxPages: 1 },
+  ];
+  results.clear();
+  uploads.length = 0;
+  uploadLimitCode = 'transient';
+  const transient = await pairFixture();
+  await transient.locator('#start').click();
+  await expect(transient.locator('#status')).toContainText('HTTP 429');
+  assert.equal(
+    (
+      await transient.evaluate(
+        async () =>
+          (await chrome.storage.local.get('scan:fixture-upload-transient'))[
+            'scan:fixture-upload-transient'
+          ],
+      )
+    ).outboxLimit,
+    undefined,
+    'An unclassified 429 must not persist a quota',
+  );
+  uploadLimitCode = undefined;
+  await transient.locator('#start').click();
+  await expect(transient.locator('#status')).toContainText('Hotovo.');
+  assert.equal(uploads.length, 2);
+  assert.deepEqual(uploads[0], uploads[1]);
+
+  scan.id = 'fixture-upload-page-limit';
+  scan.status = 'waiting';
+  scan.sites = [
+    { ...scan.sites[0], seedUrl: `${origins[0]}/upload-limit`, maxPages: 1 },
+  ];
+  results.clear();
+  uploads.length = 0;
+  uploadLimitCode = 'page_limit';
+  const uploadFetchesBefore = requests.filter(
+    (request) => request.path === '/upload-limit',
+  ).length;
+  let quota = await pairFixture();
+  await quota.locator('#start').click();
+  await expect(quota.locator('#status')).toContainText('Zvyšte limit webu');
+  assert.equal(scan.status, 'limited');
+  assert.equal(uploads.length, 1);
+  await quota.reload();
+  let controlsBefore = controlRequests;
+  await quota.locator('#start').click();
+  await expect.poll(() => controlRequests).toBeGreaterThan(controlsBefore);
+  await expect(quota.locator('#status')).toContainText('Zvyšte limit webu');
+  await expect(quota.locator('#start')).toBeEnabled();
+  assert.equal(
+    uploads.length,
+    1,
+    'Reopening without increasing the limit must not repeat the refused PUT',
+  );
+  assert.equal(
+    scan.status,
+    'limited',
+    'A blocked retry must not reset the backend status to running',
+  );
+  quota = await pairFixture();
+  controlsBefore = controlRequests;
+  await quota.locator('#start').click();
+  await expect.poll(() => controlRequests).toBeGreaterThan(controlsBefore);
+  await expect(quota.locator('#status')).toContainText('Zvyšte limit webu');
+  await expect(quota.locator('#start')).toBeEnabled();
+  assert.equal(
+    uploads.length,
+    1,
+    'Pairing must preserve the refused outbox quota',
+  );
+  scan.sites[0].maxPages = 2;
+  scan.status = 'waiting';
+  uploadLimitCode = undefined;
+  await quota.locator('#start').click();
+  await expect(quota.locator('#status')).toContainText('Hotovo.');
+  assert.equal(uploads.length, 2);
+  assert.deepEqual(
+    uploads[1],
+    uploads[0],
+    'A higher limit retries the identical saved result',
+  );
+  assert.equal(
+    requests.filter((request) => request.path === '/upload-limit').length -
+      uploadFetchesBefore,
+    1,
+    'Quota recovery must not recrawl the page',
+  );
+
+  scan.id = 'fixture-upload-storage-limit';
+  scan.status = 'waiting';
+  results.clear();
+  uploads.length = 0;
+  uploadLimitCode = 'scan_storage_limit';
+  const storageQuota = await pairFixture();
+  await storageQuota.locator('#start').click();
+  await expect(storageQuota.locator('#status')).toContainText(
+    'Kapacita této mapy je vyčerpaná',
+  );
+  await expect(storageQuota.locator('#start')).toBeDisabled();
+  await storageQuota.reload();
+  await expect(storageQuota.locator('#start')).toBeDisabled();
+  await expect(storageQuota.locator('#status')).toContainText(
+    'Kapacita této mapy je vyčerpaná',
+  );
+  const pairedStorageQuota = await pairFixture();
+  await expect(pairedStorageQuota.locator('#start')).toBeDisabled();
+  assert.equal(
+    uploads.length,
+    1,
+    'A permanent storage quota must survive reload and pairing without another PUT',
+  );
+  uploadLimitCode = undefined;
+
+  scan.id = 'fixture-concurrent-pairing';
+  scan.status = 'waiting';
+  scan.sites = [{ ...scan.sites[0], seedUrl: `${origins[0]}/robots-case` }];
+  results.clear();
+  const otherWeb = await context.newPage();
+  await otherWeb.goto(TEST_APP_ORIGIN);
+  const exchangeBefore = exchangeCount;
+  holdNextExchange = true;
+  const concurrentOpened = context.waitForEvent('page');
+  const firstPairing = send({
+    type: 'vizlinx:pair',
+    ticket: 'concurrent-fixture-ticket-a',
+  });
+  await expect.poll(() => typeof releaseExchange).toBe('function');
+  const secondPairing = await otherWeb.evaluate(
+    (id) =>
+      chrome.runtime.sendMessage(id, {
+        type: 'vizlinx:pair',
+        ticket: 'concurrent-fixture-ticket-b',
+      }),
+    EXTENSION_ID,
+  );
+  assert.equal(secondPairing.ok, false);
+  assert.match(secondPairing.error, /připojení rozšíření právě probíhá/);
+  assert.equal(
+    exchangeCount,
+    exchangeBefore + 1,
+    'A concurrent pairing must not rotate the token while the first session is pending',
+  );
+  releaseExchange();
+  assert.deepEqual(await firstPairing, { ok: true });
+  const concurrentRunner = await concurrentOpened;
+  await concurrentRunner.locator('#start').click();
+  await expect(concurrentRunner.locator('#status')).toContainText('Hotovo.', {
+    timeout: 10_000,
+  });
+  assert.equal(
+    results.size,
+    1,
+    'The final stored token must remain valid for uploads',
   );
   const prod = JSON.parse(
     await readFile('build/extension/manifest.json', 'utf8'),

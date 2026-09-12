@@ -11,7 +11,12 @@ import {
   fetchRobots,
   type RobotsPolicy,
 } from './fetch-page';
-import { readScan, storeScan, type StoredScan } from './state';
+import {
+  readScan,
+  storeScan,
+  type OutboxLimit,
+  type StoredScan,
+} from './state';
 
 declare const __LOCAL_ORIGINS__: string[];
 
@@ -24,6 +29,16 @@ const mapLink = document.querySelector<HTMLAnchorElement>('#map')!;
 let state: StoredScan | undefined;
 let stopped = false;
 let running = false;
+
+class ResultLimitError extends Error {
+  constructor(readonly limit: OutboxLimit) {
+    super(
+      limit.code === 'scan_storage_limit'
+        ? 'Kapacita této mapy je vyčerpaná. Výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.'
+        : 'Dosažen limit stránek pro uložení výsledku. Zvyšte limit webu v mapě a pokračujte; čekající výsledek odešleme bez nového načítání.',
+    );
+  }
+}
 
 const sleep = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -45,7 +60,8 @@ function render() {
     }),
   );
   progress.textContent = `${state.visited.length} zpracovaných stránek${state.outbox ? ' · 1 výsledek čeká na odeslání' : ''}`;
-  startButton.disabled = running;
+  startButton.disabled =
+    running || state.outboxLimit?.code === 'scan_storage_limit';
   pauseButton.disabled = !running;
 }
 
@@ -71,6 +87,27 @@ async function api<T>(
   );
   if (response.status === 401 || response.status === 403)
     throw new Error('Spojení vypršelo. Spárujte rozšíření znovu z mapy.');
+  if (response.status === 429 && path === '/results') {
+    const detail = (await response.json().catch(() => ({}))) as {
+      code?: string;
+      maxPages?: number;
+    };
+    if (detail.code === 'page_limit' || detail.code === 'scan_storage_limit') {
+      const sourceOrigin = new URL(state.outbox!.sourceUrl).origin;
+      const maxPages =
+        Number.isInteger(detail.maxPages) &&
+        detail.maxPages! >= 1 &&
+        detail.maxPages! <= SCAN_LIMITS.pagesPerSite
+          ? detail.maxPages!
+          : state.scan.sites.find((site) => site.origin === sourceOrigin)!
+              .maxPages;
+      throw new ResultLimitError(
+        detail.code === 'scan_storage_limit'
+          ? { code: 'scan_storage_limit' }
+          : { code: 'page_limit', maxPages },
+      );
+    }
+  }
   if (!response.ok)
     throw new Error(
       `Uložení nebo načtení stavu se nepodařilo (HTTP ${response.status}). Fronta zůstala uložená; zkuste pokračovat.`,
@@ -119,6 +156,7 @@ async function flushOutbox() {
     return count < SCAN_LIMITS.pagesPerSite;
   });
   current.outbox = null;
+  delete current.outboxLimit;
   await storeScan(current);
   render();
 }
@@ -133,7 +171,7 @@ async function run() {
   const rateLimitedOrigins = new Set<string>();
   let lastControl = 0;
   let lastHeartbeat = 0;
-  const refreshControl = async () => {
+  const refreshControl = async (heartbeat = true) => {
     if (Date.now() - lastControl < 1000) return;
     const control = await api<ScanControl>('/control');
     if (control.sites.some((site) => !confirmedOrigins.has(site.origin)))
@@ -143,13 +181,34 @@ async function run() {
     state!.scan = { ...state!.scan, ...control };
     lastControl = Date.now();
     if (control.status === 'paused') stopped = true;
-    if (Date.now() - lastHeartbeat >= 10_000 && !stopped) {
+    if (heartbeat && Date.now() - lastHeartbeat >= 10_000 && !stopped) {
       await report('running');
       lastHeartbeat = Date.now();
     }
     render();
   };
   try {
+    if (state.outbox && state.outboxLimit) {
+      const limit = state.outboxLimit;
+      if (limit.code === 'scan_storage_limit')
+        throw new ResultLimitError(limit);
+      // A refused upload is retried only after reading a genuinely higher limit
+      // from the API, including after reopening a card or pairing again.
+      await refreshControl(false);
+      const origin = new URL(state.outbox.sourceUrl).origin;
+      if (
+        state.scan.sites.find((site) => site.origin === origin)!.maxPages <=
+        limit.maxPages
+      )
+        throw new ResultLimitError(limit);
+      if (stopped) {
+        status.textContent =
+          'Sken je pozastavený. Nejdříve jej obnovte v mapě.';
+        return;
+      }
+      delete state.outboxLimit;
+      await storeScan(state);
+    }
     const requestKeys = state.scan.sites.map(
       (site) => `request:${site.origin}`,
     );
@@ -261,6 +320,13 @@ async function run() {
     status.textContent =
       'Pozastaveno. Fronta i výsledky jsou uložené. Pro pokračování nejdříve obnovte sken v mapě.';
   } catch (error) {
+    if (error instanceof ResultLimitError) {
+      state.scan.status = 'limited';
+      state.outboxLimit = error.limit;
+      // A quota refusal is not an acknowledgement: retain the exact result for
+      // a retry after the owner increases the page limit.
+      await storeScan(state);
+    }
     status.textContent =
       error instanceof Error
         ? error.message
@@ -333,8 +399,9 @@ void (async () => {
   }
   mapLink.href = `${state.apiOrigin}/scan?id=${encodeURIComponent(state.scan.id)}`;
   mapLink.hidden = false;
-  status.textContent =
-    'Připraveno. Povolte přístup pouze k níže vybraným doménám a spusťte sken.';
+  status.textContent = state.outboxLimit
+    ? new ResultLimitError(state.outboxLimit).message
+    : 'Připraveno. Povolte přístup pouze k níže vybraným doménám a spusťte sken.';
   render();
 })().catch(() => {
   status.textContent =

@@ -21,6 +21,8 @@ let mf;
 let app;
 const fetched = [];
 let releaseSlowPage;
+let releaseQuotaPage;
+const resultUploads = [];
 const fixtures = createServer((request, response) => {
   fetched.push(`${request.headers.host}${request.url}`);
   if (request.url === '/robots.txt') {
@@ -29,6 +31,16 @@ const fixtures = createServer((request, response) => {
     return;
   }
   response.writeHead(200, { 'Content-Type': 'text/html' });
+  if (request.url === '/quota-root') {
+    response.end(
+      '<title>Quota root</title><a href="/quota-slow">Next page</a>',
+    );
+    return;
+  }
+  if (request.url === '/quota-slow') {
+    releaseQuotaPage = () => response.end('<title>Quota second page</title>');
+    return;
+  }
   if (
     request.headers.host === 'a.vizlinx.com' &&
     ['/slow', '/slow-regular'].includes(request.url)
@@ -122,6 +134,11 @@ try {
           headers: request.headers,
           ...(body.length ? { body } : {}),
         });
+        if (request.method === 'PUT' && request.url.endsWith('/results'))
+          resultUploads.push({
+            body: JSON.parse(body.toString()),
+            status: result.status,
+          });
         const headers = Object.fromEntries(result.headers);
         const cookies = result.headers.getSetCookie();
         if (cookies.length) headers['set-cookie'] = cookies;
@@ -473,6 +490,92 @@ try {
         .bind(regularId)
         .first()
     ).count,
+    1,
+  );
+  // Lower a page limit while a real HTML fetch is in flight. The Worker must
+  // refuse that result once; a reload must not retry until the UI raises the limit.
+  await page.goto(`${appOrigin}/scan`);
+  await page.getByLabel('Weby k prozkoumání').fill(`${origins[0]}/quota-root`);
+  await page.getByLabel('Interval požadavků (sekundy)').fill('1');
+  await page.getByLabel('Limit stránek na web').fill('2');
+  await page.getByRole('button', { name: 'Připravit sken' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Otevřít skenovací kartu', exact: true }),
+  ).toBeVisible();
+  const quotaId = new URL(page.url()).searchParams.get('id');
+  const quotaOpened = context.waitForEvent('page');
+  await page
+    .getByRole('button', { name: 'Otevřít skenovací kartu', exact: true })
+    .click();
+  const quotaRunner = await quotaOpened;
+  await quotaRunner.locator('#start').click();
+  await expect
+    .poll(() => fetched.includes('a.vizlinx.com/quota-slow'), {
+      timeout: 10_000,
+    })
+    .toBe(true);
+  await page
+    .getByRole('button', { name: 'Doména a.vizlinx.com', exact: true })
+    .click();
+  await page.getByLabel('Limit stránek skenu', { exact: true }).fill('1');
+  const lowered = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/v1/scans/${quotaId}`) &&
+      response.request().method() === 'PATCH',
+  );
+  await page.getByLabel('Limit stránek skenu', { exact: true }).press('Enter');
+  assert.equal((await lowered).status(), 200);
+  releaseQuotaPage();
+  await expect(quotaRunner.locator('#status')).toContainText(
+    'Zvyšte limit webu',
+  );
+  const quotaUploads = () =>
+    resultUploads.filter(
+      (upload) => upload.body.sourceUrl === `${origins[0]}/quota-slow`,
+    );
+  assert.deepEqual(
+    quotaUploads().map((upload) => upload.status),
+    [429],
+  );
+  await quotaRunner.reload();
+  const quotaControl = quotaRunner.waitForResponse((response) =>
+    response.url().endsWith(`/api/v1/runner/scans/${quotaId}/control`),
+  );
+  await quotaRunner.locator('#start').click();
+  assert.equal((await quotaControl).status(), 200);
+  await expect(quotaRunner.locator('#status')).toContainText(
+    'Zvyšte limit webu',
+  );
+  await expect(quotaRunner.locator('#start')).toBeEnabled();
+  assert.equal(quotaUploads().length, 1);
+  await expect(
+    page.getByText(/Dosažen limit skenu\. V detailu webu/),
+  ).toBeVisible();
+  await page.getByLabel('Limit stránek skenu', { exact: true }).fill('2');
+  const raised = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/v1/scans/${quotaId}`) &&
+      response.request().method() === 'PATCH',
+  );
+  await page.getByLabel('Limit stránek skenu', { exact: true }).press('Enter');
+  assert.equal((await raised).status(), 200);
+  const quotaResumed = context.waitForEvent('page');
+  await page
+    .getByRole('button', { name: 'Pokračovat v rozšíření', exact: true })
+    .click();
+  const resumedQuotaRunner = await quotaResumed;
+  await resumedQuotaRunner.locator('#start').click();
+  await expect(resumedQuotaRunner.locator('#status')).toContainText('Hotovo.');
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených', {
+    timeout: 10_000,
+  });
+  assert.deepEqual(
+    quotaUploads().map((upload) => upload.status),
+    [429, 200],
+  );
+  assert.deepEqual(quotaUploads()[0].body, quotaUploads()[1].body);
+  assert.equal(
+    fetched.filter((url) => url === 'a.vizlinx.com/quota-slow').length,
     1,
   );
   assert.deepEqual(errors, []);

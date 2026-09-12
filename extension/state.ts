@@ -6,6 +6,9 @@ import {
   type ScanSnapshot,
 } from '../shared/scan';
 
+export type OutboxLimit =
+  { code: 'page_limit'; maxPages: number } | { code: 'scan_storage_limit' };
+
 export type StoredScan = {
   apiOrigin: string;
   token: string;
@@ -14,6 +17,7 @@ export type StoredScan = {
   visited: string[];
   lastRequest: Record<string, number>;
   outbox: PageResult | null;
+  outboxLimit?: OutboxLimit;
 };
 
 export const scanKey = (id: string) => `scan:${id}`;
@@ -67,6 +71,7 @@ export async function saveSession(apiOrigin: string, session: RunnerSession) {
     visited,
     lastRequest: previous?.lastRequest ?? {},
     outbox: previous?.outbox ?? null,
+    outboxLimit: previous?.outbox ? previous.outboxLimit : undefined,
   });
   await chrome.storage.local.set({ lastScanId: session.scan.id });
 }

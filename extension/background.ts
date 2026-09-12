@@ -55,47 +55,68 @@ chrome.runtime.onMessageExternal.addListener((message, sender, respond) => {
   const apiOrigin = sender.origin;
   let lockAcquired = false;
   let waitingForRunner = false;
+  let pairingBusy = false;
   void (async () => {
-    const response = await fetch(`${apiOrigin}${API_PREFIX}/runner/exchange`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ticket: message.ticket }),
-      credentials: 'omit',
-      redirect: 'error',
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok)
-      throw new Error('Pairing failed. Create a new ticket on the website.');
-    const session = (await response.json()) as RunnerSession;
-    // Token rotation stops the previous runner; wait for its last persisted outbox
-    // before replacing the session so its final write cannot restore the old token.
-    waitingForRunner = true;
+    // Reject a second pairing while the first token rotation and session write
+    // are still in flight. Waiting here could outlive the one-use ticket.
     await navigator.locks.request(
-      'vizlinx:runner',
-      { signal: AbortSignal.timeout(25_000) },
-      async () => {
-        lockAcquired = true;
-        if (
-          !session.token ||
-          !session.scan?.id ||
-          !Array.isArray(session.scan.sites) ||
-          session.scan.sites.length > 3
-        )
-          throw new Error('Invalid pairing response.');
-        for (const site of session.scan.sites) {
-          if (new URL(normalizeScanUrl(site.seedUrl)).origin !== site.origin)
-            throw new Error('Invalid scan scope.');
+      'vizlinx:pairing',
+      { ifAvailable: true },
+      async (pairingLock) => {
+        if (!pairingLock) {
+          pairingBusy = true;
+          throw new Error('Another pairing is already in progress.');
         }
-        await saveSession(apiOrigin, session);
-        await openRunner(session.scan.id);
-        respond({ ok: true });
+        const response = await fetch(
+          `${apiOrigin}${API_PREFIX}/runner/exchange`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ticket: message.ticket }),
+            credentials: 'omit',
+            redirect: 'error',
+            signal: AbortSignal.timeout(20_000),
+          },
+        );
+        if (!response.ok)
+          throw new Error(
+            'Pairing failed. Create a new ticket on the website.',
+          );
+        const session = (await response.json()) as RunnerSession;
+        // Token rotation stops the previous runner; wait for its last persisted outbox
+        // before replacing the session so its final write cannot restore the old token.
+        waitingForRunner = true;
+        await navigator.locks.request(
+          'vizlinx:runner',
+          { signal: AbortSignal.timeout(25_000) },
+          async () => {
+            lockAcquired = true;
+            if (
+              !session.token ||
+              !session.scan?.id ||
+              !Array.isArray(session.scan.sites) ||
+              session.scan.sites.length > 3
+            )
+              throw new Error('Invalid pairing response.');
+            for (const site of session.scan.sites) {
+              if (
+                new URL(normalizeScanUrl(site.seedUrl)).origin !== site.origin
+              )
+                throw new Error('Invalid scan scope.');
+            }
+            await saveSession(apiOrigin, session);
+            await openRunner(session.scan.id);
+            respond({ ok: true });
+          },
+        );
       },
     );
   })().catch(() =>
     respond({
       ok: false,
-      error:
-        waitingForRunner && !lockAcquired
+      error: pairingBusy
+        ? 'Jiné připojení rozšíření právě probíhá. Počkejte na jeho dokončení a zkuste to znovu.'
+        : waitingForRunner && !lockAcquired
           ? 'Jiná skenovací karta je stále aktivní. Pozastavte ji a zkuste připojení znovu.'
           : 'Párování se nepodařilo. Vytvořte na webu nové spojení.',
     }),

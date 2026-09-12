@@ -65,9 +65,11 @@ export async function fetchRobots(origin: string): Promise<RobotsPolicy> {
       return { allowed: () => false, delayMs: 0 };
     }
     const robots = robotsParser(url, await boundedText(response));
+    const delayMs = (robots.getCrawlDelay(ROBOT_AGENT) ?? 0) * 1000;
     return {
       allowed: (target) => robots.isAllowed(target, ROBOT_AGENT) !== false,
-      delayMs: Math.max(0, (robots.getCrawlDelay(ROBOT_AGENT) ?? 0) * 1000),
+      // Invalid directives fall back to the runner's normal minimum interval.
+      delayMs: Number.isFinite(delayMs) && delayMs >= 0 ? delayMs : 0,
     };
   } catch {
     return { allowed: () => false, delayMs: 0 };
