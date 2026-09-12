@@ -35,7 +35,9 @@ class ResultLimitError extends Error {
     super(
       limit.code === 'scan_storage_limit'
         ? 'Kapacita této mapy je vyčerpaná. Výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.'
-        : 'Dosažen limit stránek pro uložení výsledku. Zvyšte limit webu v mapě a pokračujte; čekající výsledek odešleme bez nového načítání.',
+        : limit.maxPages >= SCAN_LIMITS.pagesPerSite
+          ? 'Dosažen maximální limit 50 stránek pro tento web. Čekající výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.'
+          : 'Dosažen limit stránek pro uložení výsledku. Zvyšte limit webu v mapě a pokračujte; čekající výsledek odešleme bez nového načítání.',
     );
   }
 }

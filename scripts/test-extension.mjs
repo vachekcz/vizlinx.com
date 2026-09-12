@@ -632,6 +632,24 @@ try {
     'Quota recovery must not recrawl the page',
   );
 
+  scan.id = 'fixture-upload-page-ceiling';
+  scan.status = 'waiting';
+  scan.sites[0].maxPages = 50;
+  results.clear();
+  uploads.length = 0;
+  uploadLimitCode = 'page_limit';
+  const ceilingQuota = await pairFixture();
+  await ceilingQuota.locator('#start').click();
+  await expect(ceilingQuota.locator('#status')).toContainText(
+    'pro další sken založte novou mapu',
+  );
+  await expect(ceilingQuota.locator('#status')).not.toContainText('Zvyšte');
+  await ceilingQuota.reload();
+  await expect(ceilingQuota.locator('#status')).toContainText(
+    'maximální limit 50 stránek',
+  );
+  assert.equal(uploads.length, 1);
+
   scan.id = 'fixture-upload-storage-limit';
   scan.status = 'waiting';
   results.clear();
