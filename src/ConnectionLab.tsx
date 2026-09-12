@@ -27,12 +27,14 @@ export default function ConnectionLab() {
         <button
           className="theme-toggle"
           onClick={toggleTheme}
-          aria-label={
+          aria-label="Noční režim"
+          aria-pressed={theme === 'midnight'}
+          title={
             theme === 'signal' ? 'Zapnout noční režim' : 'Zapnout denní režim'
           }
         >
           {theme === 'signal' ? <Moon size={17} /> : <Sun size={17} />}
-          {theme === 'signal' ? 'Noční režim' : 'Denní režim'}
+          Noční režim
         </button>
       </header>
       <p className="lab-note">

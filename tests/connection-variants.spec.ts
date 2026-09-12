@@ -97,7 +97,9 @@ test('drags a domain independently at zoom and updates its connections', async (
     camera!,
   );
   await expect(edge).not.toHaveAttribute('d', originalEdge!);
-  await page.getByRole('button', { name: 'Zapnout denní režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: true })
+    .click();
   expect(Math.round((await node.boundingBox())!.x - before.x)).toBe(dx);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expect(node).toHaveAttribute(

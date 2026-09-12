@@ -78,6 +78,36 @@ export default function App() {
       ? ['index']
       : [],
   );
+  const [autoExpanded, setAutoExpanded] = useState(false);
+  const [collapsedAtZoom, setCollapsedAtZoom] = useState<string[]>([]);
+  const visibleExpanded = sites
+    .filter(
+      (site) =>
+        expanded.includes(site.id) ||
+        (autoExpanded && !collapsedAtZoom.includes(site.id)),
+    )
+    .map((site) => site.id);
+  useEffect(() => {
+    if (!autoExpanded) setCollapsedAtZoom([]);
+  }, [autoExpanded]);
+  const changeExpanded = (ids: string[]) => {
+    const removed = visibleExpanded.filter((id) => !ids.includes(id));
+    const added = ids.filter((id) => !visibleExpanded.includes(id));
+    setExpanded((previous) => [
+      ...new Set([...previous.filter((id) => !removed.includes(id)), ...added]),
+    ]);
+    setCollapsedAtZoom((previous) =>
+      autoExpanded
+        ? [
+            ...new Set([
+              ...previous.filter((id) => !ids.includes(id)),
+              ...removed,
+            ]),
+          ]
+        : [],
+    );
+    setView('map');
+  };
   const [showExternal, setShowExternal] = useState(false);
   const [siteSearch, setSiteSearch] = useState('');
   const [linkSearch, setLinkSearch] = useState('');
@@ -215,15 +245,14 @@ export default function App() {
           <button
             className="theme-toggle"
             onClick={toggleTheme}
-            aria-label={
-              theme === 'signal' ? 'Zapnout noční režim' : 'Zapnout denní režim'
-            }
+            aria-label="Noční režim"
+            aria-pressed={theme === 'midnight'}
             title={
               theme === 'signal' ? 'Zapnout noční režim' : 'Zapnout denní režim'
             }
           >
             {theme === 'signal' ? <Moon size={16} /> : <Sun size={16} />}
-            <span>{theme === 'signal' ? 'Noční režim' : 'Denní režim'}</span>
+            <span>Noční režim</span>
           </button>
           <span className="local-indicator">
             <i /> Ukázková data
@@ -568,8 +597,14 @@ export default function App() {
                   links={visibleLinks}
                   selection={selection}
                   onSelect={select}
-                  expanded={expanded}
-                  onExpandedChange={setExpanded}
+                  expanded={visibleExpanded}
+                  focusedExpanded={expanded}
+                  onExpandedChange={changeExpanded}
+                  onAutoExpandedChange={setAutoExpanded}
+                  onFocusSite={(id) => {
+                    setExpanded([id]);
+                    setCollapsedAtZoom([]);
+                  }}
                   running={running}
                   resetKey={resetKey}
                   connectionStyle={connectionStyle}
@@ -700,11 +735,8 @@ export default function App() {
               <Inspector
                 selection={selection}
                 links={visibleLinks}
-                expanded={expanded}
-                onExpand={(ids) => {
-                  setExpanded(ids);
-                  setView('map');
-                }}
+                expanded={visibleExpanded}
+                onExpand={changeExpanded}
                 onSelect={select}
                 onClose={() => setSelection(null)}
                 intervals={intervals}

@@ -775,7 +775,7 @@ h1 > span {
   opacity: 1;
   stroke-width: 3.5;
 }
-.is-running .connection-line {
+.is-running .connection-flow {
   stroke-dasharray: 6 5;
   animation: flow 1s linear infinite;
 }

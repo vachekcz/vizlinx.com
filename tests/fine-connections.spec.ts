@@ -70,7 +70,9 @@ test('compares hairlines through 100+ in an isolated responsive laboratory', asy
     .locator('.lab-live-variants [data-strength-width]')
     .all())
     await expect(group).toHaveAttribute('data-strength-width', '22');
-  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: false })
+    .click();
   await expect(page.locator('.connection-lab')).toHaveAttribute(
     'data-theme',
     'midnight',

@@ -324,7 +324,9 @@ test('switches day and night without losing the map and remembers the choice', a
     'data-theme',
     'signal',
   );
-  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: false })
+    .click();
   await expect(page.locator('.app-shell')).toHaveAttribute(
     'data-theme',
     'midnight',
@@ -344,7 +346,9 @@ test('switches day and night without losing the map and remembers the choice', a
     path: testInfo.outputPath('midnight.png'),
     fullPage: true,
   });
-  await page.getByRole('button', { name: 'Zapnout denní režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: true })
+    .click();
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.reload();
   await expect(page.locator('.app-shell')).toHaveAttribute(
@@ -373,13 +377,17 @@ test('follows the system until a manual choice and lets shared links override it
     'data-theme',
     'signal',
   );
-  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: false })
+    .click();
   await page.goto('/?theme=signal&detail=index');
   await expect(page.locator('.app-shell')).toHaveAttribute(
     'data-theme',
     'signal',
   );
-  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: false })
+    .click();
   await expect(page).toHaveURL(/\?detail=index$/);
   await page.reload();
   await expect(page.locator('.app-shell')).toHaveAttribute(
@@ -402,7 +410,9 @@ test('can toggle when browser storage is blocked', async ({ page }) => {
     'data-theme',
     'signal',
   );
-  await page.getByRole('button', { name: 'Zapnout noční režim' }).click();
+  await page
+    .getByRole('button', { name: 'Noční režim', pressed: false })
+    .click();
   await expect(page.locator('.app-shell')).toHaveAttribute(
     'data-theme',
     'midnight',

@@ -23,6 +23,9 @@ type Props = {
   selection: Selection | null;
   onSelect: (selection: Selection) => void;
   expanded: string[];
+  focusedExpanded: string[];
+  onAutoExpandedChange: (value: boolean) => void;
+  onFocusSite: (id: string) => void;
   onExpandedChange: (ids: string[]) => void;
   running: boolean;
   resetKey: number;
@@ -65,6 +68,9 @@ export default function Graph({
   selection,
   onSelect,
   expanded,
+  focusedExpanded,
+  onAutoExpandedChange,
+  onFocusSite,
   onExpandedChange,
   running,
   resetKey,
@@ -84,12 +90,17 @@ export default function Graph({
     siteId?: string;
   } | null>(null);
   const dragged = useRef(false);
+  const suppressClick = useRef(false);
   const autoExpanded = camera.zoom >= 1.65;
-  const isExpanded = (id: string) => expanded.includes(id) || autoExpanded;
+  useEffect(() => {
+    onAutoExpandedChange(autoExpanded);
+    return () => onAutoExpandedChange(false);
+  }, [autoExpanded, onAutoExpandedChange]);
+  const isExpanded = (id: string) => expanded.includes(id);
   const connections = aggregateConnections(links);
   const denseSite = inputSites.find(
     (site) =>
-      isExpanded(site.id) &&
+      focusedExpanded.includes(site.id) &&
       pages.filter((page) => page.siteId === site.id).length > 6,
   );
   const centerX = compact ? 300 : 500;
@@ -141,6 +152,34 @@ export default function Graph({
             y: mobilePositions[site.id][1],
           }
         : site,
+  );
+
+  const framedSites = layoutSites.filter((site) =>
+    focusedExpanded.includes(site.id),
+  );
+  const minX = Math.min(
+    0,
+    ...framedSites.map(
+      (site) => site.x - pageLayout(site, compact).radius - 25,
+    ),
+  );
+  const minY = Math.min(
+    0,
+    ...framedSites.map(
+      (site) => site.y - pageLayout(site, compact).radius - 25,
+    ),
+  );
+  const maxX = Math.max(
+    compact ? 600 : 1000,
+    ...framedSites.map(
+      (site) => site.x + pageLayout(site, compact).radius + 25,
+    ),
+  );
+  const maxY = Math.max(
+    compact ? (denseSite ? 1000 : 820) : 760,
+    ...framedSites.map(
+      (site) => site.y + pageLayout(site, compact).radius + 80,
+    ),
   );
 
   const sites = layoutSites.map((site) => ({
@@ -219,6 +258,7 @@ export default function Graph({
   const startDrag = (event: PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0 || drag.current) return;
     dragged.current = false;
+    suppressClick.current = false;
     const target = event.target as Element;
     const siteId =
       target.closest('[data-drag-site]')?.getAttribute('data-drag-site') ??
@@ -257,6 +297,8 @@ export default function Graph({
   };
   const stopDrag = (event: PointerEvent<SVGSVGElement>) => {
     if (drag.current?.pointerId !== event.pointerId) return;
+    suppressClick.current = dragged.current && event.type === 'pointerup';
+    dragged.current = false;
     drag.current = null;
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId))
@@ -276,7 +318,7 @@ export default function Graph({
         onClick={() => {
           setCamera({ x: 0, y: 0, zoom: 1 });
           onSelect({ type: 'site', id: 'index' });
-          onExpandedChange(['index']);
+          onFocusSite('index');
         }}
       >
         <Layers2 size={13} />
@@ -285,13 +327,17 @@ export default function Graph({
       <svg
         ref={svgRef}
         className={`graph ${dragging ? 'is-dragging' : ''}`}
-        viewBox={compact ? `0 0 600 ${denseSite ? 1000 : 820}` : '0 0 1000 760'}
+        viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
         aria-label="Interaktivní mapa odkazů mezi weby"
         onClickCapture={(event) => {
-          if (dragged.current && event.detail !== 0) {
+          if (suppressClick.current) {
             event.stopPropagation();
-            dragged.current = false;
+            suppressClick.current = false;
           }
+        }}
+        onKeyDownCapture={(event) => {
+          if (event.key === 'Enter' || event.key === ' ')
+            suppressClick.current = false;
         }}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
@@ -535,6 +581,18 @@ export default function Graph({
                       selected={selected || related}
                       markerId={`arrow-${source.id}`}
                     />
+                    {running && (
+                      <path
+                        className="connection-flow"
+                        d={curve}
+                        fill="none"
+                        stroke={source.color}
+                        strokeWidth={1.2}
+                        opacity={0.85}
+                        pointerEvents="none"
+                        aria-hidden="true"
+                      />
+                    )}
                     <path
                       d={curve}
                       fill="none"
