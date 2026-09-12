@@ -47,9 +47,16 @@ for (const fixture of [
         timeZone: 'Europe/Prague',
       }).format(new Date(observedAt)),
     );
-    expect(
-      new Set(fixture.links.map((link) => link.observedAt)).size,
-    ).toBeGreaterThan(1);
+    const observationTimes = fixture.links.map((link) => link.observedAt);
+    expect(new Set(observationTimes).size).toBe(fixture.links.length);
+    for (let index = 1; index < observationTimes.length; index += 1) {
+      expect(Date.parse(observationTimes[index])).toBeGreaterThan(
+        Date.parse(observationTimes[index - 1]),
+      );
+    }
+    const exportedTimes = rows.map((row) => row[observedAtColumn]);
+    expect(new Set(exportedTimes).size).toBe(rows.length);
+    expect(exportedTimes).toEqual([...exportedTimes].sort());
   });
 }
 

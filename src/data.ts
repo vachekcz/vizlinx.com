@@ -204,8 +204,8 @@ const relationships: [string, string, number, number?][] = [
 const demoObservedAt = (index: number) =>
   new Date(Date.UTC(2026, 8, 11, 8, 24) + index * 60_000).toISOString();
 
-export const links: Link[] = relationships.flatMap(
-  ([sourceId, targetId, count, sourceOffset = 0]) => {
+export const links: Link[] = relationships
+  .flatMap(([sourceId, targetId, count, sourceOffset = 0]) => {
     const sourcePages = pages.filter((page) => page.siteId === sourceId);
     const targetPages = pages.filter((page) => page.siteId === targetId);
     return Array.from({ length: count }, (_, index) => ({
@@ -220,10 +220,9 @@ export const links: Link[] = relationships.flatMap(
           ? 'Patička'
           : 'Obsah') as Link['region'],
       occurrences: index === 0 ? 2 : 1,
-      observedAt: demoObservedAt(index),
     }));
-  },
-);
+  })
+  .map((link, index) => ({ ...link, observedAt: demoObservedAt(index) }));
 
 export const getSite = (id: string) => sites.find((site) => site.id === id)!;
 export const getPage = (id: string) => pages.find((page) => page.id === id)!;
@@ -261,8 +260,8 @@ const strengthRelationships: [string, string, number][] = [
   ['index', 'atlas', 120],
 ];
 
-export const strengthLinks: Link[] = strengthRelationships.flatMap(
-  ([sourceId, targetId, count]) => {
+export const strengthLinks: Link[] = strengthRelationships
+  .flatMap(([sourceId, targetId, count]) => {
     const sourcePages = pages.filter((page) => page.siteId === sourceId);
     const targetPages = pages.filter((page) => page.siteId === targetId);
     return Array.from({ length: count }, (_, index) => {
@@ -274,10 +273,9 @@ export const strengthLinks: Link[] = strengthRelationships.flatMap(
         target,
         anchor: target.title,
         rel: '',
-        region: 'Obsah',
+        region: 'Obsah' as Link['region'],
         occurrences: 1,
-        observedAt: demoObservedAt(index),
       };
     });
-  },
-);
+  })
+  .map((link, index) => ({ ...link, observedAt: demoObservedAt(index) }));
