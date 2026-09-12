@@ -6,7 +6,7 @@ last_updated: 2026-09-11
 
 # Vizlinx.com — technická specifikace
 
-Návrh pro [produktové zadání](product-specification.md). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření, stack a číselné limity jsou doporučení k ověření. Implementace zatím nevznikla.
+Návrh pro [produktové zadání](product-specification.md). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření, stack a číselné limity jsou doporučení k ověření. Funkční skener a backend zatím nevznikly. [Grafické demo](../README.md#stav) používá React, TypeScript a SVG nad malou pevnou sadou ukázkových dat; jeho hosting zajišťují Workers Static Assets. Volba knihovny pro graf skutečných skenů zůstává otevřená.
 
 **Pořadí práce:** nejprve [grafické demo s ukázkovými daty](product-specification.md#první-milník-grafické-demo), potom technické PoC a funkční implementace vycházející z doladěného rozhraní. Níže popsaná architektura je návrh pro funkční produkt; její realizace není podmínkou grafického dema.
 
