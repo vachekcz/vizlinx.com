@@ -8,6 +8,7 @@ let mf;
 let db;
 let outboundRequests = 0;
 const authGates = new Map();
+const queuedCrawls = [];
 const base = 'https://vizlinx.com';
 const site = {
   origin: 'https://example.com',
@@ -42,6 +43,11 @@ before(async () => {
       contents: `import worker from './worker/index.ts';
       export default {
         fetch(request, env) {
+          env = { ...env, CRAWLER_ENABLED: 'true', ADMIN_EMAIL: '',
+            CRAWL_QUEUE: { send: body => env.CRAWL_SINK.fetch('https://queue.invalid/', {
+              method: 'POST', body: JSON.stringify(body)
+            }) }
+          };
           const gate = request.headers.get('X-Test-Auth-Gate');
           if (!gate) return worker.fetch(request, env);
           const database = {
@@ -81,6 +87,10 @@ before(async () => {
       d1Databases: ['DB'],
       serviceBindings: {
         ASSETS: () => new Response('asset'),
+        CRAWL_SINK: async (request) => {
+          queuedCrawls.push(await request.json());
+          return new Response('queued');
+        },
         AUTH_GATE: async (request) => {
           const gate = authGates.get(new URL(request.url).pathname.slice(1));
           assert.ok(
@@ -118,6 +128,7 @@ afterEach(async () => {
     db.prepare('DELETE FROM creation_quotas'),
   ]);
   authGates.clear();
+  queuedCrawls.length = 0;
 });
 after(async () => {
   assert.equal(outboundRequests, 0);
@@ -619,7 +630,7 @@ test('ten-scan limit and bounded bodies prevent unbounded visitor storage', asyn
       await request('/scans', {
         method: 'POST',
         cookie,
-        body: { sites: [{ ...site, maxPages: 51 }] },
+        body: { sites: [{ ...site, maxPages: 101 }] },
       })
     ).status,
     400,
@@ -1141,4 +1152,108 @@ test('concurrent append and site-control PATCH preserve every acknowledged chang
     }
     if (patch.status === 200) assert.equal(stored.sites[0].intervalMs, 17000);
   }
+});
+
+test('server start requires ownership and same origin, fixes the page cap, and revokes the extension', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice, { maxPages: 20 });
+  const { token } = await pair(alice, scan.id);
+  const path = `/scans/${scan.id}/start`;
+  assert.equal((await request(path, { method: 'POST', body: {} })).status, 401);
+  assert.equal(
+    (await request(path, { method: 'POST', cookie: bob, body: {} })).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        method: 'POST',
+        cookie: alice,
+        origin: 'https://evil.org',
+        body: {},
+      })
+    ).status,
+    403,
+  );
+  assert.equal(queuedCrawls.length, 0);
+  const response = await request(path, {
+    method: 'POST',
+    cookie: alice,
+    body: {},
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const started = await response.json();
+  assert.equal(started.status, 'running');
+  assert.equal(started.sites[0].maxPages, 100);
+  assert.equal(queuedCrawls.length, 1);
+  assert.equal(
+    (await request(`/runner/scans/${scan.id}`, { token })).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}/pairing-ticket`, {
+        method: 'POST',
+        cookie: alice,
+        body: {},
+      })
+    ).status,
+    409,
+  );
+  const repeated = await request(path, {
+    method: 'POST',
+    cookie: alice,
+    body: {},
+  });
+  assert.equal(repeated.status, 200);
+  assert.equal(
+    queuedCrawls.length,
+    1,
+    'Repeated start must not multiply queue work.',
+  );
+  const paused = await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie: alice,
+    body: { status: 'paused', sites: [{ ...site, maxPages: 1 }] },
+  });
+  assert.equal(paused.status, 200);
+  assert.equal((await paused.json()).sites[0].maxPages, 100);
+});
+
+test('server limit reason survives reload and pause without allowing a time-budget bypass', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', status = 'limited', limit_reason = 'time_limit' WHERE id = ?1",
+    )
+    .bind(scan.id)
+    .run();
+  const snapshot = await (
+    await request(`/scans/${scan.id}`, { cookie })
+  ).json();
+  assert.equal(snapshot.limitReason, 'time_limit');
+  const paused = await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie,
+    body: { status: 'paused' },
+  });
+  assert.equal((await paused.json()).status, 'limited');
+  const resumed = await request(`/scans/${scan.id}/start`, {
+    method: 'POST',
+    cookie,
+    body: {},
+  });
+  assert.equal(resumed.status, 429);
+  assert.equal(queuedCrawls.length, 0);
+});
+
+test('public scanner configuration exposes only the contact and fixed page cap', async () => {
+  const response = await request('/config');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    adminEmail: null,
+    maxPagesPerSite: 100,
+  });
 });

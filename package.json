@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:full": "npm run build && npm run db:local && npm run dev:api",
     "build": "tsc -b && vite build && npm run build:extension",
     "preview": "vite preview --host 127.0.0.1",
     "deploy": "npm run build && npm run db:remote && wrangler deploy",
@@ -17,6 +18,7 @@
     "format:check": "prettier --check .",
     "build:extension": "node scripts/build-extension.mjs",
     "test:api": "node scripts/test-api.mjs",
+    "test:crawler": "node --test tests-api/crawler.test.mjs",
     "test:extension": "node scripts/test-extension.mjs",
     "test:prototype": "node scripts/test-prototype.mjs",
     "benchmark:scan": "node scripts/benchmark-scan.mjs",

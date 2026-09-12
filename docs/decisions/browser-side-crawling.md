@@ -1,11 +1,13 @@
 ---
 date: 2026-09-11
-status: accepted
+status: superseded
 tags: [decision, architecture]
 revisit_when: Pokud skenování z prohlížeče vyžaduje pro uživatele nepřijatelnou instalaci nebo nesplní požadované pokrytí webů.
 ---
 
 # Skenování běží v prohlížeči návštěvníka
+
+Nahrazeno 12. 9. 2026 rozhodnutím o [serverovém skenování](../tasks/server-scan-prototype.md). Následující text zachovává původní důvody.
 
 ## Kontext
 

@@ -36,7 +36,7 @@ class ResultLimitError extends Error {
       limit.code === 'scan_storage_limit'
         ? 'Kapacita této mapy je vyčerpaná. Výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.'
         : limit.maxPages >= SCAN_LIMITS.pagesPerSite
-          ? 'Dosažen maximální limit 50 stránek pro tento web. Čekající výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.'
+          ? `Dosažen maximální limit ${SCAN_LIMITS.pagesPerSite} stránek pro tento web. Čekající výsledek zůstává uložený v rozšíření; pro další sken založte novou mapu.`
           : 'Dosažen limit stránek pro uložení výsledku. Zvyšte limit webu v mapě a pokračujte; čekající výsledek odešleme bez nového načítání.',
     );
   }
@@ -149,7 +149,7 @@ async function flushOutbox() {
   current.queue = [...new Set(next)].filter(
     (url) => !current.visited.includes(url),
   );
-  // No scan can fetch more than 50 pages per origin; keep a bounded pending frontier.
+  // Keep the pending frontier bounded by the shared per-origin page limit.
   const counts = new Map<string, number>();
   current.queue = current.queue.filter((url) => {
     const origin = new URL(url).origin;

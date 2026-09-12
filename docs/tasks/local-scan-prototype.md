@@ -1,5 +1,8 @@
 # První funkční prototyp
 
+> **Aktualizace 12. 9. 2026:** Pavel schválil přesun skenování na Cloudflare Workers + Queues, bez rozšíření, s pevným limitem 100 stránek na origin. Aktuální implementační kontrakt je v [serverovém prototypu](server-scan-prototype.md). Níže uvedená lokální architektura popisuje původní etapu; její požadavky na umístění exekuce byly nahrazeny.
+
+
 Schváleno Pavlem 2026-09-12: po grafickém demu ověřit lokální skener a přivést skutečné odkazy do současné mapy. Rozšíření pro Chrome je přijato pro tento prototyp; veřejná distribuce a další prohlížeče následují až po ověření.
 
 ## Stav

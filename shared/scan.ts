@@ -1,7 +1,7 @@
 export const API_PREFIX = '/api/v1';
 export const SCAN_LIMITS = {
   sites: 3,
-  pagesPerSite: 50,
+  pagesPerSite: 100,
   linksPerPage: 500,
   discoveredPerPage: 500,
   htmlBytes: 2 * 1024 * 1024,
@@ -57,6 +57,8 @@ export type ScanControl = {
   id: string;
   status: ScanStatus;
   sites: ScanSite[];
+  limitReason?:
+    'page_limit' | 'scan_storage_limit' | 'time_limit' | 'daily_limit';
 };
 export type ScanSummary = ScanControl & {
   createdAt: string;

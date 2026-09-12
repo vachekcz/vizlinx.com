@@ -1,5 +1,8 @@
 # Lokální skener pro Chrome
 
+> Historický lokální runner pro staré mapy. Aktuální web spouští skeny na Cloudflare bez rozšíření; viz [serverový prototyp](../docs/tasks/server-scan-prototype.md). Spuštění staré mapy přes web zneplatní její extension token.
+
+
 Prototyp načítá statické HTML z počítače uživatele. Ukládá strukturované odkazy do mapy Vizlinx. Nespouští JavaScript cílového webu, nenačítá jeho obrázky ani další zdroje a neposílá jeho cookies. Přesměrování nenásleduje; konečný host musí uživatel přidat jako samostatný origin.
 
 ## Instalace prototypu
@@ -25,7 +28,7 @@ Pokud připojení čeká na jinou aktivní mapu, nejdříve pozastavte její ske
 
 ## Rozsah a omezení
 
-Nejvýše 3 přesné veřejné HTTP(S) originy na standardním portu, nejvýše 50 stránek na origin, dokument do 2 MB a interval alespoň 1 sekunda. Cizí nalezené cíle jsou viditelné v mapě, ale skener je nestahuje. `robots.txt` respektuje Disallow a Crawl-delay pro `*`, protože fetch používá User-Agent prohlížeče; chybějící soubor (4xx kromě 429) umožňuje sken, nedostupnost/5xx/429/přesměrování jej uzavřou. HTTP 429 na stránce zastaví další požadavky do daného originu; po dokončení ostatních originů sken zůstane pozastavený. Limity odkazů a velikosti výsledku jsou označené jako zkrácení. Nejde o DNS firewall: veřejné jméno může změnit IP adresu; ochrana před DNS rebindingem není tímto prototypem zaručena.
+Nejvýše 3 přesné veřejné HTTP(S) originy na standardním portu, nejvýše 100 stránek na origin, dokument do 2 MB a interval alespoň 1 sekunda. Cizí nalezené cíle jsou viditelné v mapě, ale skener je nestahuje. `robots.txt` respektuje Disallow a Crawl-delay pro `*`, protože fetch používá User-Agent prohlížeče; chybějící soubor (4xx kromě 429) umožňuje sken, nedostupnost/5xx/429/přesměrování jej uzavřou. HTTP 429 na stránce zastaví další požadavky do daného originu; po dokončení ostatních originů sken zůstane pozastavený. Limity odkazů a velikosti výsledku jsou označené jako zkrácení. Nejde o DNS firewall: veřejné jméno může změnit IP adresu; ochrana před DNS rebindingem není tímto prototypem zaručena.
 
 ## Vývoj a ověření
 

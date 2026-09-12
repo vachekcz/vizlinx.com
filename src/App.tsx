@@ -320,7 +320,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
             <span>Noční režim</span>
           </button>
           <span className="local-indicator">
-            <i /> {live ? 'Lokální sken' : 'Ukázková data'}
+            <i /> {live ? 'Serverový sken' : 'Ukázková data'}
           </span>
           {!live && (
             <a className="outline-button" href="/scan">
@@ -823,7 +823,8 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   </div>
                   <div className="table-footer">
                     Zobrazeno {filteredLinks.length} z {visibleLinks.length}{' '}
-                    vazeb <span>{live ? 'Lokální sken' : 'Ukázková data'}</span>
+                    vazeb{' '}
+                    <span>{live ? 'Serverový sken' : 'Ukázková data'}</span>
                   </div>
                 </div>
               )}
