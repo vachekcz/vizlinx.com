@@ -236,28 +236,6 @@ export const links: Link[] = relationships
   })
   .map((link, index) => ({ ...link, observedAt: demoObservedAt(index) }));
 
-export const getSite = (id: string) => sites.find((site) => site.id === id)!;
-export const getPage = (id: string) => pages.find((page) => page.id === id)!;
-export const pageUrl = (page: Page) =>
-  `https://${getSite(page.siteId).domain}${page.path}`;
-
-export function aggregateConnections(visibleLinks: Link[]): Connection[] {
-  const connections = new Map<string, Connection>();
-  for (const link of visibleLinks) {
-    const id = `${link.source.siteId}:${link.target.siteId}`;
-    const connection = connections.get(id);
-    if (connection) connection.links.push(link);
-    else
-      connections.set(id, {
-        id,
-        source: getSite(link.source.siteId),
-        target: getSite(link.target.siteId),
-        links: [link],
-      });
-  }
-  return [...connections.values()];
-}
-
 // Distinct page pairs let the strength study keep map, detail and export consistent.
 const strengthRelationships: [string, string, number][] = [
   ['atlas', 'journal', 1],
