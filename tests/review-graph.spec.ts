@@ -1,4 +1,22 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
+
+async function expectArchiveInFrame(page: Page) {
+  const graph = (await page
+    .getByLabel('Interaktivní mapa odkazů mezi weby')
+    .boundingBox())!;
+  const elements = page.locator(
+    '[data-drag-site="archive"] circle, .site-node:has([data-drag-site="archive"]) .cluster-category, [aria-label^="Stránka archive.example"] rect',
+  );
+  await expect(elements).toHaveCount(4);
+  for (const element of await elements.all()) {
+    const box = (await element.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(graph.x - 1);
+    expect(box.y).toBeGreaterThanOrEqual(graph.y - 1);
+    expect(box.x + box.width).toBeLessThanOrEqual(graph.x + graph.width + 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(graph.y + graph.height + 1);
+  }
+}
 
 test('keeps positions and framing stable across automatic expansion and synchronizes the inspector', async ({
   page,
@@ -55,21 +73,15 @@ test('frames the expanded external domain and its category in both layouts', asy
     await page
       .getByRole('button', { name: 'Zobrazit známé cílové URL' })
       .click();
-    const graph = (await page
-      .getByLabel('Interaktivní mapa odkazů mezi weby')
-      .boundingBox())!;
-    const elements = page.locator(
-      '[data-drag-site="archive"] circle, .site-node:has([data-drag-site="archive"]) .cluster-category',
-    );
-    for (const element of await elements.all()) {
-      const box = (await element.boundingBox())!;
-      expect(box.x).toBeGreaterThanOrEqual(graph.x - 1);
-      expect(box.y).toBeGreaterThanOrEqual(graph.y - 1);
-      expect(box.x + box.width).toBeLessThanOrEqual(graph.x + graph.width + 1);
-      expect(box.y + box.height).toBeLessThanOrEqual(
-        graph.y + graph.height + 1,
-      );
-    }
+    await expectArchiveInFrame(page);
+    const domain = page.getByRole('button', {
+      name: 'Doména archive.example',
+      exact: true,
+    });
+    await domain.focus();
+    await domain.press('Shift+ArrowDown');
+    await domain.press('Shift+ArrowRight');
+    await expectArchiveInFrame(page);
     await page.screenshot({
       path: testInfo.outputPath(
         path === '/' ? 'archive.png' : 'archive-dense.png',
@@ -77,6 +89,36 @@ test('frames the expanded external domain and its category in both layouts', asy
       fullPage: true,
     });
   }
+});
+
+test('keeps framing stable during a domain drag and fits the moved pages on release', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByLabel('Další odkazované weby').check();
+  const domain = page.getByRole('button', {
+    name: 'Doména archive.example',
+    exact: true,
+  });
+  await domain.click();
+  await page.getByRole('button', { name: 'Zobrazit známé cílové URL' }).click();
+  await domain.scrollIntoViewIfNeeded();
+  const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
+  const frame = await graph.getAttribute('viewBox');
+  const circle = domain.locator('circle');
+  const before = (await circle.boundingBox())!;
+  const startX = before.x + before.width / 2;
+  const startY = before.y + before.height * 0.2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 30, startY + 45, { steps: 5 });
+  await expect(graph).toHaveAttribute('viewBox', frame!);
+  const during = (await circle.boundingBox())!;
+  expect(during.x - before.x).toBeCloseTo(30, 0);
+  expect(during.y - before.y).toBeCloseTo(45, 0);
+  await page.mouse.up();
+  await expect(graph).not.toHaveAttribute('viewBox', frame!);
+  await expectArchiveInFrame(page);
 });
 
 test('suppresses a zero-detail click following a drag and accepts the next click and keyboard activation', async ({

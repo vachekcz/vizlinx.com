@@ -79,7 +79,8 @@ export default function Graph({
   const svgRef = useRef<SVGSVGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
-  const [dragging, setDragging] = useState(false);
+  const [dragFrame, setDragFrame] = useState<string | null>(null);
+  const dragging = dragFrame !== null;
   const [positions, setPositions] = useState<
     Record<string, { x: number; y: number }>
   >({});
@@ -154,9 +155,12 @@ export default function Graph({
         : site,
   );
 
-  const framedSites = layoutSites.filter((site) =>
-    focusedExpanded.includes(site.id),
-  );
+  const sites = layoutSites.map((site) => ({
+    ...site,
+    x: site.x + (positions[site.id]?.x ?? 0),
+    y: site.y + (positions[site.id]?.y ?? 0),
+  }));
+  const framedSites = sites.filter((site) => focusedExpanded.includes(site.id));
   const minX = Math.min(
     0,
     ...framedSites.map(
@@ -182,11 +186,6 @@ export default function Graph({
     ),
   );
 
-  const sites = layoutSites.map((site) => ({
-    ...site,
-    x: site.x + (positions[site.id]?.x ?? 0),
-    y: site.y + (positions[site.id]?.y ?? 0),
-  }));
   const layoutKey = `${compact}:${denseSite?.id ?? 'overview'}`;
   useEffect(() => {
     setPositions({});
@@ -281,10 +280,12 @@ export default function Graph({
     const dx = point.x - current.x;
     const dy = point.y - current.y;
     if (!dragged.current && Math.hypot(dx, dy) < 4) return;
-    if (!dragged.current)
+    if (!dragged.current) {
       event.currentTarget.setPointerCapture(event.pointerId);
+      // Keep screen-to-map coordinates stable until the gesture finishes.
+      setDragFrame(event.currentTarget.getAttribute('viewBox'));
+    }
     dragged.current = true;
-    setDragging(true);
     if (current.siteId)
       moveSite(current.siteId, dx / camera.zoom, dy / camera.zoom);
     else
@@ -300,7 +301,7 @@ export default function Graph({
     suppressClick.current = dragged.current && event.type === 'pointerup';
     dragged.current = false;
     drag.current = null;
-    setDragging(false);
+    setDragFrame(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
   };
@@ -327,7 +328,7 @@ export default function Graph({
       <svg
         ref={svgRef}
         className={`graph ${dragging ? 'is-dragging' : ''}`}
-        viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
+        viewBox={dragFrame ?? `${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
         aria-label="Interaktivní mapa odkazů mezi weby"
         onClickCapture={(event) => {
           if (suppressClick.current) {
