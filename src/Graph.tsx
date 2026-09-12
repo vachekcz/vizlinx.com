@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
 import {
   Expand,
@@ -62,6 +62,43 @@ function pagePosition(page: Page, site: Site, compact: boolean) {
   };
 }
 
+function makeRoomForExpansion(
+  sites: Site[],
+  expanded: string[],
+  anchorId: string,
+  compact: boolean,
+) {
+  const placed = sites.map((site) => ({ ...site }));
+  const radii = placed.map((site) =>
+    expanded.includes(site.id) ? pageLayout(site, compact).radius : site.radius,
+  );
+  // Only overlapping neighbours move; the newly expanded domain stays pinned.
+  for (let pass = 0; pass < 60; pass += 1) {
+    let moved = false;
+    for (let first = 0; first < placed.length; first += 1) {
+      for (let second = first + 1; second < placed.length; second += 1) {
+        const a = placed[first];
+        const b = placed[second];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distance = Math.hypot(dx, dy);
+        const overlap = radii[first] + radii[second] + 40 - distance;
+        if (overlap <= 0.1) continue;
+        const nx = distance > 0 ? dx / distance : 1;
+        const ny = distance > 0 ? dy / distance : 0;
+        const aShare = a.id === anchorId ? 0 : b.id === anchorId ? 1 : 0.5;
+        a.x -= nx * overlap * aShare;
+        a.y -= ny * overlap * aShare;
+        b.x += nx * overlap * (1 - aShare);
+        b.y += ny * overlap * (1 - aShare);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return placed;
+}
+
 export default function Graph({
   sites: inputSites,
   links,
@@ -105,7 +142,7 @@ export default function Graph({
       pages.filter((page) => page.siteId === site.id).length > 6,
   );
   const centerX = compact ? 300 : 500;
-  const centerY = compact ? (denseSite ? 500 : 410) : 380;
+  const centerY = compact ? 410 : 380;
   const mobilePositions: Record<string, [number, number]> = {
     atlas: [300, 350],
     journal: [140, 135],
@@ -115,81 +152,92 @@ export default function Graph({
     archive: [300, 710],
   };
   const layoutSites = inputSites.map((site) =>
-    denseSite
-      ? (() => {
-          if (site.id === denseSite.id)
-            return { ...site, x: centerX, y: compact ? 460 : 350 };
-          const surrounding = inputSites.filter(
-            (item) => item.id !== denseSite.id,
-          );
-          const positions = compact
-            ? [
-                [70, 120],
-                [530, 120],
-                [70, 760],
-                [530, 760],
-                [300, 880],
-              ]
-            : [
-                [110, 130],
-                [890, 130],
-                [110, 560],
-                [890, 560],
-                [930, 350],
-              ];
-          const [x, y] =
-            positions[surrounding.findIndex((item) => item.id === site.id)];
-          return {
-            ...site,
-            x,
-            y,
-            radius: compact ? Math.min(site.radius, 60) : site.radius,
-          };
-        })()
-      : compact
-        ? {
-            ...site,
-            x: mobilePositions[site.id][0],
-            y: mobilePositions[site.id][1],
-          }
-        : site,
+    compact
+      ? {
+          ...site,
+          x: mobilePositions[site.id][0],
+          y: mobilePositions[site.id][1],
+        }
+      : site,
   );
+  const previousLayout = useRef<{
+    compact: boolean;
+    resetKey: number;
+    expanded: string[];
+    visibleIds: string[];
+  } | null>(null);
+  useLayoutEffect(() => {
+    const previous = previousLayout.current;
+    const reset =
+      previous !== null &&
+      (previous.compact !== compact || previous.resetKey !== resetKey);
+    const added = focusedExpanded.filter(
+      (id) => !previous?.expanded.includes(id),
+    );
+    const newVisibleSite = inputSites.some(
+      (site) => !previous?.visibleIds.includes(site.id),
+    );
+    previousLayout.current = {
+      compact,
+      resetKey,
+      expanded: focusedExpanded,
+      visibleIds: inputSites.map((site) => site.id),
+    };
+    if (!reset && added.length === 0 && !newVisibleSite) return;
+    const anchorId = [...added, ...focusedExpanded].find((id) =>
+      inputSites.some((site) => site.id === id),
+    );
+    if (!reset && !anchorId) return;
+    setPositions((current) => {
+      const offsets = reset ? {} : current;
+      const positioned = layoutSites.map((site) => ({
+        ...site,
+        x: site.x + (offsets[site.id]?.x ?? 0),
+        y: site.y + (offsets[site.id]?.y ?? 0),
+      }));
+      const placed = anchorId
+        ? makeRoomForExpansion(positioned, focusedExpanded, anchorId, compact)
+        : positioned;
+      return {
+        ...offsets,
+        ...Object.fromEntries(
+          placed.map((site, index) => [
+            site.id,
+            {
+              x: site.x - layoutSites[index].x,
+              y: site.y - layoutSites[index].y,
+            },
+          ]),
+        ),
+      };
+    });
+  }, [compact, resetKey, focusedExpanded, inputSites]);
 
   const sites = layoutSites.map((site) => ({
     ...site,
     x: site.x + (positions[site.id]?.x ?? 0),
     y: site.y + (positions[site.id]?.y ?? 0),
   }));
-  const framedSites = sites.filter((site) => focusedExpanded.includes(site.id));
+  const framingRadius = (site: Site) =>
+    focusedExpanded.includes(site.id)
+      ? pageLayout(site, compact).radius
+      : site.radius;
   const minX = Math.min(
     0,
-    ...framedSites.map(
-      (site) => site.x - pageLayout(site, compact).radius - 25,
-    ),
+    ...sites.map((site) => site.x - framingRadius(site) - 25),
   );
   const minY = Math.min(
     0,
-    ...framedSites.map(
-      (site) => site.y - pageLayout(site, compact).radius - 25,
-    ),
+    ...sites.map((site) => site.y - framingRadius(site) - 25),
   );
   const maxX = Math.max(
     compact ? 600 : 1000,
-    ...framedSites.map(
-      (site) => site.x + pageLayout(site, compact).radius + 25,
-    ),
+    ...sites.map((site) => site.x + framingRadius(site) + 25),
   );
   const maxY = Math.max(
-    compact ? (denseSite ? 1000 : 820) : 760,
-    ...framedSites.map(
-      (site) => site.y + pageLayout(site, compact).radius + 80,
-    ),
+    compact ? 820 : 760,
+    ...sites.map((site) => site.y + framingRadius(site) + 80),
   );
-
-  const layoutKey = `${compact}:${denseSite?.id ?? 'overview'}`;
-  useEffect(() => {
-    setPositions({});
-  }, [resetKey, layoutKey]);
 
   const moveSite = (id: string, dx: number, dy: number) => {
     setPositions((previous) => ({
@@ -317,7 +365,6 @@ export default function Graph({
       <button
         className="dense-demo-button"
         onClick={() => {
-          setCamera({ x: 0, y: 0, zoom: 1 });
           onSelect({ type: 'site', id: 'index' });
           onFocusSite('index');
         }}
