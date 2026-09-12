@@ -19,6 +19,8 @@
     "test:api": "node scripts/test-api.mjs",
     "test:extension": "node scripts/test-extension.mjs",
     "test:prototype": "node scripts/test-prototype.mjs",
+    "benchmark:scan": "node scripts/benchmark-scan.mjs",
+    "test:benchmark": "node --test scripts/benchmark-scan.test.mjs",
     "dev:api": "wrangler dev --port 8797 --env-file=/dev/null",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",

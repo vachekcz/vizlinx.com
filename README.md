@@ -61,6 +61,8 @@ Mapu vykresluje SVG. Stejný graf slouží omezenému funkčnímu prototypu; vý
 
 ## Ověření
 
+Pro odhad serverového skenování je připravený [lokální benchmark a kapacitní model](docs/scan-benchmark.md). `npm run benchmark:scan` změří současný HTML skener na kontrolovaných stránkách. Nejde o měření účtovaného CPU času Cloudflare ani o serverový skener dostupný ve webové aplikaci.
+
 ```sh
 npm run format:check
 npm run build
