@@ -632,7 +632,7 @@ test('ignores snapshots started before settings and pause mutations so later wri
 
 test('raises a limited scan page budget through existing settings and retains results for resume', async ({
   page,
-}) => {
+}, testInfo) => {
   const scan = snapshot('00000000-0000-4000-8000-000000000099', {
     status: 'limited',
     pageCount: 1,
@@ -648,11 +648,20 @@ test('raises a limited scan page budget through existing settings and retains re
     exact: true,
   });
   await expect(limit).toHaveValue('20');
+  const bounds = await limit.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.height).toBeGreaterThanOrEqual(40);
+  expect(bounds!.width).toBeGreaterThanOrEqual(80);
+  await limit.click();
+  await expect(limit).toBeFocused();
   await limit.fill('51');
   await limit.press('Enter');
   await expect(limit).toHaveValue('20');
   expect(api.patches).toHaveLength(0);
-  await limit.fill('30');
+  await limit.click();
+  await expect(limit).toBeFocused();
+  await limit.press('ControlOrMeta+A');
+  await limit.pressSequentially('30');
   await limit.press('Enter');
   await expect(
     page.getByRole('button', { name: 'Pokračovat v rozšíření' }),
@@ -667,6 +676,17 @@ test('raises a limited scan page budget through existing settings and retains re
     .getByRole('button', { name: 'Doména example.com', exact: true })
     .click();
   await expect(limit).toHaveValue('30');
+  for (const theme of ['signal', 'midnight']) {
+    const shell = page.locator('.app-shell');
+    if ((await shell.getAttribute('data-theme')) !== theme)
+      await page
+        .getByRole('button', { name: 'Noční režim', exact: true })
+        .click();
+    await expect(shell).toHaveAttribute('data-theme', theme);
+    await limit.screenshot({
+      path: testInfo.outputPath(`page-limit-${theme}.png`),
+    });
+  }
   api.maps.get(scan.id)!.sites[0].maxPages = 50;
   api.maps.get(scan.id)!.status = 'limited';
   await page.reload();

@@ -126,7 +126,7 @@ function PageLimitControl({
     if (!disabled) setDraft(String(value));
   }, [value, disabled]);
   return (
-    <div className="interval-control">
+    <div className="page-limit-control">
       <label htmlFor="site-page-limit">Limit stránek skenu</label>
       <input
         id="site-page-limit"
@@ -381,7 +381,7 @@ export default function Inspector({
           )}
           {site.scanned && onPageLimitChange && (
             <PageLimitControl
-              key={site.id}
+              key={`page-limit-${site.id}`}
               value={pageLimits[site.id] ?? 20}
               disabled={controlsDisabled}
               onChange={(limit) => onPageLimitChange(site.id, limit)}
