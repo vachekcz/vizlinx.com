@@ -12,7 +12,12 @@ test('loads all five mockups and opens a matching twenty-page demo', async ({
       page
         .locator('img')
         .evaluateAll((images) =>
-          images.every((image) => image.complete && image.naturalWidth > 0),
+          images.every(
+            (image) =>
+              image instanceof HTMLImageElement &&
+              image.complete &&
+              image.naturalWidth > 0,
+          ),
         ),
     )
     .toBe(true);

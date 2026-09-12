@@ -141,7 +141,12 @@ test('opens the comparison gallery with eight loaded previews and live night lin
         .evaluateAll(
           (images) =>
             images.length === 8 &&
-            images.every((image) => image.complete && image.naturalWidth > 0),
+            images.every(
+              (image) =>
+                image instanceof HTMLImageElement &&
+                image.complete &&
+                image.naturalWidth > 0,
+            ),
         ),
     )
     .toBe(true);
