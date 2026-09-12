@@ -39,7 +39,9 @@ npm run dev:api
 
 Otevřete http://127.0.0.1:8797/scan. V `chrome://extensions` zapněte režim pro vývojáře a načtěte složku `build/extension-dev`. Vývojové sestavení má povolený lokální bridge; produkční ZIP je určený pro vizlinx.com. Pro lokální D1 a Worker není potřeba produkční token. Vite samotný poskytuje pouze frontend, nikoli API.
 
-Zadejte 1–3 přesné veřejné originy. Po vytvoření mapy otevřete skenovací kartu a kliknutím povolte vybrané weby. Karta musí zůstat otevřená. Výsledky průběžně přibývají do mapy; ovládání webu umožňuje změnit interval a pauzu. Po zavření lze kartu znovu otevřít přes ikonu rozšíření, případně ji znovu spárovat z mapy. [Podrobný návod rozšíření](extension/README.md).
+Zadejte 1–3 přesné veřejné originy. Po vytvoření mapy otevřete skenovací kartu a kliknutím povolte vybrané weby. Karta musí zůstat otevřená. Výsledky průběžně přibývají do mapy; ovládání webu umožňuje změnit interval, pauzu a limit stránek. Po zavření lze kartu znovu otevřít přes ikonu rozšíření, případně ji znovu spárovat z mapy. [Podrobný návod rozšíření](extension/README.md).
+
+Při dosažení limitu stránek lze v detailu webu zvýšit limit až na 50 a pokračovat přes rozšíření. Odmítnutý výsledek zůstává uložený v rozšíření i po zavření karty; znovu se odešle až po zvýšení limitu, bez opakovaného načítání stránky. Vyčerpaná úložná kapacita mapy vyžaduje novou mapu.
 
 Do existující mapy lze přes **Přidat web** doplnit další origin až do celkového limitu tří. Zůstávají stejné ID mapy, uložené výsledky i ručně posunuté bubliny. Přidání pozastaví sken a zneplatní staré párování; následně zvolte **Pokračovat v rozšíření** a v kartě skeneru potvrďte přístup. Fronta využije nový seed i dříve nalezené odkazy na přidaný web, již dokončené stránky znovu neprochází. Po aktualizaci kódu načtěte rozšíření znovu v `chrome://extensions`; web upozorní na nekompatibilní starší verzi.
 
