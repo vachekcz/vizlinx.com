@@ -7,6 +7,7 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 let mf;
 let db;
 let outboundRequests = 0;
+const authGates = new Map();
 const base = 'https://vizlinx.com';
 const site = {
   origin: 'https://example.com',
@@ -36,7 +37,36 @@ const page = (path = '/') => ({
 
 before(async () => {
   const output = await build({
-    entryPoints: ['worker/index.ts'],
+    stdin: {
+      resolveDir: process.cwd(),
+      contents: `import worker from './worker/index.ts';
+      export default {
+        fetch(request, env) {
+          const gate = request.headers.get('X-Test-Auth-Gate');
+          if (!gate) return worker.fetch(request, env);
+          const database = {
+            batch: (...args) => env.DB.batch(...args),
+            prepare(sql) {
+              const statement = env.DB.prepare(sql);
+              if (!sql.startsWith('SELECT * FROM scans WHERE id = ?1 AND runner_hash = ?2')) return statement;
+              return {
+                bind(...parameters) {
+                  const bound = statement.bind(...parameters);
+                  return {
+                    async first(...args) {
+                      const row = await bound.first(...args);
+                      if (row) await env.AUTH_GATE.fetch('https://gate.invalid/' + gate);
+                      return row;
+                    },
+                  };
+                },
+              };
+            },
+          };
+          return worker.fetch(request, { ...env, DB: database });
+        },
+      };`,
+    },
     bundle: true,
     format: 'esm',
     write: false,
@@ -49,7 +79,19 @@ before(async () => {
       script: output.outputFiles[0].text,
       compatibilityDate: '2026-09-11',
       d1Databases: ['DB'],
-      serviceBindings: { ASSETS: () => new Response('asset') },
+      serviceBindings: {
+        ASSETS: () => new Response('asset'),
+        AUTH_GATE: async (request) => {
+          const gate = authGates.get(new URL(request.url).pathname.slice(1));
+          assert.ok(
+            gate,
+            'A test gate must exist before the authorized request arrives',
+          );
+          gate.arrived();
+          await gate.released;
+          return new Response('released');
+        },
+      },
       outboundService: () => {
         outboundRequests++;
         throw new Error('Server network access is forbidden in scan tests.');
@@ -69,7 +111,13 @@ before(async () => {
   }
 });
 afterEach(async () => {
-  await db.prepare('DELETE FROM creation_quotas').run();
+  await db.batch([
+    db.prepare('DELETE FROM page_results'),
+    db.prepare('DELETE FROM scans'),
+    db.prepare('DELETE FROM visitors'),
+    db.prepare('DELETE FROM creation_quotas'),
+  ]);
+  authGates.clear();
 });
 after(async () => {
   assert.equal(outboundRequests, 0);
@@ -126,6 +174,98 @@ async function pair(cookie, id) {
   });
   assert.equal(exchange.status, 200);
   return { ticket, ...(await exchange.json()) };
+}
+
+async function pauseAfterRunnerAuth(path, options) {
+  const id = String(authGates.size);
+  const arrived = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  authGates.set(id, { arrived: arrived.resolve, released: released.promise });
+  const response = request(path, {
+    ...options,
+    headers: { 'X-Test-Auth-Gate': id },
+  });
+  await arrived.promise;
+  return { response, release: released.resolve };
+}
+
+for (const revoke of ['rotate', 'append', 'expire']) {
+  test(
+    `in-flight runner writes cannot survive ${revoke} after successful authentication`,
+    { timeout: 15_000 },
+    async () => {
+      for (const action of ['progress', 'results', 'duplicate', 'quota']) {
+        const cookie = await visitor();
+        const scan = await create(cookie, {
+          maxPages: action === 'quota' ? 1 : 50,
+        });
+        const { token } = await pair(cookie, scan.id);
+        const hasExistingResult = action === 'duplicate' || action === 'quota';
+        if (hasExistingResult) {
+          assert.equal(
+            (
+              await request(`/runner/scans/${scan.id}/results`, {
+                method: 'PUT',
+                token,
+                body: page(),
+              })
+            ).status,
+            200,
+          );
+        }
+        const progress = action === 'progress';
+        const pending = await pauseAfterRunnerAuth(
+          `/runner/scans/${scan.id}/${progress ? 'progress' : 'results'}`,
+          {
+            method: progress ? 'POST' : 'PUT',
+            token,
+            body: progress
+              ? { status: 'completed' }
+              : page(action === 'quota' ? '/overflow' : '/'),
+          },
+        );
+        try {
+          if (revoke === 'rotate') await pair(cookie, scan.id);
+          else if (revoke === 'append')
+            assert.equal(
+              (
+                await appendSite(
+                  cookie,
+                  scan.id,
+                  addedSite('https://second.org'),
+                )
+              ).status,
+              201,
+            );
+          else
+            await db
+              .prepare('UPDATE scans SET runner_expires_at = 0 WHERE id = ?')
+              .bind(scan.id)
+              .run();
+          const before = await db
+            .prepare('SELECT * FROM scans WHERE id = ?')
+            .bind(scan.id)
+            .first();
+          pending.release();
+          assert.equal((await pending.response).status, 401, action);
+          assert.deepEqual(
+            await db
+              .prepare('SELECT * FROM scans WHERE id = ?')
+              .bind(scan.id)
+              .first(),
+            before,
+            'A revoked request cannot change status, heartbeat, timestamps or credentials',
+          );
+          const stored = await (
+            await request(`/scans/${scan.id}`, { cookie })
+          ).json();
+          assert.deepEqual(stored.results, hasExistingResult ? [page()] : []);
+        } finally {
+          pending.release();
+        }
+      }
+    },
+  );
 }
 
 test('cookie auth isolates visitors; JSON and same-origin protect writes', async () => {
@@ -418,7 +558,17 @@ test('page quota is atomic, retries still succeed at quota, and lowering maxPage
   );
   const acceptedPath = results[0].status === 200 ? '/a' : '/b';
   assert.equal((await upload(page(acceptedPath))).status, 200);
-  assert.equal((await upload(page('/c'))).status, 429);
+  const limited = await upload(page('/c'));
+  assert.equal(limited.status, 429);
+  assert.deepEqual(await limited.json(), {
+    error: 'Scan page or storage limit reached.',
+    code: 'page_limit',
+    maxPages: 1,
+  });
+  assert.equal(
+    (await (await request(`/scans/${scan.id}`, { cookie })).json()).status,
+    'limited',
+  );
   assert.equal(
     (
       await request(`/scans/${scan.id}`, {
@@ -428,6 +578,16 @@ test('page quota is atomic, retries still succeed at quota, and lowering maxPage
       })
     ).status,
     400,
+  );
+  await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie,
+    body: { status: 'waiting', sites: [{ ...site, maxPages: 2 }] },
+  });
+  assert.equal(
+    (await upload(page('/c'))).status,
+    200,
+    'A retained result can be retried after increasing the page limit',
   );
 });
 
@@ -532,7 +692,10 @@ test('scan byte quota bounds snapshots independently of page count', async () =>
       body: { ...page(`/${index}`), links },
     });
     statuses.push(response.status);
-    if (response.status === 429) break;
+    if (response.status === 429) {
+      assert.equal((await response.json()).code, 'scan_storage_limit');
+      break;
+    }
   }
   assert.equal(statuses.at(-1), 429);
   assert.ok(statuses.slice(0, -1).every((status) => status === 200));
@@ -543,6 +706,26 @@ test('scan byte quota bounds snapshots independently of page count', async () =>
     .bind(scan.id)
     .first();
   assert.ok(stored.bytes <= 4 * 1024 * 1024);
+  assert.equal(
+    (await (await request(`/scans/${scan.id}`, { cookie })).json()).status,
+    'limited',
+  );
+  await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie,
+    body: { status: 'paused' },
+  });
+  const paused = await request(`/runner/scans/${scan.id}/results`, {
+    method: 'PUT',
+    token,
+    body: { ...page('/paused-overflow'), links },
+  });
+  assert.equal(paused.status, 429);
+  assert.equal(
+    (await (await request(`/scans/${scan.id}`, { cookie })).json()).status,
+    'paused',
+    'A quota report cannot override a web pause',
+  );
 });
 
 test('fresh cookies cannot bypass the atomic daily session limit', async () => {

@@ -31,6 +31,7 @@ type ScanRow = {
   created_at: number;
   updated_at: number;
   heartbeat_at: number | null;
+  runner_hash: string | null;
 };
 
 function randomToken(): string {
@@ -434,13 +435,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const body = object(await readJson(request));
       if (!SCAN_STATUSES.includes(body.status as ScanStatus))
         throw new ApiError(400, 'Invalid scan status.');
-      // Web pause wins even over an in-flight heartbeat/completion. Only web control resumes it.
-      await env.DB.prepare(
+      // Recheck the authenticated token in the write, after reading the request body.
+      const now = Date.now();
+      const updated = await env.DB.prepare(
         `UPDATE scans SET status = CASE WHEN status = 'paused' THEN status ELSE ?1 END,
-        updated_at = ?2, heartbeat_at = ?2 WHERE id = ?3`,
+        updated_at = ?2, heartbeat_at = ?2 WHERE id = ?3 AND runner_hash = ?4
+        AND runner_expires_at > ?2 AND created_at > ?5 RETURNING id`,
       )
-        .bind(body.status, Date.now(), row.id)
-        .run();
+        .bind(body.status, now, row.id, row.runner_hash, now - RETENTION_MS)
+        .first();
+      if (!updated)
+        throw new ApiError(401, 'Runner token is invalid or expired.');
       return json({ ok: true });
     }
     if (request.method === 'PUT' && action === 'results') {
@@ -452,16 +457,23 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const resultHash = await hash(resultJson);
       const bytes = new TextEncoder().encode(resultJson).byteLength;
       const origin = new URL(result.sourceUrl).origin;
-      // Capacity checks and insert share a statement, including concurrent deliveries.
-      const inserted = await env.DB.prepare(
-        `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
-        SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE
-        (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1 AND source_origin = ?3) <
-          (SELECT json_extract(value, '$.maxPages') FROM scans, json_each(scans.sites_json) WHERE scans.id = ?1 AND json_extract(value, '$.origin') = ?3)
-        AND (SELECT COALESCE(SUM(result_bytes), 0) FROM page_results WHERE scan_id = ?1) + ?6 <= ?7
-        ON CONFLICT(scan_id, source_url) DO NOTHING RETURNING source_url`,
-      )
-        .bind(
+      const now = Date.now();
+      // Authorization, insertion and quota status share one transaction so a revoked
+      // token cannot write results or timestamps, even after initial authentication.
+      const outcomes = await env.DB.batch<{
+        result_hash: string | null;
+        page_count: number;
+        max_pages: number;
+      }>([
+        env.DB.prepare(
+          `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE
+          EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND runner_hash = ?8 AND runner_expires_at > ?9 AND created_at > ?10)
+          AND (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1 AND source_origin = ?3) <
+            (SELECT json_extract(value, '$.maxPages') FROM scans, json_each(scans.sites_json) WHERE scans.id = ?1 AND json_extract(value, '$.origin') = ?3)
+          AND (SELECT COALESCE(SUM(result_bytes), 0) FROM page_results WHERE scan_id = ?1) + ?6 <= ?7
+          ON CONFLICT(scan_id, source_url) DO NOTHING`,
+        ).bind(
           row.id,
           result.sourceUrl,
           origin,
@@ -469,25 +481,61 @@ async function handle(request: Request, env: Env): Promise<Response> {
           resultJson,
           bytes,
           MAX_SCAN_BYTES,
-        )
-        .first();
-      if (!inserted) {
-        const existing = await env.DB.prepare(
-          'SELECT result_hash FROM page_results WHERE scan_id = ?1 AND source_url = ?2',
-        )
-          .bind(row.id, result.sourceUrl)
-          .first<{ result_hash: string }>();
-        if (!existing)
-          throw new ApiError(429, 'Scan page or storage limit reached.');
-        if (existing.result_hash !== resultHash)
-          throw new ApiError(
-            409,
-            'A different result already exists for this source URL.',
-          );
+          row.runner_hash,
+          now,
+          now - RETENTION_MS,
+        ),
+        env.DB.prepare(
+          `UPDATE scans SET updated_at = ?3,
+          status = CASE WHEN status = 'paused' OR EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?2)
+            THEN status ELSE 'limited' END
+          WHERE id = ?1 AND runner_hash = ?4 AND runner_expires_at > ?3 AND created_at > ?5
+          AND NOT EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?2 AND result_hash != ?6)`,
+        ).bind(
+          row.id,
+          result.sourceUrl,
+          now,
+          row.runner_hash,
+          now - RETENTION_MS,
+          resultHash,
+        ),
+        env.DB.prepare(
+          `SELECT
+          (SELECT result_hash FROM page_results WHERE scan_id = ?1 AND source_url = ?2) AS result_hash,
+          (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1 AND source_origin = ?3) AS page_count,
+          (SELECT json_extract(value, '$.maxPages') FROM json_each(scans.sites_json) WHERE json_extract(value, '$.origin') = ?3) AS max_pages
+          FROM scans WHERE id = ?1 AND runner_hash = ?4 AND runner_expires_at > ?5 AND created_at > ?6`,
+        ).bind(
+          row.id,
+          result.sourceUrl,
+          origin,
+          row.runner_hash,
+          now,
+          now - RETENTION_MS,
+        ),
+      ]);
+      const outcome = outcomes[2].results[0];
+      if (!outcome)
+        throw new ApiError(401, 'Runner token is invalid or expired.');
+      if (outcome.result_hash === null) {
+        const code =
+          outcome.page_count >= outcome.max_pages
+            ? 'page_limit'
+            : 'scan_storage_limit';
+        return json(
+          {
+            error: 'Scan page or storage limit reached.',
+            code,
+            ...(code === 'page_limit' ? { maxPages: outcome.max_pages } : {}),
+          },
+          429,
+        );
       }
-      await env.DB.prepare('UPDATE scans SET updated_at = ?1 WHERE id = ?2')
-        .bind(Date.now(), row.id)
-        .run();
+      if (outcome.result_hash !== resultHash)
+        throw new ApiError(
+          409,
+          'A different result already exists for this source URL.',
+        );
       return json({ ok: true });
     }
   }
