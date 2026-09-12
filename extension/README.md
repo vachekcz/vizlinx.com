@@ -21,4 +21,6 @@ Nejvýše 3 přesné veřejné HTTP(S) originy na standardním portu, nejvýše 
 
 `node scripts/build-extension.mjs` vytvoří produkční `build/extension`, ZIP do `dist/downloads` a samostatnou `build/extension-dev`. Pouze vývojové sestavení přijímá párování z `http://127.0.0.1:8797` a `http://localhost:8797`. Chrome match patterns neumějí omezit port oprávnění; service worker port a přesný origin vždy kontroluje. Produkční bridge přijímá pouze `https://vizlinx.com` a `https://www.vizlinx.com`.
 
+Pro lokální test načtěte `build/extension-dev`; v Chrome se jmenuje **Vizlinx Local Scanner (development)**. Pokud jste nainstalovali produkční ZIP, nejdříve odeberte původní rozšíření, načtěte vývojovou složku a obnovte lokální stránku. Mapa uložená na webu tím nezanikne. Lokální instalační panel záměrně nenabízí produkční ZIP. Samotné otevření ikony rozšíření mapu nespáruje: v její webové stránce klikněte na **Otevřít skenovací kartu**.
+
 `node scripts/test-extension.mjs` používá skutečné rozšíření v izolovaném profilu Chromium dodaného Playwrightem a kontrolované HTTP fixtures bez CORS. Neinstaluje rozšíření do osobního profilu. Fixtures potřebují volný lokální porty 8797 a 8801; Chromium mapuje pouze testovací veřejná jména na loopback a port fixture serveru.

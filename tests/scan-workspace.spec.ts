@@ -140,7 +140,13 @@ test('validates and normalizes origins, then keeps the saved map when the extens
   );
   await expect(
     page.getByRole('link', { name: 'Stáhni rozšíření' }),
-  ).toHaveAttribute('href', '/downloads/vizlinx-extension.zip');
+  ).toHaveCount(0);
+  await expect(page.locator('.scan-install')).toContainText(
+    'build/extension-dev',
+  );
+  await expect(page.locator('.scan-install')).toContainText(
+    'Vizlinx Local Scanner (development)',
+  );
   expect(api.pairingRequests).toBe(0);
   await page.getByRole('button', { name: 'Uložené mapy', exact: true }).click();
   const saved = page

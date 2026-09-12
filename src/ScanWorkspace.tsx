@@ -23,6 +23,10 @@ import type {
 import { EXTENSION_ID } from '../shared/extension';
 import './scan-workspace.css';
 
+const localScanner = ['localhost', '127.0.0.1'].includes(
+  window.location.hostname,
+);
+
 const statusLabels: Record<ScanStatus, string> = {
   waiting: 'Připraveno ke skenování',
   running: 'Skenování běží na tvém počítači',
@@ -94,7 +98,9 @@ function extensionMessage(message: {
         if (runtime.lastError || !reply?.ok) {
           reject(
             new Error(
-              'Rozšíření se nepodařilo připojit. Zkontroluj instalaci a zkus to znovu.',
+              localScanner
+                ? 'Pro lokální stránku načti Vizlinx Local Scanner (development) ze složky build/extension-dev a obnov stránku.'
+                : 'Rozšíření se nepodařilo připojit. Zkontroluj instalaci a zkus to znovu.',
             ),
           );
         } else resolve();
@@ -128,19 +134,38 @@ function Installation({
       </p>
       <ol>
         <li>
-          <a href="/downloads/vizlinx-extension.zip" download>
-            <Download size={15} /> Stáhni rozšíření
-          </a>{' '}
-          a rozbal ZIP.
+          {localScanner ? (
+            <>
+              Pro tuto lokální stránku použij{' '}
+              <strong>Vizlinx Local Scanner (development)</strong>. Pokud už máš
+              nainstalovaný Vizlinx Local Scanner bez „development“, odeber ho v{' '}
+              <code>chrome://extensions</code>.
+            </>
+          ) : (
+            <>
+              <a href="/downloads/vizlinx-extension.zip" download>
+                <Download size={15} /> Stáhni rozšíření
+              </a>{' '}
+              a rozbal ZIP.
+            </>
+          )}
         </li>
         <li>
           V Chrome otevři <code>chrome://extensions</code>, zapni „Režim pro
-          vývojáře“ a zvol „Načíst rozbalené“. Vyber rozbalenou složku s
-          manifest.json.
+          vývojáře“ a zvol „Načíst rozbalené“.{' '}
+          {localScanner ? (
+            <>
+              V projektu vizlinx.com vyber složku{' '}
+              <code>build/extension-dev</code>.
+            </>
+          ) : (
+            <>Vyber rozbalenou složku s manifest.json.</>
+          )}
         </li>
         <li>
-          Vrať se sem a ověř připojení. Přístup k vybraným webům potvrdíš až při
-          spuštění skenu.
+          Obnov tuto stránku a ověř připojení. V mapě pak klikni na „Otevřít
+          skenovací kartu“; tím se rozšíření spáruje. Přístup k vybraným webům
+          potvrdíš v otevřené kartě.
         </li>
       </ol>
       <button type="button" className="scan-button" onClick={onCheck}>

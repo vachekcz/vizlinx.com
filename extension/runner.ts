@@ -13,6 +13,8 @@ import {
 } from './fetch-page';
 import { readScan, storeScan, type StoredScan } from './state';
 
+declare const __DEV__: boolean;
+
 const status = document.querySelector<HTMLElement>('#status')!;
 const sitesList = document.querySelector<HTMLUListElement>('#sites')!;
 const startButton = document.querySelector<HTMLButtonElement>('#start')!;
@@ -308,8 +310,11 @@ void (async () => {
   const id = new URL(location.href).searchParams.get('scan');
   state = id ? await readScan(id) : undefined;
   if (!state) {
-    status.textContent =
-      'Nejdříve na vizlinx.com založte mapu a klikněte na Připojit rozšíření.';
+    const appOrigin = __DEV__ ? 'http://127.0.0.1:8797' : 'https://vizlinx.com';
+    status.textContent = `Rozšíření zatím není spárované s mapou. Na ${appOrigin}/scan otevřete nebo založte mapu a klikněte na „Otevřít skenovací kartu“.`;
+    mapLink.href = `${appOrigin}/scan`;
+    mapLink.textContent = 'Otevřít seznam map ↗';
+    mapLink.hidden = false;
     return;
   }
   mapLink.href = `${state.apiOrigin}/scan?id=${encodeURIComponent(state.scan.id)}`;

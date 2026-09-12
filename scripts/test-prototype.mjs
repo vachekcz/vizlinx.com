@@ -144,8 +144,25 @@ try {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  const unpaired = await context.newPage();
+  await unpaired.goto(`chrome-extension://${EXTENSION_ID}/runner.html`);
+  await expect(unpaired.locator('#status')).toContainText(
+    'Otevřít skenovací kartu',
+  );
+  await expect(unpaired.locator('#map')).toHaveAttribute(
+    'href',
+    `${appOrigin}/scan`,
+  );
+  await expect(unpaired.locator('#start')).toBeDisabled();
+  await unpaired.close();
   await page.goto(`${appOrigin}/scan`);
   await expect(page.getByRole('heading', { name: 'Nová mapa' })).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'Stáhni rozšíření' }),
+  ).toHaveCount(0);
+  await expect(page.locator('.scan-install')).toContainText(
+    'build/extension-dev',
+  );
   await expect(page.getByText('Rozšíření je připojené')).toBeVisible();
   await page.getByLabel('Weby k prozkoumání').fill(origins.join('\n'));
   await page.getByLabel('Interval požadavků (sekundy)').fill('1');
