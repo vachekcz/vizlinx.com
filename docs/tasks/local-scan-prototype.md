@@ -18,7 +18,8 @@ Kontrakt v `shared/scan.ts`. Všechny JSON odpovědi vracejí přímo daný obje
 - `POST /api/v1/scans` body `{sites: ScanSite[]}` → `ScanSnapshot`.
 - `GET /api/v1/scans` → `ScanSummary[]` (vlastní).
 - `GET /api/v1/scans/:id` → `ScanSnapshot` (vlastní).
-- `PATCH /api/v1/scans/:id` body `{status?: 'paused'|'waiting', sites?: ScanSite[]}` → `ScanControl`; originy a seedy jsou po založení neměnné, mění se interval, maxPages a paused.
+- `PATCH /api/v1/scans/:id` body `{status?: 'paused'|'waiting', sites?: ScanSite[]}` → `ScanControl`; existující originy a seedy nelze měnit ani odebrat, mění se interval, maxPages a paused. Souběžná změna nastavení/scope vrací 409.
+- `POST /api/v1/scans/:id/sites` body `{site: ScanSite}` → `ScanSnapshot` (201); připojí jeden nový origin do limitu tří, zachová výsledky/ID/retenci, atomicky přepne na paused a zruší runner token i ticket. Duplicita, plný limit a souběžná změna vrací 409.
 - `POST /api/v1/scans/:id/pairing-ticket` → `{ticket:string}`; platí 60s, jen jednou.
 - `POST /api/v1/runner/exchange` body `{ticket:string}` → `RunnerSession`; token platí 24h a nové spárování ruší starý token.
 - `GET /api/v1/runner/scans/:id` → `ScanSnapshot` (Bearer token).
@@ -26,7 +27,9 @@ Kontrakt v `shared/scan.ts`. Všechny JSON odpovědi vracejí přímo daný obje
 - `PUT /api/v1/runner/scans/:id/results` body `PageResult` → `{ok:true}`; identita `(scanId,sourceUrl)`, opakované identické doručení je idempotentní, odlišný obsah vrací 409.
 - `POST /api/v1/runner/scans/:id/progress` body `{status:ScanStatus}` → `{ok:true}`; heartbeat aktualizuje updatedAt, stale running scan se při čtení označí interrupted.
 
-Webové mutace vyžadují stejný Origin a JSON. Runner používá Bearer token; API nemá veřejné CORS pro cizí webové stránky. Rozšíření se páruje pouze z vizlinx.com (localhost jen v dev sestavení). Bridge zprávy `{type:'vizlinx:ping'}` a `{type:'vizlinx:pair',ticket:string}` → `{ok:true}`; server origin je odvozen z ověřeného sender.origin, nikdy z libovolného payloadu. Service worker rozšíření otevře runner.html; runtime permissions si uživatel potvrzuje kliknutím v této kartě.
+Webové mutace vyžadují stejný Origin a JSON. Runner používá Bearer token; API nemá veřejné CORS pro cizí webové stránky. Rozšíření se páruje pouze z vizlinx.com (localhost jen v dev sestavení). Bridge `{type:'vizlinx:ping'}` vrací `{ok:true,protocolVersion:2}`, `{type:'vizlinx:pair',ticket:string}` vrací `{ok:true}`. Starší rozšíření web vyzve k aktualizaci. Server origin je odvozen z ověřeného sender.origin, nikdy z libovolného payloadu. Service worker rozšíření otevře runner.html; runtime permissions si uživatel potvrzuje kliknutím v této kartě.
+
+Po přidání domény se nové párování uloží až po uvolnění zámku starého runneru (nejvýše 25 sekund čekání). Obnova sloučí dosavadní frontu, outbox a serverové výsledky s novým seedem a již známými cíli. Stará otevřená karta nesmí začít nový scope na základě původního kliknutí; nejdříve zobrazí aktualizovaný seznam a vyžádá nové potvrzení. Frontend obnoví polling i z dokončené mapy, bez resetu výběru a ručně posunutých bublin.
 
 Build vytváří produkční ZIP rozšíření `/downloads/vizlinx-extension.zip`; stabilní veřejný klíč a ID jsou v `shared/extension.ts`. Lokální dev sestavení je oddělené a páruje se pouze s localhost/127.0.0.1 na portu 8797. Browser testy používají skutečný extension origin proti kontrolovaným HTML fixture serverům bez CORS. `test:api` ověřuje izolaci návštěvníků a opakovaný upload v workerd/D1; `test:prototype` propojuje stejné API se skutečným UI a rozšířením.
 

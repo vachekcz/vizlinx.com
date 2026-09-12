@@ -29,8 +29,14 @@ export async function storeScan(value: StoredScan): Promise<void> {
 
 export async function saveSession(apiOrigin: string, session: RunnerSession) {
   const previous = await readScan(session.scan.id);
-  const visited = session.scan.results.map((result) => result.sourceUrl);
+  const visited = [
+    ...new Set([
+      ...(previous?.visited ?? []),
+      ...session.scan.results.map((result) => result.sourceUrl),
+    ]),
+  ];
   const candidates = [
+    ...(previous?.queue ?? []),
     ...session.scan.sites.map((site) => site.seedUrl),
     ...session.scan.results.flatMap((result) => [
       ...result.discoveredUrls,
@@ -57,8 +63,8 @@ export async function saveSession(apiOrigin: string, session: RunnerSession) {
     apiOrigin,
     token: session.token,
     scan: session.scan,
-    queue: previous?.queue ?? queue,
-    visited: previous?.visited ?? visited,
+    queue,
+    visited,
     lastRequest: previous?.lastRequest ?? {},
     outbox: previous?.outbox ?? null,
   });

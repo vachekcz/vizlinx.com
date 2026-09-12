@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
-import { API_PREFIX, type ScanSite, type ScanSnapshot } from '../shared/scan';
+import {
+  API_PREFIX,
+  type PageResult,
+  type ScanSite,
+  type ScanSnapshot,
+} from '../shared/scan';
 
 const site: ScanSite = {
   origin: 'https://example.com',
@@ -27,6 +32,8 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
   const state = {
     maps,
     created: [] as { sites: ScanSite[] }[],
+    additions: [] as { site: ScanSite }[],
+    addFailure: 0,
     patches: [] as { status?: string; sites?: ScanSite[] }[],
     createFailure: 0,
     sessionFailure: 0,
@@ -64,15 +71,25 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
       maps.set(scan.id, scan);
       return send(scan, 201);
     }
-    const match = path.match(/^\/scans\/([^/]+)(\/pairing-ticket)?$/);
+    const match = path.match(/^\/scans\/([^/]+)(?:\/(pairing-ticket|sites))?$/);
     const scan = match ? maps.get(match[1]) : undefined;
     if (!scan) return send({ error: 'Not found' }, 404);
     if (request.method() === 'GET' && state.snapshotFailure)
       return send({ error: 'Unavailable' }, state.snapshotFailure);
-    if (match?.[2]) {
+    if (match?.[2] === 'sites' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { site: ScanSite };
+      state.additions.push(body);
+      if (state.addFailure)
+        return send({ error: 'Adding site failed' }, state.addFailure);
+      scan.sites = [...scan.sites, body.site];
+      scan.status = 'paused';
+      return send(scan, 201);
+    }
+    if (match?.[2] === 'pairing-ticket' && request.method() === 'POST') {
       state.pairingRequests++;
       return send({ ticket: 'a'.repeat(64) });
     }
+    if (match?.[2]) return send({ error: 'Not found' }, 404);
     if (request.method() === 'PATCH') {
       const body = request.postDataJSON() as {
         status?: ScanSnapshot['status'];
@@ -343,4 +360,179 @@ test('commits only the final dragged interval and keeps it while the save is pen
     page.getByRole('slider', { name: /Interval skenu/ }),
   ).toHaveValue(String(finalValue));
   expect(api.patches).toHaveLength(1);
+});
+
+const savedResult: PageResult = {
+  sourceUrl: site.seedUrl,
+  title: 'Existing page',
+  observedAt: '2026-09-12T08:00:00.000Z',
+  status: 'ok',
+  httpStatus: 200,
+  links: [
+    {
+      targetUrl: 'https://second.org/',
+      anchor: 'Existing link',
+      rel: [],
+      region: 'content',
+      occurrences: 1,
+    },
+  ],
+  discoveredUrls: [],
+  truncated: false,
+};
+
+test('adds a web to a completed map without resetting selection or position and resumes result polling', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000099', {
+    status: 'completed',
+    pageCount: 1,
+    results: [savedResult],
+  });
+  const api = await mockApi(page, [scan]);
+  await page.clock.install();
+  await page.goto(`/scan?id=${scan.id}`);
+  const domain = page.getByRole('button', {
+    name: 'Doména second.org',
+    exact: true,
+  });
+  await domain.click();
+  await domain.press('Shift+ArrowRight');
+  const position = await domain.locator('circle').first().getAttribute('cx');
+  await expect(domain).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
+  const form = page.getByRole('form', { name: 'Přidat web do mapy' });
+  await form
+    .getByLabel('Nový web', { exact: true })
+    .fill(' SECOND.org/start#section ');
+  await form.getByLabel('Interval nového webu (sekundy)').fill('7');
+  await form.getByLabel('Limit stránek nového webu').fill('12');
+  await form.getByRole('button', { name: 'Přidat do mapy' }).click();
+  await expect(form).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Doména second.org', exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(`/scan?id=${scan.id}`);
+  await expect(domain).toHaveAttribute('aria-pressed', 'true');
+  await expect(domain.locator('circle').first()).toHaveAttribute(
+    'cx',
+    position!,
+  );
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  expect(api.additions).toEqual([
+    {
+      site: {
+        origin: 'https://second.org',
+        seedUrl: 'https://second.org/start',
+        intervalMs: 7000,
+        maxPages: 12,
+        paused: false,
+      },
+    },
+  ]);
+  expect(api.maps.size).toBe(1);
+  expect(api.maps.get(scan.id)?.results).toEqual([savedResult]);
+  const current = api.maps.get(scan.id)!;
+  current.status = 'running';
+  current.results.push({
+    ...savedResult,
+    sourceUrl: 'https://second.org/start',
+    title: 'New page',
+    links: [{ ...savedResult.links[0], targetUrl: site.seedUrl }],
+  });
+  current.pageCount = 2;
+  await page.clock.fastForward(3000);
+  await expect(page.getByTestId('link-count')).toHaveText('2');
+  await expect(domain.locator('circle').first()).toHaveAttribute(
+    'cx',
+    position!,
+  );
+  await expect(domain).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('rejects invalid and duplicate added origins before sending and explains the three-web cap', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000099', {
+    sites: [
+      site,
+      { ...site, origin: 'https://second.org', seedUrl: 'https://second.org/' },
+    ],
+  });
+  const api = await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
+  const form = page.getByRole('form', { name: 'Přidat web do mapy' });
+  const input = form.getByLabel('Nový web', { exact: true });
+  const add = form.getByRole('button', { name: 'Přidat do mapy' });
+  await input.fill('http://127.0.0.1/');
+  await add.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(api.additions).toHaveLength(0);
+  await input.fill('https://EXAMPLE.com/another-path#section');
+  await add.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(api.additions).toHaveLength(0);
+  await input.fill('third.org');
+  await add.click();
+  await expect(
+    page.getByRole('button', { name: 'Doména third.org', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Přidat web', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText('Limit prototypu: 3 weby v jedné mapě.', { exact: true }),
+  ).toBeVisible();
+  expect(api.maps.get(scan.id)?.sites).toHaveLength(3);
+  expect(api.additions).toHaveLength(1);
+});
+
+test('preserves the map and new-web input when adding fails and accepts a retry', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000099', {
+    status: 'completed',
+    pageCount: 1,
+    results: [savedResult],
+  });
+  const api = await mockApi(page, [scan]);
+  api.addFailure = 503;
+  await page.goto(`/scan?id=${scan.id}`);
+  await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
+  const form = page.getByRole('form', { name: 'Přidat web do mapy' });
+  await form.getByLabel('Nový web', { exact: true }).fill('third.org/start');
+  await form.getByLabel('Interval nového webu (sekundy)').fill('9');
+  await form.getByRole('button', { name: 'Přidat do mapy' }).click();
+  await expect(page.getByRole('alert')).toContainText(
+    'Server je dočasně nedostupný',
+  );
+  await expect(form.getByLabel('Nový web', { exact: true })).toHaveValue(
+    'third.org/start',
+  );
+  await expect(form.getByLabel('Interval nového webu (sekundy)')).toHaveValue(
+    '9',
+  );
+  await expect(
+    form.getByRole('button', { name: 'Přidat do mapy' }),
+  ).toBeEnabled();
+  await expect(page).toHaveURL(`/scan?id=${scan.id}`);
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  expect(api.maps.get(scan.id)?.sites).toHaveLength(1);
+  expect(api.maps.get(scan.id)?.results).toEqual([savedResult]);
+  api.addFailure = 0;
+  await form.getByRole('button', { name: 'Přidat do mapy' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Doména third.org', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(api.additions).toHaveLength(2);
+  expect(api.maps.get(scan.id)?.sites).toHaveLength(2);
+  expect(api.maps.get(scan.id)?.results).toEqual([savedResult]);
+  await page.reload();
+  await expect(
+    page.getByRole('button', { name: 'Doména third.org', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId('link-count')).toHaveText('1');
 });

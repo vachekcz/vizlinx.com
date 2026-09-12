@@ -754,3 +754,208 @@ test('redirect results stay metadata and protocol changes cannot expand source s
   assert.deepEqual(snapshot.results, [redirected]);
   assert.equal(outboundRequests, 0);
 });
+
+const addedSite = (origin) => ({
+  ...site,
+  origin,
+  seedUrl: `${origin}/`,
+  intervalMs: 4000,
+  maxPages: 20,
+});
+const appendSite = (cookie, id, value) =>
+  request(`/scans/${id}/sites`, {
+    method: 'POST',
+    cookie,
+    body: { site: value },
+  });
+
+test('appending an origin preserves completed results and retention while revoking runner and pending ticket', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie, { intervalMs: 5000, maxPages: 5 });
+  const { token } = await pair(cookie, scan.id);
+  assert.equal(
+    (
+      await request(`/runner/scans/${scan.id}/results`, {
+        method: 'PUT',
+        token,
+        body: page(),
+      })
+    ).status,
+    200,
+  );
+  await request(`/runner/scans/${scan.id}/progress`, {
+    method: 'POST',
+    token,
+    body: { status: 'completed' },
+  });
+  const { ticket } = await (
+    await request(`/scans/${scan.id}/pairing-ticket`, {
+      method: 'POST',
+      cookie,
+      body: {},
+    })
+  ).json();
+  const added = addedSite('https://second.org');
+  const response = await appendSite(cookie, scan.id, added);
+  assert.equal(response.status, 201);
+  const updated = await response.json();
+  assert.equal(updated.status, 'paused');
+  assert.equal(updated.id, scan.id);
+  assert.equal(updated.createdAt, scan.createdAt);
+  assert.deepEqual(updated.sites, [...scan.sites, added]);
+  assert.deepEqual(updated.results, [page()]);
+  assert.equal(updated.pageCount, 1);
+  const stored = await db
+    .prepare(
+      'SELECT runner_hash, runner_expires_at, ticket_hash, ticket_expires_at, heartbeat_at FROM scans WHERE id = ?',
+    )
+    .bind(scan.id)
+    .first();
+  assert.ok(Object.values(stored).every((value) => value === null));
+  assert.equal(
+    (await request(`/runner/scans/${scan.id}/control`, { token })).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(`/runner/scans/${scan.id}/results`, {
+        method: 'PUT',
+        token,
+        body: page(),
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (await request('/runner/exchange', { method: 'POST', body: { ticket } }))
+      .status,
+    401,
+  );
+  const next = await pair(cookie, scan.id);
+  assert.equal(next.scan.status, 'paused');
+  assert.deepEqual(next.scan.sites, updated.sites);
+  assert.equal(
+    (await request(`/runner/scans/${scan.id}/control`, { token: next.token }))
+      .status,
+    200,
+  );
+});
+
+test('adding a scan origin enforces ownership, same origin, valid bounded inputs and the three-origin limit', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice);
+  const second = addedSite('https://second.org');
+  assert.equal((await appendSite(bob, scan.id, second)).status, 404);
+  assert.equal((await appendSite(undefined, scan.id, second)).status, 401);
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}/sites`, {
+        method: 'POST',
+        cookie: alice,
+        origin: 'https://attacker.org',
+        body: { site: second },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await appendSite(alice, scan.id, addedSite('http://127.0.0.1'))).status,
+    400,
+  );
+  assert.equal(
+    (
+      await appendSite(alice, scan.id, {
+        ...second,
+        seedUrl: 'https://other.org/',
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}/sites`, {
+        method: 'POST',
+        cookie: alice,
+        body: { site: second, oversized: 'x'.repeat(17 * 1024) },
+      })
+    ).status,
+    413,
+  );
+  assert.equal((await appendSite(alice, scan.id, site)).status, 409);
+  assert.equal((await appendSite(alice, scan.id, second)).status, 201);
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}`, {
+        method: 'PATCH',
+        cookie: alice,
+        body: { sites: scan.sites },
+      })
+    ).status,
+    409,
+    'An older control payload must not remove an appended origin',
+  );
+  assert.equal(
+    (await appendSite(alice, scan.id, addedSite('https://third.org'))).status,
+    201,
+  );
+  assert.equal(
+    (await appendSite(alice, scan.id, addedSite('https://fourth.org'))).status,
+    409,
+  );
+  const stored = await (
+    await request(`/scans/${scan.id}`, { cookie: alice })
+  ).json();
+  assert.equal(stored.sites.length, 3);
+});
+
+test('concurrent additions cannot exceed the origin limit or overwrite the accepted addition', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  await appendSite(cookie, scan.id, addedSite('https://second.org'));
+  const additions = [
+    addedSite('https://third.org'),
+    addedSite('https://fourth.org'),
+  ];
+  const responses = await Promise.all(
+    additions.map((added) => appendSite(cookie, scan.id, added)),
+  );
+  assert.deepEqual(
+    responses.map((response) => response.status).sort(),
+    [201, 409],
+  );
+  const stored = await (await request(`/scans/${scan.id}`, { cookie })).json();
+  assert.equal(stored.sites.length, 3);
+  assert.deepEqual(
+    stored.sites[2],
+    additions[responses.findIndex((response) => response.status === 201)],
+  );
+});
+
+test('concurrent append and site-control PATCH preserve every acknowledged change', async () => {
+  const cookie = await visitor();
+  for (let index = 0; index < 8; index++) {
+    const scan = await create(cookie);
+    const added = addedSite('https://second.org');
+    const [append, patch] = await Promise.all([
+      appendSite(cookie, scan.id, added),
+      request(`/scans/${scan.id}`, {
+        method: 'PATCH',
+        cookie,
+        body: { sites: [{ ...site, intervalMs: 17000 }] },
+      }),
+    ]);
+    assert.ok([201, 409].includes(append.status));
+    assert.ok([200, 409].includes(patch.status));
+    assert.ok(append.status === 201 || patch.status === 200);
+    const stored = await (
+      await request(`/scans/${scan.id}`, { cookie })
+    ).json();
+    if (append.status === 201) {
+      assert.equal(stored.sites.length, 2);
+      assert.deepEqual(stored.sites[1], added);
+      assert.equal(stored.status, 'paused');
+    }
+    if (patch.status === 200) assert.equal(stored.sites[0].intervalMs, 17000);
+  }
+});

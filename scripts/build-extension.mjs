@@ -18,7 +18,11 @@ for (const development of [false, true]) {
     format: 'esm',
     target: 'chrome120',
     minify: !development,
-    define: { __DEV__: JSON.stringify(development) },
+    define: {
+      __LOCAL_ORIGINS__: JSON.stringify(
+        development ? ['http://127.0.0.1:8797', 'http://localhost:8797'] : [],
+      ),
+    },
   });
   const hosts = [
     ...production,

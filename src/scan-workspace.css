@@ -225,6 +225,10 @@
 .scan-live-controls {
   padding: 12px 0 18px;
 }
+.scan-add-site {
+  max-width: 640px;
+  margin-top: 16px;
+}
 .scan-control-row {
   display: flex;
   flex-wrap: wrap;

@@ -41,6 +41,8 @@ Otevřete http://127.0.0.1:8797/scan. V `chrome://extensions` zapněte režim pr
 
 Zadejte 1–3 přesné veřejné originy. Po vytvoření mapy otevřete skenovací kartu a kliknutím povolte vybrané weby. Karta musí zůstat otevřená. Výsledky průběžně přibývají do mapy; ovládání webu umožňuje změnit interval a pauzu. Po zavření lze kartu znovu otevřít přes ikonu rozšíření, případně ji znovu spárovat z mapy. [Podrobný návod rozšíření](extension/README.md).
 
+Do existující mapy lze přes **Přidat web** doplnit další origin až do celkového limitu tří. Zůstávají stejné ID mapy, uložené výsledky i ručně posunuté bubliny. Přidání pozastaví sken a zneplatní staré párování; následně zvolte **Pokračovat v rozšíření** a v kartě skeneru potvrďte přístup. Fronta využije nový seed i dříve nalezené odkazy na přidaný web, již dokončené stránky znovu neprochází. Po aktualizaci kódu načtěte rozšíření znovu v `chrome://extensions`; web upozorní na nekompatibilní starší verzi.
+
 Prototyp prochází nejvýše 50 stránek na origin (výchozí 20), čte statické HTML do 2 MiB, bez cookies a následování přesměrování. Cíle mimo schválené originy uloží jako známé odkazy, ale nenavštíví. Mapa ukazuje nejvýše 10 externích clusterů a 60 karet v jednom clusteru; tabulka a CSV obsahují všechny uložené vazby. Mapy se uchovávají nejvýše 30 dní od založení a patří anonymní relaci stejného prohlížeče. Samotné předání URL mapy nezpřístupní data dalším lidem.
 
 ## Ovládání dema
@@ -70,7 +72,7 @@ npm run deploy:check
 
 Playwright ověřuje desktop i mobil nad produkčním buildem; na macOS používá nainstalovaný Google Chrome, jinde Chromium. Testy pokrývají mapu a detail, zoom a posun, klávesnici, externí cíle, filtrovaný export, simulaci i živý datový adaptér a webové ovládání. `npm test` si build připraví a spustí vlastní preview server. `DEMO_BASE_URL` umožňuje ověřit nasazenou verzi.
 
-`test:api` spouští skutečný Worker a D1 v Miniflare a ověřuje vlastnictví, párování, idempotenci, limity a retenci. `test:extension` používá skutečné rozšíření v izolovaném Chromiu a kontrolované weby bez CORS; testuje robots, intervaly, obnovu outboxu, metadata a odmítnuté cíle. `test:prototype` propojuje web, rozšíření a skutečné API/D1 do jednoho průchodu. Testy rozšíření vyžadují předchozí build a volné porty 8797 a 8801; nezasahují do osobního profilu Chrome.
+`test:api` spouští skutečný Worker a D1 v Miniflare a ověřuje vlastnictví, párování, idempotenci, přidání webu, limity a retenci. `test:extension` používá skutečné rozšíření v izolovaném Chromiu a kontrolované weby bez CORS; testuje robots, intervaly, obnovu outboxu, metadata a odmítnuté cíle. `test:prototype` propojuje web, rozšíření a skutečné API/D1 do jednoho průchodu včetně přidání domény a pokračování. Testy rozšíření vyžadují předchozí build a volné porty 8897 a 8901; používají oddělené `build/extension-test`, nezasahují do osobního profilu Chrome ani lokálního prototypu na portu 8797.
 
 ## Cloudflare deploy
 

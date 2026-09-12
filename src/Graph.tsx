@@ -194,12 +194,20 @@ export default function Graph({
     expanded: string[];
     visibleIds: string[];
     pageCounts: string;
+    bases: Record<string, { x: number; y: number }>;
   } | null>(null);
   useLayoutEffect(() => {
     const previous = previousLayout.current;
     const reset =
       previous !== null &&
       (previous.compact !== compact || previous.resetKey !== resetKey);
+    const shiftedBase =
+      live &&
+      !reset &&
+      layoutSites.some((site) => {
+        const base = previous?.bases[site.id];
+        return base && (base.x !== site.x || base.y !== site.y);
+      });
     const added = focusedExpanded.filter(
       (id) => !previous?.expanded.includes(id),
     );
@@ -217,15 +225,35 @@ export default function Graph({
       expanded: focusedExpanded,
       visibleIds: inputSites.map((site) => site.id),
       pageCounts,
+      bases: Object.fromEntries(
+        layoutSites.map((site) => [site.id, { x: site.x, y: site.y }]),
+      ),
     };
-    if (!reset && added.length === 0 && !newVisibleSite && !resizedExpansion)
+    if (
+      !reset &&
+      added.length === 0 &&
+      !newVisibleSite &&
+      !resizedExpansion &&
+      !shiftedBase
+    )
       return;
     const anchorId = [...added, ...focusedExpanded].find((id) =>
       inputSites.some((site) => site.id === id),
     );
-    if (!reset && !anchorId) return;
+    if (!reset && !anchorId && !shiftedBase) return;
     setPositions((current) => {
-      const offsets = reset ? {} : current;
+      const offsets = reset ? {} : { ...current };
+      if (shiftedBase) {
+        // Promoting a known target to a scanned origin must preserve its position.
+        for (const site of layoutSites) {
+          const base = previous?.bases[site.id];
+          if (base)
+            offsets[site.id] = {
+              x: (current[site.id]?.x ?? 0) + base.x - site.x,
+              y: (current[site.id]?.y ?? 0) + base.y - site.y,
+            };
+        }
+      }
       const positioned = layoutSites.map((site) => ({
         ...site,
         x: site.x + (offsets[site.id]?.x ?? 0),

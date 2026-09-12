@@ -13,7 +13,7 @@ import {
 } from './fetch-page';
 import { readScan, storeScan, type StoredScan } from './state';
 
-declare const __DEV__: boolean;
+declare const __LOCAL_ORIGINS__: string[];
 
 const status = document.querySelector<HTMLElement>('#status')!;
 const sitesList = document.querySelector<HTMLUListElement>('#sites')!;
@@ -128,6 +128,7 @@ async function run() {
   running = true;
   stopped = false;
   render();
+  const confirmedOrigins = new Set(state.scan.sites.map((site) => site.origin));
   const robots = new Map<string, RobotsPolicy>();
   const rateLimitedOrigins = new Set<string>();
   let lastControl = 0;
@@ -135,6 +136,10 @@ async function run() {
   const refreshControl = async () => {
     if (Date.now() - lastControl < 1000) return;
     const control = await api<ScanControl>('/control');
+    if (control.sites.some((site) => !confirmedOrigins.has(site.origin)))
+      throw new Error(
+        'Rozsah mapy se změnil. Otevřete z mapy novou skenovací kartu a potvrďte její domény.',
+      );
     state!.scan = { ...state!.scan, ...control };
     lastControl = Date.now();
     if (control.status === 'paused') stopped = true;
@@ -269,9 +274,10 @@ async function run() {
 
 startButton.addEventListener('click', () => {
   if (!state || running) return;
+  const requestedOrigins = new Set(state.scan.sites.map((site) => site.origin));
   // Chrome requires the permission request directly inside a user gesture.
   const permission = chrome.permissions.request({
-    origins: state.scan.sites.map((site) => `${site.origin}/*`),
+    origins: [...requestedOrigins].map((origin) => `${origin}/*`),
   });
   void permission
     .then(async (granted) => {
@@ -290,6 +296,14 @@ startButton.addEventListener('click', () => {
           }
           // Another runner may have advanced the persisted queue since this tab opened.
           state = await readScan(state!.scan.id);
+          if (
+            state?.scan.sites.some((site) => !requestedOrigins.has(site.origin))
+          ) {
+            render();
+            status.textContent =
+              'Rozsah mapy se změnil. Potvrďte znovu přístup k aktuálně zobrazeným doménám.';
+            return;
+          }
           await run();
         },
       );
@@ -310,7 +324,7 @@ void (async () => {
   const id = new URL(location.href).searchParams.get('scan');
   state = id ? await readScan(id) : undefined;
   if (!state) {
-    const appOrigin = __DEV__ ? 'http://127.0.0.1:8797' : 'https://vizlinx.com';
+    const appOrigin = __LOCAL_ORIGINS__[0] ?? 'https://vizlinx.com';
     status.textContent = `Rozšíření zatím není spárované s mapou. Na ${appOrigin}/scan otevřete nebo založte mapu a klikněte na „Otevřít skenovací kartu“.`;
     mapLink.href = `${appOrigin}/scan`;
     mapLink.textContent = 'Otevřít seznam map ↗';

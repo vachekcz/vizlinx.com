@@ -296,18 +296,52 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   const webMatch = path.match(
-    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/pairing-ticket)?$/,
+    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites))?$/,
   );
   if (webMatch) {
     const row = await owned(request, env, webMatch[1]);
-    if (webMatch[2] && request.method === 'POST') {
+    if (webMatch[2] === '/sites' && request.method === 'POST') {
+      const body = await readJson(request);
+      const added = sites([body.site])[0];
+      const previous = control(row).sites;
+      if (previous.some((site) => site.origin === added.origin))
+        throw new ApiError(409, 'This origin already belongs to the scan.');
+      if (previous.length >= SCAN_LIMITS.sites)
+        throw new ApiError(
+          409,
+          'The scan already contains the maximum number of origins.',
+        );
+      // The scope change and credential revocation must happen together.
+      const updated = await env.DB.prepare(
+        `UPDATE scans SET sites_json = ?1, status = 'paused', updated_at = ?2,
+        runner_hash = NULL, runner_expires_at = NULL, ticket_hash = NULL,
+        ticket_expires_at = NULL, heartbeat_at = NULL
+        WHERE id = ?3 AND sites_json = ?4 RETURNING *`,
+      )
+        .bind(
+          JSON.stringify([...previous, added]),
+          Date.now(),
+          row.id,
+          row.sites_json,
+        )
+        .first<ScanRow>();
+      if (!updated)
+        throw new ApiError(409, 'The scan changed. Reload it before retrying.');
+      return json(await snapshot(env, updated), 201);
+    }
+    if (webMatch[2] === '/pairing-ticket' && request.method === 'POST') {
       await readJson(request);
       const ticket = randomToken();
-      await env.DB.prepare(
-        'UPDATE scans SET ticket_hash = ?1, ticket_expires_at = ?2 WHERE id = ?3',
+      const updated = await env.DB.prepare(
+        'UPDATE scans SET ticket_hash = ?1, ticket_expires_at = ?2 WHERE id = ?3 AND sites_json = ?4 RETURNING id',
       )
-        .bind(await hash(ticket), Date.now() + 60_000, row.id)
-        .run();
+        .bind(await hash(ticket), Date.now() + 60_000, row.id, row.sites_json)
+        .first();
+      if (!updated)
+        throw new ApiError(
+          409,
+          'The scan changed. Request a new pairing ticket.',
+        );
       return json({ ticket });
     }
     if (!webMatch[2] && request.method === 'GET')
@@ -323,6 +357,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
         body.sites === undefined ? control(row).sites : sites(body.sites);
       const previous = control(row).sites;
       if (
+        nextSites.length < previous.length &&
+        nextSites.every(
+          (site, index) =>
+            site.origin === previous[index].origin &&
+            site.seedUrl === previous[index].seedUrl,
+        )
+      )
+        throw new ApiError(
+          409,
+          'The scan scope changed. Reload it before retrying.',
+        );
+      if (
         nextSites.length !== previous.length ||
         nextSites.some(
           (site, index) =>
@@ -335,16 +381,19 @@ async function handle(request: Request, env: Env): Promise<Response> {
           'Origins and seeds cannot change after creation.',
         );
       const updated = await env.DB.prepare(
-        'UPDATE scans SET status = COALESCE(?1, status), sites_json = ?2, updated_at = ?3 WHERE id = ?4 RETURNING *',
+        'UPDATE scans SET status = COALESCE(?1, status), sites_json = ?2, updated_at = ?3 WHERE id = ?4 AND sites_json = ?5 RETURNING *',
       )
         .bind(
           body.status ?? null,
           JSON.stringify(nextSites),
           Date.now(),
           row.id,
+          row.sites_json,
         )
         .first<ScanRow>();
-      return json(control(updated!));
+      if (!updated)
+        throw new ApiError(409, 'The scan changed. Reload it before retrying.');
+      return json(control(updated));
     }
   }
 

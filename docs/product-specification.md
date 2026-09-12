@@ -57,7 +57,9 @@ Navazuje na schválený Signal/Midnight, spojnice Silk a rozbalování domén na
 
 Pro tento milník platí menší rozsah než níže navržené MVP: 3 přesné originy, 50 stránek na origin (výchozí 20), interval 1–60 sekund, jeden aktivní skener a jeden síťový požadavek současně. Mapa se uchovává 30 dní od založení; přístup závisí také na platné anonymní relaci. Cluster odpovídá přesnému originu, bez slučování subdomén přes PSL. Přesměrování se nenásledují. Mapa omezuje počet externích clusterů a karet, úplná uložená data zůstávají v tabulce a CSV. Konkrétní kontrakt a hranice jsou v [task dokumentu](tasks/local-scan-prototype.md).
 
-Následující širší návrhy (větší limity, sdílení, změna rozsahu existující mapy a pokročilejší scheduler) nejsou tvrzením o hotové implementaci prototypu.
+Tlačítko **Přidat web** doplní další origin do existující mapy, včetně již dokončené. Zachová výsledky a pozice, pozastaví běh a vyžádá nové párování s potvrzením přístupu v rozšíření. Celkový limit tří originů platí i po přidání. Odstraňování nebo nahrazování existujících originů zatím není součástí prototypu.
+
+Následující širší návrhy (větší limity, sdílení a pokročilejší scheduler) nejsou tvrzením o hotové implementaci prototypu.
 
 ## Průchod uživatele
 

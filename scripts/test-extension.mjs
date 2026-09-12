@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 import { EXTENSION_ID } from '../shared/extension.ts';
+import {
+  buildTestExtension,
+  TEST_APP_ORIGIN,
+  TEST_APP_PORT,
+  TEST_FIXTURE_PORT,
+} from './build-test-extension.mjs';
 
 const origins = [
   'http://a.vizlinx.com',
@@ -180,9 +185,9 @@ const close = (server) =>
   });
 let context;
 try {
-  await listen(fixture, 8801);
-  await listen(api, 8797);
-  const extension = resolve('build/extension-dev');
+  await listen(fixture, TEST_FIXTURE_PORT);
+  await listen(api, TEST_APP_PORT);
+  const extension = await buildTestExtension();
   context = await chromium.launchPersistentContext('', {
     channel: 'chromium',
     headless: true,
@@ -190,7 +195,7 @@ try {
       `--disable-extensions-except=${extension}`,
       `--load-extension=${extension}`,
       '--no-proxy-server',
-      '--host-resolver-rules=MAP *.vizlinx.com 127.0.0.1:8801',
+      `--host-resolver-rules=MAP *.vizlinx.com 127.0.0.1:${TEST_FIXTURE_PORT}`,
     ],
   });
   context.setDefaultTimeout(15_000);
@@ -203,13 +208,16 @@ try {
     },
   ]);
   const web = await context.newPage();
-  await web.goto('http://127.0.0.1:8797');
+  await web.goto(TEST_APP_ORIGIN);
   const send = (message) =>
     web.evaluate(({ id, message }) => chrome.runtime.sendMessage(id, message), {
       id: EXTENSION_ID,
       message,
     });
-  assert.deepEqual(await send({ type: 'vizlinx:ping' }), { ok: true });
+  assert.deepEqual(await send({ type: 'vizlinx:ping' }), {
+    ok: true,
+    protocolVersion: 2,
+  });
   assert.equal(
     (await send({ type: 'fetch', url: 'http://127.0.0.1/secret' })).ok,
     false,
@@ -335,7 +343,7 @@ try {
     false,
   );
   const untrusted = await context.newPage();
-  await untrusted.goto('http://127.0.0.1:8801');
+  await untrusted.goto(`http://127.0.0.1:${TEST_FIXTURE_PORT}`);
   assert.equal(
     (
       await untrusted.evaluate(
