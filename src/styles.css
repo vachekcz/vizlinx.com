@@ -710,6 +710,7 @@ h1 > span {
   inset: 50px 0 90px;
   width: 100%;
   height: calc(100% - 140px);
+  text-rendering: geometricPrecision;
   touch-action: none;
   cursor: grab;
   user-select: none;
