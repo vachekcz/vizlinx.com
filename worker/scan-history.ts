@@ -202,7 +202,12 @@ export function checkRun(
   required = false,
 ): void {
   if (expected === undefined && !required) return;
-  if (typeof expected !== 'string' || !/^[a-f0-9-]{36}$/.test(expected))
+  if (
+    typeof expected !== 'string' ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      expected,
+    )
+  )
     throw new ApiError(400, 'A valid run ID is required.');
   if (expected !== (row.run_id ?? row.id))
     throw new ApiError(409, 'The active run changed. Reload before retrying.');

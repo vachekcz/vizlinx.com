@@ -420,6 +420,21 @@ describe('scan history', () => {
     assert.equal((await rescan(cookie, scan)).status, 409);
     await complete(scan.id);
     assert.equal((await rescan(cookie, scan, { body: {} })).status, 400);
+    const previous = await snapshot(cookie, scan.id);
+    for (const runId of [
+      '-'.repeat(36),
+      'a'.repeat(36),
+      '0000000-00000-4000-8000-000000000000',
+    ]) {
+      assert.equal(
+        (await rescan(cookie, scan, { body: { runId } })).status,
+        400,
+        `Malformed run ID must fail validation: ${runId}`,
+      );
+    }
+    assert.deepEqual(await snapshot(cookie, scan.id), previous);
+    assert.equal((await runs(cookie, scan.id)).runs.length, 1);
+    assert.equal(queued.length, 0);
     assert.equal(
       (
         await rescan(cookie, scan, {
