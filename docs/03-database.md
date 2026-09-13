@@ -71,7 +71,7 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 - **Kaskády:** `visitors` → `scans` → (`page_results`, `crawl_frontier`, `crawl_robots`, `scan_events`, `scan_runs` → `scan_run_pages`, `scan_run_events`), vše `ON DELETE CASCADE`. Smazání relace tedy smaže i archiv; `cleanupExpired` toho využívá a maže jen kořeny.
 - **Aktuální běh vs. archiv:** `scans` drží jen aktuální běh. `rescan` (`worker/scan-history.ts:216`) v jednom `batch` zkopíruje metadata do `scan_runs`, výsledky do `scan_run_pages`, události do `scan_run_events`, smaže živé `page_results`, `scan_events`, `crawl_frontier`, `crawl_robots` a přepíše `run_id`, `run_number`, generaci a checkpointy. Čtení snapshotu i logu bere živý i archivní zdroj v jednom `batch` (`readRunSnapshot`, `worker/scan-history.ts:98`), takže souběžná archivace nevrátí půl stavu.
 - **Historické mapy z rozšíření** mají `run_id = id` a `run_number = 1` z backfillu v `0006`; nic se nepřesouvalo.
-- **`sites_json` jsou zároveň data i pravidlo:** `maxPages`, `paused` a `intervalMs` v něm čte crawler i SQL kvóty. Serverový běh nastaví všem webům `maxPages = 100` (`worker/crawler.ts:197`); HTTP 429 přepíše `paused: true` daného webu podmíněným `UPDATE` (`worker/crawler.ts:466`).
+- **`sites_json` jsou zároveň data i pravidlo:** `maxPages`, `paused` a `intervalMs` v něm čte crawler i SQL kvóty. Serverový běh nastaví všem webům `maxPages = 100` (`worker/crawler.ts:199`); HTTP 429 přepíše `paused: true` daného webu podmíněným `UPDATE` (`worker/crawler.ts:466`).
 - **Stav `interrupted` v DB neexistuje** — dopočítává se při čtení z `heartbeat_at` (`control`, `worker/scan-history.ts:50`).
 - **Retence se vynucuje při čtení**, ne jen úklidem: každý dotaz na mapu má `created_at > now − 30 d` (`owned`, `worker/index.ts:177`), takže expirovaná data jsou nedostupná, i když ještě fyzicky existují.
 
@@ -88,7 +88,7 @@ Jen to, na čem stojí chování:
 - `crawl_frontier` PK `(scan_id, url)` + index `crawl_frontier_site (scan_id, origin, state)` — dedup URL a výběr kandidáta per origin.
 - `results_scan_origin (scan_id, source_origin)` — počet stránek na origin se počítá při každém zápisu.
 - `scans_owner_created (owner_hash, created_at)` — seznam map vlastníka; `scans_created`, `visitors_expiry`, `creation_quotas_expiry` — úklid podle času.
-- **Bez FK na `crawl_origin_gates` a `crawl_daily_budget`** — jsou globální a přežívají mapy; uklízí je crawler při startu (`worker/crawler.ts:237`).
+- **Bez FK na `crawl_origin_gates` a `crawl_daily_budget`** — jsou globální a přežívají mapy; uklízí je crawler při startu (`worker/crawler.ts:238`).
 - **D1 limit 100 vázaných parametrů na dotaz** — hromadné vklady jdou přes `json_each(?)` s jedním JSON parametrem (`addFrontier`, `worker/crawler.ts:87`), ne přes stovky placeholderů. Platí i pro nové dotazy.
 
 ---

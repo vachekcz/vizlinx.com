@@ -50,7 +50,7 @@ Staging ani preview URL nejsou (`preview_urls: false`); PR se ověřují testy a
 
 | Proměnná | Typ | Hodnota | Co dělá |
 |---|---|---|---|
-| `CRAWLER_ENABLED` | var | `"true"` | provozní vypínač skeneru: jiná hodnota než `"true"` → `POST /start` a `/rescan` vrací 503, běžící tick skončí jako `paused` (`worker/crawler.ts:133`, `worker/crawler.ts:621`, `worker/scan-history.ts:217`); čtení map funguje dál |
+| `CRAWLER_ENABLED` | var | `"true"` | provozní vypínač skeneru: jiná hodnota než `"true"` → `POST /start` a `/rescan` vrací 503, běžící tick skončí jako `paused` (`worker/crawler.ts:133`, `worker/scan-history.ts:217`, `worker/crawler.ts:621`); čtení map funguje dál |
 | `ADMIN_EMAIL` | var | `""` | veřejný kontakt vracený z `GET /api/v1/config`; UI z něj dělá tlačítko při dosažení limitu, prázdný řetězec = jen textová výzva (`worker/index.ts:221`) |
 | `CLOUDFLARE_API_TOKEN` | secret pro CLI | — | jen pro `npm run db:remote` a `wrangler deploy`. Oprávnění podle `.env.example`: Workers Scripts Edit, D1 Edit, Queues Edit a správa vlastních domén zóny `vizlinx.com`. Skutečný rozsah tokenu není v repu ověřitelný; [archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype) uvádí jen první tři |
 

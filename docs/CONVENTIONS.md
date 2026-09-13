@@ -20,9 +20,9 @@ sem, ne obráceně.
 | 05 | testing |
 | 06 | known-issues |
 | 07 | i18n *(rezervované — jen když projekt potřebuje)* |
-| 08 | patterns *(rezervované)* |
-| 09 | dependency-updates *(rezervované)* |
-| 10 | local-setup *(rezervované)* |
+| 08 | patterns *(rezervované — jen když projekt potřebuje)* |
+| 09 | dependency-updates *(rezervované — jen když projekt potřebuje)* |
+| 10 | local-setup *(rezervované — v praxi ho přibírá skoro každý projekt)* |
 | 11+ | projektové sloty |
 
 Nepřečíslovává se. Když vrstva v projektu neexistuje, slot zůstává a soubor má
@@ -74,7 +74,7 @@ jediný signál, že doc ještě odpovídá kódu. Data vždy ISO `YYYY-MM-DD`.
 
 6. **Odkazy s `./` a ověřené.** Relativní odkazy piš `./04-deployment.md`,
    názvy souborů lowercase. Zkopírovaný `scripts/check-doc-links.cjs` spouštěj
-   z kořene repa (Node.js 22+):
+   z libovolného adresáře cílového repa — kořen si skript odvodí z Gitu (Node.js 22+):
 
    ```bash
    node scripts/check-doc-links.cjs
