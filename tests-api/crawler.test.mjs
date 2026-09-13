@@ -270,7 +270,12 @@ test('same-origin redirect chains run one request per tick and parse links relat
   };
   const id = await create();
   await start(id);
+  let ticks = 0;
   while (pending.length) {
+    assert.ok(
+      ++ticks <= 1000,
+      'Redirect chain did not finish within 1000 ticks',
+    );
     const count = requests.length;
     await next();
     assert.ok(requests.length - count <= 1);

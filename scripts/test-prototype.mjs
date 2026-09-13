@@ -457,6 +457,18 @@ try {
     JSON.parse(row.result_json),
   );
   assert.equal(redirects.length, 3);
+  assert.deepEqual(
+    redirects.find(
+      (result) => result.sourceUrl === `${origins[0]}/redirect-start`,
+    )?.redirect,
+    { kind: 'same_origin', targetUrl: `${origins[0]}/redirect-final/` },
+  );
+  assert.deepEqual(
+    redirects.find(
+      (result) => result.sourceUrl === `${origins[0]}/redirect-final/out`,
+    )?.redirect,
+    { kind: 'external', targetUrl: `${origins[1]}/redirect-must-not-fetch` },
+  );
   assert.ok(
     redirects.some(
       (result) =>

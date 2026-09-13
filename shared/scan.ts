@@ -36,10 +36,13 @@ export type FoundLink = {
   region: 'content' | 'navigation' | 'footer' | 'unknown';
   occurrences: number;
 };
-export type ScanRedirect = {
-  kind: 'same_origin' | 'external' | 'invalid';
-  targetUrl?: string;
-};
+export type ScanRedirect =
+  | { kind: 'same_origin' | 'external'; targetUrl: string }
+  | {
+      kind: 'invalid';
+      targetUrl?: string;
+      reason?: 'unsupported_status' | 'invalid_target';
+    };
 export type PageResult = {
   sourceUrl: string;
   title: string;

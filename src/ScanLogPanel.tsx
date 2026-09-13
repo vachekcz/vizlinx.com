@@ -31,6 +31,8 @@ const limitLabels = {
   daily_limit: 'Dosažen denní limit',
 };
 export function redirectLabel(redirect: ScanRedirect): string {
+  if (redirect.kind === 'invalid' && redirect.reason === 'unsupported_status')
+    return 'Nepodporovaný stav přesměrování – nenásledováno';
   return {
     same_origin: 'Přesměrování v rámci webu',
     external: 'Přesměrování mimo web – nenásledováno',

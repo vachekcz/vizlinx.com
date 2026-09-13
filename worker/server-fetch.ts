@@ -89,20 +89,27 @@ export async function fetchServerPage(
         ? normalizeLinkUrl(location, sourceUrl)
         : null;
       const supported = [301, 302, 303, 307, 308].includes(response.status);
-      result.redirect = {
-        kind:
-          !supported || !targetUrl
-            ? 'invalid'
-            : new URL(targetUrl).origin === origin
-              ? 'same_origin'
-              : 'external',
-        ...(targetUrl ? { targetUrl } : {}),
-      };
+      result.redirect =
+        !supported || !targetUrl
+          ? {
+              kind: 'invalid',
+              reason: !supported ? 'unsupported_status' : 'invalid_target',
+              ...(targetUrl ? { targetUrl } : {}),
+            }
+          : {
+              kind:
+                new URL(targetUrl).origin === origin
+                  ? 'same_origin'
+                  : 'external',
+              targetUrl,
+            };
       if (result.redirect.kind !== 'same_origin')
         result.error =
           result.redirect.kind === 'external'
             ? 'Redirect leaves the source origin and was not followed.'
-            : 'Redirect has no supported HTTP(S) target and was not followed.';
+            : !supported
+              ? `Unsupported redirect status HTTP ${response.status} was not followed.`
+              : 'Redirect has no supported HTTP(S) target and was not followed.';
     } else if (!response.ok) {
       result.status = 'http_error';
       result.error = `HTTP ${response.status}`;
