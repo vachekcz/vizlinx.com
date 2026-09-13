@@ -25,7 +25,6 @@ type Props = {
   onSelect: (selection: Selection) => void;
   expanded: string[];
   focusedExpanded: string[];
-  onAutoExpandedChange: (value: boolean) => void;
   onFocusSite: (id: string) => void;
   onExpandedChange: (ids: string[]) => void;
   running: boolean;
@@ -250,7 +249,6 @@ export default function Graph({
   onSelect,
   expanded,
   focusedExpanded,
-  onAutoExpandedChange,
   onFocusSite,
   onExpandedChange,
   running,
@@ -317,11 +315,6 @@ export default function Graph({
   } | null>(null);
   const dragged = useRef(false);
   const suppressClick = useRef(false);
-  const autoExpanded = camera.zoom >= 1.65;
-  useEffect(() => {
-    onAutoExpandedChange(autoExpanded);
-    return () => onAutoExpandedChange(false);
-  }, [autoExpanded, onAutoExpandedChange]);
   const isExpanded = (id: string) => expanded.includes(id);
   const connections = aggregateConnections(links);
   const denseSite = inputSites.find(

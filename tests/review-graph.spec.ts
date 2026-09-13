@@ -19,7 +19,7 @@ async function expectArchiveInFrame(page: Page) {
   }
 }
 
-test('makes room across automatic expansion and synchronizes the inspector', async ({
+test('keeps expansion manual across zoom and synchronizes the inspector', async ({
   page,
 }) => {
   await page.goto('/');
@@ -38,8 +38,11 @@ test('makes room across automatic expansion and synchronizes the inspector', asy
   await page
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click({ clickCount: 3 });
-  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(44);
-  await expect(graph).not.toHaveAttribute('viewBox', frame!);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('173 %');
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(0);
+  await expect(graph).toHaveAttribute('viewBox', frame!);
+  await inspector.getByRole('button', { name: 'Prozkoumat 6 stránek' }).click();
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(6);
   await expectSiteSpacing(page, false);
   await expect(domain.locator('circle')).toHaveAttribute('cx', x!);
   await expect(page.locator('.graph-area')).not.toHaveClass(/has-dense-site/);
@@ -52,7 +55,7 @@ test('makes room across automatic expansion and synchronizes the inspector', asy
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: /^Stránka journal.example/ }),
-  ).toHaveCount(6);
+  ).toHaveCount(0);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await page
     .getByRole('button', { name: 'Ukázka: 20 stránek', exact: true })

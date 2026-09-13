@@ -82,6 +82,7 @@ Typy API bere frontend přímo ze `shared/scan.ts` (`src/ScanWorkspace.tsx:22`) 
 - **Stav:** lokální React state a `GraphDataProvider`; zdrojem pravdy pro mapu je server. `ScanWorkspace` volá `POST /session`, `POST /scans`, `POST /scans/:id/start` a pak **polluje snapshot každé 3 s** (`src/ScanWorkspace.tsx:244`); otevřený log panel polluje `/log` s 3 s odstupem (`src/ScanLogPanel.tsx:222`). Každá mutace posílá `runId`, aby zastaralá karta nemohla měnit novější běh.
 - **API klient:** funkce `api()` v `src/ScanWorkspace.tsx:55` — `fetch(API_PREFIX + path, { credentials: 'same-origin' })` s JSON a mapováním HTTP kódů na české hlášky. Nový endpoint patří sem, ne do dalšího `fetch`.
 - **Pravidlo:** grafová vrstva (`Graph`, `Inspector`, `App`) nezná API — dostává hotový `GraphDataset`; síťová logika žije jen v `ScanWorkspace` a `ScanLogPanel`.
+- **Rozbalování domén:** rozbalení a sbalení řídí explicitní akce uživatele (dvojklik na bublinu nebo tlačítko pro stránky). Zoom kolečkem, trackpadem ani tlačítky nemění rozbalené domény; ručně otevřené stránky zůstávají otevřené i při oddálení. Platí pro demo i živou mapu. Reset pohledu domény sbalí; sdílená ukázka `?detail=index` se dál otevírá rozbalená.
 
 ---
 

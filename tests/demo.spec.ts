@@ -128,9 +128,17 @@ test('zooms, pans, resets and opens a page with the keyboard', async ({
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click({ clickCount: 3 });
   await expect(page.getByLabel('Přiblížení mapy')).toHaveText('173 %');
-  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(44);
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Prozkoumat 6 stránek' }).click();
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(6);
+  await page
+    .getByRole('button', { name: 'Oddálit mapu', exact: true })
+    .click({ clickCount: 3 });
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('100 %');
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(6);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expect(page.getByLabel('Přiblížení mapy')).toHaveText('100 %');
+  await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(0);
   if (testInfo.project.name === 'desktop') {
     const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
     const box = (await graph.boundingBox())!;
@@ -155,6 +163,31 @@ test('zooms, pans, resets and opens a page with the keyboard', async ({
       .getByRole('complementary', { name: 'Detail výběru' })
       .getByRole('heading', { name: 'Naše projekty' }),
   ).toBeVisible();
+});
+
+test('keeps domain expansion unchanged when zooming with the wheel', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
+  const pageNodes = page.getByRole('button', { name: /^Stránka / });
+  await page.locator('[data-drag-site="atlas"] circle').hover();
+  // Mobile emulation scales wheel deltas; still cross the full zoom range.
+  await page.mouse.wheel(0, -10000);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('280 %');
+  await expect(pageNodes).toHaveCount(0);
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Prozkoumat 6 stránek' }).click();
+  await expect(pageNodes).toHaveCount(6);
+  await graph.hover();
+  await page.mouse.wheel(0, 10000);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('60 %');
+  await expect(pageNodes).toHaveCount(6);
+  await page.mouse.wheel(0, -10000);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('280 %');
+  await expect(pageNodes).toHaveCount(6);
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(1);
 });
 
 test('distinguishes unscanned external targets and keeps table and export consistent', async ({
