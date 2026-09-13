@@ -34,6 +34,54 @@ type Props = {
   connectionStyle: ConnectionStyleId;
 };
 
+type Point = { x: number; y: number };
+const PAGE_CARD = { x: -15, y: -14, width: 138, height: 29 };
+
+function pageLinkPath(
+  from: Point,
+  control: Point,
+  to: Point,
+  expanded: boolean,
+) {
+  let end = to;
+  let trimmedControl = control;
+  if (expanded) {
+    // Leave room for the head's half-width and outline at any approach angle.
+    const padding = 8;
+    const left = to.x + PAGE_CARD.x - padding;
+    const top = to.y + PAGE_CARD.y - padding;
+    const right = left + PAGE_CARD.width + 2 * padding;
+    const bottom = top + PAGE_CARD.height + 2 * padding;
+    const pointAt = (t: number) => ({
+      x: (1 - t) ** 2 * from.x + 2 * (1 - t) * t * control.x + t * t * to.x,
+      y: (1 - t) ** 2 * from.y + 2 * (1 - t) * t * control.y + t * t * to.y,
+    });
+    let outside = 0;
+    let inside = 1;
+    for (let iteration = 0; iteration < 24; iteration++) {
+      const t = (outside + inside) / 2;
+      const point = pointAt(t);
+      if (
+        point.x >= left &&
+        point.x <= right &&
+        point.y >= top &&
+        point.y <= bottom
+      ) {
+        inside = t;
+      } else {
+        outside = t;
+      }
+    }
+    end = pointAt(outside);
+    // Subdivide the quadratic so clipping preserves its curve and end tangent.
+    trimmedControl = {
+      x: from.x + outside * (control.x - from.x),
+      y: from.y + outside * (control.y - from.y),
+    };
+  }
+  return `M ${from.x} ${from.y} Q ${trimmedControl.x} ${trimmedControl.y} ${end.x} ${end.y}`;
+}
+
 function activate(event: KeyboardEvent<SVGGElement>, action: () => void) {
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault();
@@ -878,7 +926,15 @@ export default function Graph({
                       const b = isExpanded(target.id)
                         ? pagePosition(link.target, target, compact)
                         : to;
-                      const path = `M ${a.x} ${a.y} Q ${(a.x + b.x) / 2 + normal.x * 22} ${(a.y + b.y) / 2 + normal.y * 22} ${b.x} ${b.y}`;
+                      const path = pageLinkPath(
+                        a,
+                        {
+                          x: (a.x + b.x) / 2 + normal.x * 22,
+                          y: (a.y + b.y) / 2 + normal.y * 22,
+                        },
+                        b,
+                        isExpanded(target.id),
+                      );
                       const active =
                         (selection?.type === 'link' &&
                           selection.id === link.id) ||
@@ -1175,10 +1231,10 @@ export default function Graph({
                             </title>
                           )}
                           <rect
-                            x={position.x - 15}
-                            y={position.y - 14}
-                            width="138"
-                            height="29"
+                            x={position.x + PAGE_CARD.x}
+                            y={position.y + PAGE_CARD.y}
+                            width={PAGE_CARD.width}
+                            height={PAGE_CARD.height}
                             rx="8"
                             fill={
                               active ? site.color : 'var(--surface, #ffffff)'
