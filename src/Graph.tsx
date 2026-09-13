@@ -377,7 +377,8 @@ export default function Graph({
       (previous.compact !== compact || previous.resetKey !== resetKey);
     if (reset || previous === null) automaticLayout.current = true;
     if (expanded.length > 0) automaticLayout.current = false;
-    const balanced = live && automaticLayout.current;
+    const automatic = automaticLayout.current;
+    const balanced = live && automatic;
     const shiftedBase =
       live &&
       !reset &&
@@ -429,9 +430,12 @@ export default function Graph({
         x: site.x + (offsets[site.id]?.x ?? 0),
         y: site.y + (offsets[site.id]?.y ?? 0),
       }));
+      // Rebuild untouched layouts from their bases when font metrics change.
       const initial = balanced
         ? balanceSites(layoutSites, measured)
-        : positioned;
+        : automatic
+          ? layoutSites
+          : positioned;
       const placed = separateSites(initial, measured, anchorId);
       return {
         ...offsets,
