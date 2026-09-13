@@ -6,7 +6,11 @@ Schváleno Pavlem 12. 9. 2026: nahradit instalaci rozšíření skenováním na 
 
 Web → API Worker → Cloudflare Queue `vizlinx-com-crawl` → HTML/robots cílového webu → D1 → průběžně obnovovaná mapa. Jeden úkol zpracuje nejvýše jeden nový síťový požadavek. Celý sken neběží v `waitUntil` HTTP požadavku. Výsledky a fronta jsou trvalé; zavření karty jej nezastaví.
 
-Přesné veřejné HTTP(S) originy, standardní porty, bez přihlašovacích údajů, cookies, privátních IP literálů, automatických přesměrování a JavaScript renderingu. HTTP běží přes veřejný Workers `fetch`, bez privátních síťových bindingů, s `global_fetch_strictly_public`, aby vlastní zóna neobcházela veřejnou ochranu. Robots platí pro `VizlinxBot`. Chybějící robots (404/410) povolí sken; nedostupná nebo nečitelná politika jej nepovolí. Skener neobchází CAPTCHA ani blokace serverových IP.
+Přesné veřejné HTTP(S) originy, standardní porty, bez přihlašovacích údajů, cookies, privátních IP literálů a JavaScript renderingu. HTTP běží přes veřejný Workers `fetch` s manuálním zpracováním přesměrování, bez privátních síťových bindingů, s `global_fetch_strictly_public`, aby vlastní zóna neobcházela veřejnou ochranu. Robots platí pro `VizlinxBot`. Chybějící robots (404/410) povolí sken; nedostupná nebo nečitelná politika jej nepovolí. Skener neobchází CAPTCHA ani blokace serverových IP.
+
+Přesměrování stránek 301/302/303/307/308 na přesně stejný origin zařadí cílovou URL do fronty, včetně relativních cest. Každý hop je samostatný požadavek započtený do limitu, s kontrolou robots a odstupu. Deduplicita fronty zastavuje cykly; řetězec nových URL zastaví celkový limit 100. HTML a relativní odkazy se zpracovávají pod skutečnou cílovou URL. Jiný origin (také změna protokolu, portu nebo subdomény) se nepřidává ani nestahuje, i kdyby již patřil do scope. Cíl je pouze metadata `redirect: {kind, targetUrl?}` výsledku a logu, nikoli HTML odkaz v grafu. Neplatné/nevhodné cíle se nenásledují; URL s přihlašovacími údaji se do metadat nepřenáší. Přesměrování samotného robots.txt nadále nepovolí načítání politiky.
+
+Historické výsledky 302 bez uloženého cíle se zpětně nedoplňují; pro jejich ověření je potřeba nová mapa. Výsledek přesměrování si kvůli kompatibilitě ponechává status `redirect_unresolved`, konkrétní zacházení určuje `redirect.kind` (`same_origin`, `external`, `invalid`). Dokončená fronta bez úspěšného HTML se v rozhraní označí „Sken skončil bez načtených stránek“.
 
 - `GET /api/v1/config` → `{adminEmail: string|null, maxPagesPerSite:100}`.
 - `GET /api/v1/scans/:id/log` s vlastnickou cookie → `{events, truncated}`. Nejvýše 500 nejnovějších událostí v pořadí zápisu, se stejnou retencí a přístupem jako mapa. Událost obsahuje čas, typ, závažnost a případně origin, URL, stav stránky, HTTP status, počet odkazů nebo důvod limitu. Syrové výjimky, HTML ani provozní log Workeru se neposílají do webu.
@@ -66,7 +70,7 @@ Na účtu bylo ověřeno aktivní `Billing Budget Alert` s prahem 5 USD a jední
 
 ## Hranice první verze
 
-Výsledek HTML skenu nemusí obsahovat odkazy vytvářené JavaScriptem. Přesměrování vyžaduje zadat konečnou URL. Robots a antibot ochrana mohou zablokovat celý web. Pro více stránek, JS rendering nebo větší veřejný provoz je potřeba další rozhodnutí správce a měření skutečné spotřeby; dřívější CPU cenové scénáře nejsou cenou celého skenu.
+Výsledek HTML skenu nemusí obsahovat odkazy vytvářené JavaScriptem. Přesměrování na jiný origin vyžaduje zadat cílový web samostatně. Robots a antibot ochrana mohou zablokovat celý web. Pro více stránek, JS rendering nebo větší veřejný provoz je potřeba další rozhodnutí správce a měření skutečné spotřeby; dřívější CPU cenové scénáře nejsou cenou celého skenu.
 
 ## Ověřeno 12. 9. 2026
 
@@ -92,3 +96,8 @@ Stálý indikátor ukazuje načítání robots nebo stránky, čekání na front
 Review doplnilo pauzu originu po HTTP 429, oddělilo kvótu startů od běžných změn nastavení, zpřísnilo streamový limit robots a odstranilo kvadratické zkracování velkých výsledků. API test kontroluje celý Queue payload i zpoždění. Starší skeny z rozšíření neukládají serverovou fázi `queued`; jejich progress odstraňuje případnou historickou aktivitu. Úklid logu navazuje jen na skutečně vloženou událost, trim se provede pouze při překročení 500 záznamů.
 
 Produkční konfigurace fronty byla ověřena přes Cloudflare API: consumer skutečně směruje vyčerpané retry do `vizlinx-com-crawl-dead-letter`, která má retenci 86 400 sekund a žádný automatický consumer. Testy čtení streamu a velikosti výsledku: 9; API po doplnění regresí: 29; crawler: 18; log: 4. Počet API scénářů zahrnuje parametrizovanou smyčku `rotate/append/expire`, proto jej nelze odvodit prostým počítáním výskytů `test(`. Dřívější počty 25 a 27 popisují předchozí ověřené verze.
+
+## Přesměrování – ověřeno 13. 9. 2026
+
+- API: 29 testů, crawler: 23, zpracování odpovědí: 10, rozhraní skenu: 46 na desktopu a mobilu. Regrese pokrývají řetězce, smyčky, robots, interval, limit 100 URL, externí cíle po restartu i pozdní přesměrování po pauze. Prošel kompletní E2E s Workerem, Queue a D1 včetně přesměrování, formátování, TypeScript/build a Wrangler dry-run.
+- Produkční verze `b8c15ec3-de29-4832-8415-c9089465a7a0` následovala `https://www.flowii.com/` (302) na `/sk/` (200 HTML): výsledek obsahoval 132 odkazových skupin a 78 objevených URL. Cíl přesměrování byl ověřen v uloženém logu. Samostatný diagnostický sken byl poté pozastaven.

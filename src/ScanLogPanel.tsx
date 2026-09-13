@@ -12,6 +12,7 @@ import {
   type PageStatus,
   type ScanLogEvent,
   type ScanSnapshot,
+  type ScanRedirect,
 } from '../shared/scan';
 
 const pageLabels: Record<PageStatus, string> = {
@@ -29,6 +30,13 @@ const limitLabels = {
   time_limit: 'Dosažen časový limit',
   daily_limit: 'Dosažen denní limit',
 };
+export function redirectLabel(redirect: ScanRedirect): string {
+  return {
+    same_origin: 'Přesměrování v rámci webu',
+    external: 'Přesměrování mimo web – nenásledováno',
+    invalid: 'Přesměrování bez platného HTTP(S) cíle – nenásledováno',
+  }[redirect.kind];
+}
 function eventLabel(event: ScanLogEvent) {
   switch (event.type) {
     case 'scan_started':
@@ -46,6 +54,7 @@ function eventLabel(event: ScanLogEvent) {
         ? 'Robots.txt nepovoluje skenování'
         : 'Zkontrolována pravidla robots.txt';
     case 'page_finished':
+      if (event.redirect) return redirectLabel(event.redirect);
       return event.status ? pageLabels[event.status] : 'Stránka zpracována';
     case 'scan_completed':
       return 'Známá fronta je dokončená';
@@ -73,12 +82,17 @@ export function ScanActivityStatus({
     return () => window.clearInterval(timer);
   }, [running]);
   const activity = scan.activity;
+  const emptyCompletion =
+    scan.status === 'completed' &&
+    !scan.results.some((result) => result.status === 'ok');
   let title = {
     waiting: 'Připraveno ke skenování',
     running: 'Skenování běží na serveru',
     paused: 'Skenování pozastaveno',
     interrupted: 'Skenování bylo přerušeno',
-    completed: 'Sken dokončen',
+    completed: emptyCompletion
+      ? 'Sken skončil bez načtených stránek'
+      : 'Sken dokončen',
     limited: 'Sken zastaven na limitu',
     error: 'Skenování vyžaduje pozornost',
   }[scan.status];
@@ -113,6 +127,8 @@ export function ScanActivityStatus({
           size={21}
           aria-hidden="true"
         />
+      ) : emptyCompletion ? (
+        <AlertTriangle size={21} aria-hidden="true" />
       ) : scan.status === 'completed' ? (
         <Check size={21} aria-hidden="true" />
       ) : scan.status === 'paused' ? (
@@ -125,7 +141,12 @@ export function ScanActivityStatus({
         {detail && <span title={detail}>{detail}</span>}
       </div>
       <span className="scan-activity-count">
-        {scan.results.length} zpracovaných stránek
+        {scan.results.length}{' '}
+        {scan.results.length === 1
+          ? 'zpracovaná stránka'
+          : scan.results.length >= 2 && scan.results.length <= 4
+            ? 'zpracované stránky'
+            : 'zpracovaných stránek'}
       </span>
     </div>
   );
@@ -354,6 +375,11 @@ function LogDrawer({
                   {(event.url || event.origin) && (
                     <span className="scan-log-url">
                       {event.url || event.origin}
+                    </span>
+                  )}
+                  {event.redirect?.targetUrl && (
+                    <span className="scan-log-url">
+                      Cíl přesměrování: {event.redirect.targetUrl}
                     </span>
                   )}
                 </div>

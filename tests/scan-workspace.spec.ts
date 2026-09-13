@@ -853,6 +853,72 @@ test('shows persistent scan activity and expires the request countdown without c
   await expect(activity).not.toContainText('https://example.com/next');
 });
 
+test('explains blocked redirect targets in the saved log and avoids claiming a successful empty scan', async ({
+  page,
+}) => {
+  const id = '00000000-0000-4000-8000-000000000095';
+  const redirect: PageResult = {
+    sourceUrl: site.seedUrl,
+    title: '',
+    observedAt: '2026-09-13T11:00:00.000Z',
+    status: 'redirect_unresolved',
+    httpStatus: 302,
+    links: [],
+    discoveredUrls: [],
+    truncated: false,
+    redirect: {
+      kind: 'external',
+      targetUrl: 'https://other.org/landing?from=example',
+    },
+  };
+  await mockApi(page, [
+    snapshot(id, { status: 'completed', results: [redirect], pageCount: 1 }),
+  ]);
+  await page.route(`**${API_PREFIX}/scans/${id}/log`, (route) =>
+    route.fulfill({
+      json: {
+        truncated: false,
+        events: [
+          {
+            id: 1,
+            type: 'page_finished',
+            at: redirect.observedAt,
+            level: 'warning',
+            url: redirect.sourceUrl,
+            httpStatus: 302,
+            status: redirect.status,
+            redirect: redirect.redirect,
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/scan?id=${id}`);
+  await expect(page.getByTestId('scan-activity')).toContainText(
+    'Sken skončil bez načtených stránek',
+  );
+  await page
+    .getByText('Podrobnosti neúplných výsledků', { exact: true })
+    .click();
+  await expect(page.locator('.scan-issues')).toContainText(
+    'Přesměrování mimo web – nenásledováno',
+  );
+  await expect(page.locator('.scan-issues')).toContainText(
+    redirect.redirect!.targetUrl!,
+  );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  const panel = page.getByRole('dialog');
+  await expect(panel).toContainText('Přesměrování mimo web – nenásledováno');
+  await expect(panel).toContainText(
+    `Cíl přesměrování: ${redirect.redirect!.targetUrl}`,
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText(
+    redirect.redirect!.targetUrl!,
+  );
+});
+
 test('opens saved log, filters by origin and errors, restores focus and does not poll while closed', async ({
   page,
 }, testInfo) => {

@@ -69,6 +69,14 @@ function safeUrls(urls: string[], origin: string): string[] {
   return [...unique];
 }
 
+function redirectTargets(result: PageResult, origin: string): string[] {
+  return result.redirect?.kind === 'same_origin' &&
+    result.redirect.targetUrl &&
+    new URL(result.sourceUrl).origin === origin
+    ? [result.redirect.targetUrl]
+    : [];
+}
+
 function addFrontier(
   env: Env,
   id: string,
@@ -263,6 +271,7 @@ export async function startServerScan(
       const discovered = saved.results.flatMap(({ result_json }) => {
         const result = JSON.parse(result_json) as PageResult;
         return [
+          ...redirectTargets(result, site.origin),
           ...result.discoveredUrls,
           ...result.links.map((link) => link.targetUrl),
         ];
@@ -430,12 +439,13 @@ async function storeResult(
         type: 'page_finished',
         level: ['http_error', 'network_error'].includes(result.status)
           ? 'error'
-          : result.status === 'ok'
+          : result.status === 'ok' || result.redirect?.kind === 'same_origin'
             ? 'info'
             : 'warning',
         origin,
         url: result.sourceUrl,
         status: result.status,
+        ...(result.redirect ? { redirect: result.redirect } : {}),
         ...(result.httpStatus !== null
           ? { httpStatus: result.httpStatus }
           : {}),
@@ -496,6 +506,7 @@ async function storeResult(
         JSON.stringify(
           safeUrls(
             [
+              ...redirectTargets(result, site.origin),
               ...result.discoveredUrls,
               ...result.links.map((link) => link.targetUrl),
             ],

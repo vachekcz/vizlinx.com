@@ -7,6 +7,7 @@ let BodyTooLarge;
 let emptyResult;
 let fitResult;
 let fetchServerRobots;
+let fetchServerPage;
 let SCAN_LIMITS;
 
 before(async () => {
@@ -14,7 +15,7 @@ before(async () => {
     stdin: {
       resolveDir: process.cwd(),
       contents: `export * from './shared/fetch-result.ts';
-        export { fetchServerRobots } from './worker/server-fetch.ts';
+        export { fetchServerRobots, fetchServerPage } from './worker/server-fetch.ts';
         export { SCAN_LIMITS } from './shared/scan.ts';`,
     },
     bundle: true,
@@ -29,10 +30,57 @@ before(async () => {
     emptyResult,
     fitResult,
     fetchServerRobots,
+    fetchServerPage,
     SCAN_LIMITS,
   } = await import(
     `data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`
   ));
+});
+
+test('redirect metadata resolves paths but never follows changed origins or unsafe targets inside fetch', async (t) => {
+  const cases = [
+    ['../final?q=1#section', 'same_origin', 'https://example.com/final?q=1'],
+    ['https://example.com/next', 'same_origin', 'https://example.com/next'],
+    ['//other.org/landing', 'external', 'https://other.org/landing'],
+    [
+      'https://sub.example.com/landing',
+      'external',
+      'https://sub.example.com/landing',
+    ],
+    ['http://example.com/landing', 'external', 'http://example.com/landing'],
+    [
+      'https://example.com:8443/landing',
+      'external',
+      'https://example.com:8443/landing',
+    ],
+    ['http://127.0.0.1/private', 'external', 'http://127.0.0.1/private'],
+    ['javascript:alert(1)', 'invalid', undefined],
+    ['https://user:secret@other.org/', 'invalid', undefined],
+    ['', 'invalid', undefined],
+    [null, 'invalid', undefined],
+  ];
+  for (const [location, kind, targetUrl] of cases) {
+    let calls = 0;
+    const mock = t.mock.method(globalThis, 'fetch', async (_url, options) => {
+      calls++;
+      assert.equal(options.redirect, 'manual');
+      return new Response('', {
+        status: 302,
+        headers: location === null ? {} : { Location: location },
+      });
+    });
+    const result = await fetchServerPage(
+      'https://example.com/start/page',
+      'https://example.com',
+    );
+    assert.equal(calls, 1);
+    assert.equal(result.status, 'redirect_unresolved');
+    assert.equal(result.redirect.kind, kind);
+    assert.equal(result.redirect.targetUrl, targetUrl);
+    assert.deepEqual(result.links, []);
+    assert.deepEqual(result.discoveredUrls, []);
+    mock.mock.restore();
+  }
 });
 
 function streamedResponse(chunks, headers = {}) {
