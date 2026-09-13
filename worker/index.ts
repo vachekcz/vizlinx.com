@@ -459,10 +459,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       )
         ? 'limited'
         : (body.status ?? null);
-      if (
-        row.execution_mode === 'server' &&
-        ['running', 'waiting'].includes(String(nextStatus ?? row.status))
-      )
+      if (row.execution_mode === 'server' && nextStatus === 'waiting')
         await limitCreation(request, env, 'start');
       const now = Date.now();
       const status = (nextStatus ?? row.status) as ScanStatus;
