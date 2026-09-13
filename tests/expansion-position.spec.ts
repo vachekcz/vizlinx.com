@@ -65,6 +65,37 @@ test('expands a domain in place and makes room for neighbouring domains and labe
   });
 });
 
+test('keeps an isolated distant domain fixed while expansion moves nearby domains', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const distant = page.getByRole('button', {
+    name: 'Doména journal.example',
+    exact: true,
+  });
+  await distant.focus();
+  // Place this domain outside the chain of neighbours displaced by expansion.
+  for (let step = 0; step < 20; step++) await distant.press('Shift+ArrowLeft');
+  await page
+    .getByRole('button', { name: 'Doména index.example', exact: true })
+    .press('Enter');
+  const before = await domainCircles(page);
+  await page
+    .getByRole('complementary', { name: 'Detail výběru' })
+    .getByRole('button', { name: 'Prozkoumat 20 stránek' })
+    .click();
+  await expect(
+    page.getByRole('button', { name: /^Stránka index.example/ }),
+  ).toHaveCount(20);
+  const after = await domainCircles(page);
+  expectSameCenter(after.journal, before.journal);
+  expectSameCenter(after.index, before.index);
+  expect(
+    Math.hypot(after.atlas.x - before.atlas.x, after.atlas.y - before.atlas.y),
+  ).toBeGreaterThan(0);
+  await expectSiteSpacing(page);
+});
+
 test('retains a dragged domain position when expanding and collapsing through the inspector', async ({
   page,
 }, testInfo) => {
