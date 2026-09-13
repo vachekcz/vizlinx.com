@@ -184,8 +184,31 @@ test('validates and normalizes origins and starts a server scan without an exten
   await page.getByRole('button', { name: 'Uložené mapy', exact: true }).click();
   const saved = page
     .locator('.scan-saved')
-    .getByRole('button', { name: /example.com · second.org/ });
+    .getByRole('button', { name: 'Otevřít mapu example.com, second.org' });
   await expect(saved).toBeVisible();
+  const savedMaps = page.locator('.scan-saved');
+  for (const origin of ['https://example.com', 'https://second.org']) {
+    const link = savedMaps.getByRole('link', {
+      name: `Otevřít ${origin} v nové kartě`,
+      exact: true,
+    });
+    await expect(link).toHaveAttribute('href', `${origin}/`);
+    await expect(link).toHaveAttribute('target', '_blank');
+  }
+  await expect(savedMaps.locator('button a, a button, a a')).toHaveCount(0);
+  await page
+    .context()
+    .route('https://example.com/', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<h1>Example</h1>' }),
+    );
+  const popupOpened = page.waitForEvent('popup');
+  await savedMaps
+    .getByRole('link', { name: 'Otevřít https://example.com v nové kartě' })
+    .click();
+  const popup = await popupOpened;
+  await expect(popup).toHaveURL('https://example.com/');
+  await expect(page).toHaveURL(/\/scan$/);
+  await popup.close();
   await saved.click();
   await page.reload();
   await expect(
@@ -209,7 +232,7 @@ test('loads saved maps by URL and returns from an unavailable map to the saved l
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page
     .locator('.scan-saved')
-    .getByRole('button', { name: /example.com/ })
+    .getByRole('button', { name: 'example.com', exact: true })
     .click();
   await expect(page).toHaveURL(`/scan?id=${scan.id}`);
   await expect(
@@ -233,10 +256,11 @@ test('loads saved maps by URL and returns from an unavailable map to the saved l
   ).toBeDisabled();
   await page.getByRole('button', { name: 'Uložené mapy', exact: true }).click();
   await expect(
-    page
-      .locator('.scan-saved')
-      .getByRole('button', { name: /Známá fronta je dokončená/ }),
-  ).toBeVisible();
+    page.locator('.scan-saved').getByRole('button', {
+      name: 'Otevřít mapu example.com',
+      exact: true,
+    }),
+  ).toContainText('Známá fronta je dokončená');
 });
 
 test('reports session and creation failures without losing the form and allows a retry', async ({
@@ -839,6 +863,11 @@ test('shows persistent scan activity and expires the request countdown without c
   const activity = page.getByTestId('scan-activity');
   await expect(activity).toContainText('Odstup mezi požadavky');
   await expect(activity).toContainText('https://example.com/next');
+  await expect(activity.getByRole('link')).toHaveAttribute(
+    'href',
+    'https://example.com/next',
+  );
+  await expect(activity.getByRole('link')).toHaveAttribute('target', '_blank');
   await expect(activity).toContainText('0 zpracovaných stránek');
   await expect(activity).toContainText('Čeká na zpracování', {
     timeout: 10000,
@@ -912,6 +941,18 @@ test('explains blocked redirect targets in the saved log and avoids claiming a s
   await expect(panel).toContainText(
     `Cíl přesměrování: ${redirect.redirect!.targetUrl}`,
   );
+  for (const container of [page.locator('.scan-issues'), panel]) {
+    for (const url of [redirect.sourceUrl, redirect.redirect!.targetUrl!]) {
+      const link = container.getByRole('link', {
+        name: `Otevřít ${url} v nové kartě`,
+        exact: true,
+      });
+      await expect(link).toHaveAttribute('href', url);
+      await expect(link).toHaveAttribute('target', '_blank');
+      await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    await expect(container.locator('button a, a button, a a')).toHaveCount(0);
+  }
   await page.reload();
   await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText(
@@ -985,6 +1026,16 @@ test('opens saved log, filters by origin and errors, restores focus and does not
   await expect(
     panel.getByText('https://other.example/private', { exact: true }),
   ).toBeVisible();
+  await expect(
+    panel.getByRole('link', {
+      name: 'Otevřít https://example.com/contact v nové kartě',
+    }),
+  ).toHaveAttribute('href', 'https://example.com/contact');
+  await expect(
+    panel.getByRole('link', {
+      name: 'Otevřít https://other.example/private v nové kartě',
+    }),
+  ).toHaveAttribute('target', '_blank');
   const requestsAfterOpen = requests;
   await page.screenshot({
     path: testInfo.outputPath('scan-log.png'),

@@ -369,7 +369,7 @@ test('limits live map detail while preserving every discovered link in table and
   await expect(
     page.getByText('240 unikátních dvojic stránek', { exact: true }),
   ).toBeVisible();
-  await expect(page.locator('.detail-link-list > button')).toHaveCount(200);
+  await expect(page.locator('.detail-link-row')).toHaveCount(200);
   await expect(
     page.getByText(
       'Zobrazeno 200 z 240 vazeb. Všechny vazby najdeš v tabulce a CSV.',

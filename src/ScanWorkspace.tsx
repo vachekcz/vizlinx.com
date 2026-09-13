@@ -13,6 +13,7 @@ import {
   Sun,
 } from 'lucide-react';
 import App from './App';
+import ExternalLink from './ExternalLink';
 import ScanLogPanel, {
   ScanActivityStatus,
   redirectLabel,
@@ -686,7 +687,8 @@ export default function ScanWorkspace() {
                 .filter((result) => result.status !== 'ok' || result.truncated)
                 .map((result) => (
                   <li key={result.sourceUrl}>
-                    <span>{result.sourceUrl}</span> —{' '}
+                    <span>{result.sourceUrl}</span>{' '}
+                    <ExternalLink url={result.sourceUrl} /> —{' '}
                     {result.redirect
                       ? redirectLabel(result.redirect)
                       : result.truncated
@@ -703,7 +705,11 @@ export default function ScanWorkspace() {
                           }[result.status]}
                     {result.httpStatus ? ` (${result.httpStatus})` : ''}
                     {result.redirect?.targetUrl && (
-                      <span> → {result.redirect.targetUrl}</span>
+                      <span>
+                        {' '}
+                        → {result.redirect.targetUrl}{' '}
+                        <ExternalLink url={result.redirect.targetUrl} />
+                      </span>
                     )}
                   </li>
                 ))}
@@ -901,12 +907,21 @@ export default function ScanWorkspace() {
                   <ul>
                     {saved.map((item) => (
                       <li key={item.id}>
-                        <button onClick={() => selectScan(item.id)}>
-                          <strong>
-                            {item.sites
-                              .map((site) => new URL(site.origin).host)
-                              .join(' · ')}
-                          </strong>
+                        <div className="scan-saved-sites">
+                          {item.sites.map((site) => (
+                            <span key={site.origin}>
+                              <button onClick={() => selectScan(item.id)}>
+                                <strong>{new URL(site.origin).host}</strong>
+                              </button>
+                              <ExternalLink url={site.origin} />
+                            </span>
+                          ))}
+                        </div>
+                        <button
+                          className="scan-saved-details"
+                          aria-label={`Otevřít mapu ${item.sites.map((site) => new URL(site.origin).host).join(', ')}`}
+                          onClick={() => selectScan(item.id)}
+                        >
                           <span>
                             {statusLabels[item.status]} · {item.pageCount}{' '}
                             stránek

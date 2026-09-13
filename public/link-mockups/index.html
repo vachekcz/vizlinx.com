@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vizlinx — tři návrhy otevírání odkazů</title>
+    <link rel="icon" href="../favicon.svg" />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #f0f3fa;
+        --surface: #fff;
+        --ink: #172139;
+        --muted: #576580;
+        --line: #cad3e3;
+        --accent: #2457ff;
+        --raised: #eaf0ff;
+        --pink: #d73763;
+        --grid: #c6cfde;
+      }
+      [data-theme='midnight'] {
+        --bg: #071023;
+        --surface: #101b34;
+        --ink: #ecf3ff;
+        --muted: #a0b5d3;
+        --line: #30486c;
+        --accent: #39d9ef;
+        --raised: #1b2c4d;
+        --pink: #ff827a;
+        --grid: #26395a;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.5 'DM Sans',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      button,
+      a {
+        -webkit-tap-highlight-color: transparent;
+      }
+      button {
+        cursor: pointer;
+        color: inherit;
+        background: none;
+        border: 0;
+        font: inherit;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+      button:hover {
+        background: var(--raised);
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      svg {
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+        flex-shrink: 0;
+      }
+      .top {
+        padding: 20px 42px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .brand {
+        font-size: 27px;
+        font-weight: 760;
+        letter-spacing: -1.5px;
+      }
+      .brand span {
+        color: var(--accent);
+      }
+      .top-right,
+      .tabs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .badge {
+        font-size: 10px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        background: var(--raised);
+        color: var(--muted);
+        letter-spacing: 1px;
+      }
+      .theme {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 7px 12px;
+        font-size: 12px;
+      }
+      main {
+        max-width: 1440px;
+        margin: auto;
+        padding: 28px 42px 24px;
+      }
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 23px;
+        gap: 25px;
+      }
+      .eyebrow {
+        font-size: 10px;
+        letter-spacing: 1.7px;
+        font-weight: 650;
+        color: var(--muted);
+      }
+      h1 {
+        font-size: 34px;
+        letter-spacing: -1.3px;
+        font-weight: 660;
+        line-height: 1.3;
+        margin: 6px 0;
+      }
+      .description {
+        color: var(--muted);
+        font-size: 13px;
+        max-width: 800px;
+      }
+      .tabs {
+        padding: 5px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        border-radius: 9px;
+        flex-shrink: 0;
+      }
+      .tabs a {
+        font-size: 12px;
+        padding: 8px 13px;
+        border-radius: 5px;
+      }
+      .tabs .active {
+        background: var(--accent);
+        color: var(--surface);
+      }
+      .workspace {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: 0 6px 24px #17213906;
+      }
+      .workspace-bar {
+        height: 49px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .workspace-bar span {
+        color: var(--muted);
+      }
+      .workspace-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 380px;
+        min-height: 505px;
+      }
+      .graph {
+        position: relative;
+        overflow: hidden;
+        background:
+          radial-gradient(var(--grid) 0.8px, transparent 0.8px) 0 0/20px 20px,
+          var(--bg);
+        min-height: 505px;
+      }
+      .graph-caption {
+        position: absolute;
+        top: 20px;
+        left: 22px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--muted);
+        font-size: 12px;
+        z-index: 1;
+      }
+      .number {
+        display: inline-flex;
+        width: 23px;
+        height: 23px;
+        border-radius: 7px;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent);
+        border: 1px solid var(--line);
+        background: var(--surface);
+        flex-shrink: 0;
+      }
+      .wires {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        inset: 0;
+        pointer-events: none;
+      }
+      .wires path {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 1.1;
+        opacity: 0.35;
+      }
+      .origin {
+        position: absolute;
+        left: 6%;
+        top: 194px;
+        border: 1px solid var(--accent);
+        background: var(--surface);
+        width: 122px;
+        height: 122px;
+        border-radius: 50%;
+        display: flex;
+        justify-content: center;
+        flex-direction: column;
+        align-items: center;
+        font-size: 12px;
+        box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 5%, transparent);
+      }
+      .origin b {
+        font-size: 23px;
+        color: var(--accent);
+      }
+      .origin small {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .cluster {
+        position: absolute;
+        width: 338px;
+        height: 338px;
+        left: 36%;
+        top: 84px;
+        border: 1px solid var(--pink);
+        border-radius: 50%;
+        background: var(--surface);
+        box-shadow: 0 0 0 8px color-mix(in srgb, var(--pink) 5%, transparent);
+      }
+      .cluster-title {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 7px;
+        margin-top: 39px;
+        color: var(--pink);
+        font-weight: 650;
+        font-size: 14px;
+      }
+      .cluster-sub {
+        text-align: center;
+        color: var(--muted);
+        font-size: 10px;
+        margin-top: 2px;
+      }
+      .pages {
+        padding: 23px 23px 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px 10px;
+      }
+      .page-chip {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        border: 1px solid color-mix(in srgb, var(--pink) 25%, var(--surface));
+        border-radius: 8px;
+        background: var(--surface);
+        overflow: hidden;
+        height: 36px;
+      }
+      .page-chip.selected {
+        background: var(--raised);
+        border-color: var(--accent);
+      }
+      .page-chip > button {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 7px 6px 7px 9px;
+        text-align: left;
+        flex: 1;
+        min-width: 0;
+        font-size: 11px;
+      }
+      .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--pink);
+        flex-shrink: 0;
+      }
+      .external {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent);
+        width: 29px;
+        height: 29px;
+        border-radius: 6px;
+        flex-shrink: 0;
+      }
+      .external:hover {
+        background: var(--raised);
+        box-shadow: 0 0 0 1px var(--line);
+      }
+      .external svg {
+        width: 15px;
+        height: 15px;
+      }
+      .tooltip {
+        position: absolute;
+        left: 29px;
+        top: 229px;
+        background: var(--ink);
+        color: var(--surface);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 10px;
+        box-shadow: 0 4px 12px #0002;
+        white-space: nowrap;
+      }
+      .tooltip:before {
+        content: '';
+        position: absolute;
+        top: -4px;
+        left: 110px;
+        width: 8px;
+        height: 8px;
+        background: var(--ink);
+        transform: rotate(45deg);
+      }
+      .graph-help {
+        position: absolute;
+        bottom: 21px;
+        left: 23px;
+        right: 23px;
+        padding: 11px 13px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .graph-help strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .inspector {
+        border-left: 1px solid var(--line);
+        padding: 20px 22px;
+      }
+      .section-label {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 19px;
+      }
+      .section-label .close {
+        margin-left: auto;
+        color: var(--muted);
+      }
+      .site-mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: color-mix(in srgb, var(--pink) 10%, var(--surface));
+        color: var(--pink);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 25px;
+        font-weight: 650;
+        margin-bottom: 11px;
+      }
+      .inspector h2 {
+        font-size: 21px;
+        letter-spacing: -0.5px;
+        margin-bottom: 5px;
+      }
+      .url-line {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        min-width: 0;
+      }
+      .url-text {
+        font-size: 11px;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .url-line .url-text {
+        flex: 1;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 10px;
+        color: var(--muted);
+        background: var(--bg);
+        border-radius: 4px;
+        padding: 4px 7px;
+        margin-top: 9px;
+      }
+      .status i {
+        width: 5px;
+        height: 5px;
+        background: #2f9562;
+        border-radius: 50%;
+      }
+      .section-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top: 1px solid var(--line);
+        padding-top: 17px;
+        margin-top: 18px;
+        margin-bottom: 5px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .section-heading span {
+        background: var(--raised);
+        padding: 1px 6px;
+        font-size: 10px;
+        border-radius: 3px;
+        color: var(--accent);
+      }
+      .link-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .link-content {
+        flex: 1;
+        min-width: 0;
+      }
+      .link-source {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .link-source .url-text {
+        color: var(--ink);
+      }
+      .destination {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 3px;
+      }
+      .destination .url-text {
+        flex: 1;
+      }
+      .chevron {
+        color: var(--muted);
+        padding: 5px 1px;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 10px;
+        margin-top: 12px;
+      }
+      .elsewhere {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin: 23px 0 12px;
+      }
+      .elsewhere h2 {
+        font-size: 15px;
+        font-weight: 620;
+      }
+      .elsewhere span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .cards {
+        display: grid;
+        grid-template-columns: 1fr 1.18fr 1fr 1.05fr;
+        gap: 12px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 15px;
+        min-width: 0;
+      }
+      .card h3 {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        margin-bottom: 15px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .mini-label {
+        font-size: 9px;
+        letter-spacing: 1px;
+        color: var(--muted);
+        margin: 9px 0 4px;
+      }
+      .mini-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 35px;
+      }
+      .mini-row .url-text {
+        flex: 1;
+      }
+      .mini-row + .mini-row {
+        border-top: 1px solid var(--line);
+      }
+      .avatar {
+        width: 24px;
+        height: 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent);
+        font-size: 19px;
+        font-weight: 700;
+        background: var(--raised);
+        border-radius: 5px;
+      }
+      .mini-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .mini-table th {
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 500;
+        text-align: left;
+        padding: 0 3px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      .mini-table td {
+        vertical-align: top;
+        padding: 9px 3px;
+      }
+      .mini-table .url-line {
+        gap: 0;
+        flex-wrap: wrap;
+      }
+      .card .url-text {
+        font-size: 10px;
+      }
+      .log-status {
+        color: #2f9562;
+        font-size: 10px;
+        margin-bottom: 7px;
+      }
+      .bottom {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        margin-top: 17px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .bottom strong {
+        color: var(--ink);
+      }
+      .inline-link {
+        color: var(--accent);
+        font-size: 11px;
+        text-decoration: underline;
+        text-decoration-color: color-mix(
+          in srgb,
+          var(--accent) 40%,
+          transparent
+        );
+        text-underline-offset: 3px;
+        overflow-wrap: anywhere;
+      }
+      .inline-link svg {
+        width: 12px;
+        height: 12px;
+        margin-left: 3px;
+      }
+      .inline-link:hover {
+        text-decoration-thickness: 2px;
+      }
+      .open-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        color: var(--accent);
+        border-radius: 6px;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .open-button:hover {
+        background: var(--raised);
+        border-color: var(--accent);
+      }
+      .primary {
+        background: var(--accent);
+        color: var(--surface);
+        border-color: var(--accent);
+        padding: 9px 13px;
+        font-size: 12px;
+      }
+      .primary:hover {
+        background: var(--accent);
+        filter: brightness(0.94);
+      }
+      .inspector .primary {
+        margin-top: 10px;
+        width: 100%;
+      }
+      .popover {
+        position: absolute;
+        top: 262px;
+        left: 28px;
+        right: 28px;
+        padding: 13px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        box-shadow: 0 7px 24px #17213920;
+        z-index: 2;
+      }
+      .popover .url-text {
+        margin: 2px 0 9px;
+        display: block;
+      }
+      .popover strong {
+        font-size: 12px;
+      }
+      .popover .primary {
+        width: 100%;
+      }
+      [data-variant='2'] .page-chip > a {
+        flex: 1;
+        padding: 7px 9px;
+        font-size: 11px;
+      }
+      [data-variant='2'] .page-chip .chevron {
+        flex: 0 0 29px;
+        justify-content: center;
+        padding: 6px;
+        border-left: 1px solid var(--line);
+      }
+      [data-variant='2'] .url-line .inline-link {
+        flex: 1;
+      }
+      [data-variant='3'] .cluster {
+        top: 64px;
+      }
+      [data-variant='3'] .inspector {
+        padding-top: 17px;
+      }
+      [data-variant='3'] .section-heading {
+        margin-top: 13px;
+        padding-top: 12px;
+      }
+      [data-variant='3'] .link-row {
+        padding: 9px 0;
+      }
+      [data-variant='3'] .link-source .open-button,
+      [data-variant='3'] .destination .open-button {
+        padding: 4px 6px;
+      }
+      [data-variant='3'] .card .url-line {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 5px;
+      }
+      [data-variant='3'] .mini-row {
+        flex-wrap: wrap;
+      }
+      [data-variant='3'] .mini-table .open-button {
+        padding: 4px 5px;
+      }
+      @media (max-width: 1000px) {
+        main {
+          padding: 24px;
+        }
+        .top {
+          padding: 16px 24px;
+        }
+        .intro {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .workspace-body {
+          grid-template-columns: minmax(0, 1fr) 340px;
+        }
+        .cluster {
+          left: 24%;
+          transform: scale(0.86);
+          transform-origin: center;
+        }
+        .origin {
+          left: 2%;
+          width: 94px;
+          height: 94px;
+        }
+        .cards {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 720px) {
+        main {
+          padding: 18px 14px;
+        }
+        .top {
+          padding: 12px 16px;
+        }
+        .top-right .badge {
+          display: none;
+        }
+        h1 {
+          font-size: 29px;
+        }
+        .workspace-body {
+          grid-template-columns: 1fr;
+        }
+        .graph {
+          min-height: 480px;
+        }
+        .cluster {
+          left: calc(50% - 128px);
+          top: 65px;
+          transform: scale(0.78);
+        }
+        [data-variant='3'] .cluster {
+          top: 45px;
+        }
+        .origin {
+          left: 10px;
+          top: 204px;
+          width: 84px;
+          height: 84px;
+          font-size: 10px;
+        }
+        .inspector {
+          border-left: 0;
+          border-top: 1px solid var(--line);
+        }
+        .cards {
+          grid-template-columns: 1fr;
+        }
+        .bottom,
+        .elsewhere {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .workspace-bar {
+          font-size: 10px;
+          padding: 0 13px;
+        }
+        .workspace-bar span {
+          max-width: 120px;
+          text-align: right;
+        }
+        .graph-caption {
+          font-size: 11px;
+          left: 15px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="index.html">vizlinx<span>.</span></a>
+      <div class="top-right">
+        <span class="badge">NÁVRH INTERAKCÍ · UKÁZKOVÁ DATA</span
+        ><button class="theme" id="theme">Noční režim</button>
+      </div>
+    </header>
+    <main id="board"></main>
+    <script>
+      const icons = {
+        external:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>',
+        chevron:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
+      };
+      const variants = {
+        1: {
+          title: 'Ikona přesně u odkazu',
+          description:
+            'Drobná ikona otevře web. Název stránky dál vybírá její detail a vazby v mapě.',
+          short: 'Ikony',
+          help: '<strong>Název → detail v mapě.</strong> Ikona ↗ → stránka v nové kartě.',
+          verdict:
+            'Doporučuji: rychlé otevření, malý zásah do současného ovládání.',
+        },
+        2: {
+          title: 'URL jako skutečný hyperlink',
+          description:
+            'Modrý podtržený text vede přímo na web. Samostatná šipka › vedle něj otevře detail v mapě.',
+          short: 'Klikací URL',
+          help: '<strong>Podtržená URL → nová karta.</strong> Šipka › → detail v mapě.',
+          verdict:
+            'Nejčitelnější odkazy; mění význam kliknutí na URL v bublině.',
+        },
+        3: {
+          title: 'Výrazná akce Otevřít',
+          description:
+            'Vyberete stránku v bublině a otevřete ji z malé karty. V detailech jsou výslovná tlačítka.',
+          short: 'Akční karta',
+          help: '<strong>Vyberte stránku → Otevřít stránku.</strong> Stejná akce je i v pravém panelu.',
+          verdict:
+            'Nejvýraznější akce; uvnitř bubliny vyžaduje nejdřív výběr stránky.',
+        },
+      };
+      let variant = Number(new URLSearchParams(location.search).get('variant'));
+      if (!variants[variant]) variant = 1;
+      let selectedPath = '/stories';
+      const number = (value) => `<span class="number">${value}</span>`;
+      const href = (url) =>
+        `href="https://${url}" target="_blank" rel="noopener noreferrer" title="Otevřít https://${url} v nové kartě" aria-label="Otevřít https://${url} v nové kartě"`;
+      const external = (url) =>
+        `<a class="external" ${href(url)}>${icons.external}</a>`;
+      const open = (url, label = 'Otevřít', primary = false) =>
+        `<a class="open-button ${primary ? 'primary' : ''}" ${href(url)}>${label}${icons.external}</a>`;
+      const inline = (url, label = url) =>
+        `<a class="inline-link" ${href(url)}>${label}${icons.external}</a>`;
+      const urlLine = (url) =>
+        `<div class="url-line">${variant === 2 ? inline(url) : `<span class="url-text">${url}</span>${variant === 1 ? external(url) : open(url)}`}</div>`;
+      const paths = [
+        '/',
+        '/stories',
+        '/interviews',
+        '/about',
+        '/archive',
+        '/contact',
+      ];
+      function pageChip(path) {
+        const url = `journal.example${path}`;
+        return `<div class="page-chip ${path === selectedPath ? 'selected' : ''}">${variant === 2 ? `${inline(url, path)}<button class="chevron" data-page="${path}" aria-label="Detail ${url}">${icons.chevron}</button>` : `<button data-page="${path}" aria-label="Detail ${url}"><i class="dot"></i>${path}</button>${variant === 1 ? external(url) : ''}`}</div>`;
+      }
+      function linkRow(source, target) {
+        return `<div class="link-row"><div class="link-content"><div class="link-source">${variant === 2 ? inline(source) : `<span class="url-text">${source}</span>${variant === 1 ? external(source) : open(source)}`}</div><div class="destination"><span class="url-text" style="flex:0">→</span>${variant === 2 ? inline(target) : `<span class="url-text">${target}</span>${variant === 1 ? external(target) : open(target)}`}</div></div><button class="chevron" data-source="${source}" data-detail="${target}" aria-label="Zobrazit detail vazby">${icons.chevron}</button></div>`;
+      }
+      function render() {
+        document.body.dataset.variant = variant;
+        const v = variants[variant];
+        const selectedUrl = `journal.example${selectedPath}`;
+        const pageTitle =
+          selectedPath === '/stories'
+            ? 'Příběhy o designu'
+            : `Stránka ${selectedPath}`;
+        document.getElementById('board').innerHTML = `
+        <div class="intro"><div><div class="eyebrow">OTEVÍRÁNÍ ODKAZŮ / NÁVRH 0${variant}${variant === 1 ? ' / DOPORUČENÝ' : ''}</div><h1>${v.title}</h1><p class="description">${v.description}</p></div><nav class="tabs" aria-label="Varianty návrhu">${Object.entries(
+          variants,
+        )
+          .map(
+            ([key, value]) =>
+              `<a href="?variant=${key}" class="${Number(key) === variant ? 'active' : ''}" ${Number(key) === variant ? 'aria-current="page"' : ''}>0${key} ${value.short}</a>`,
+          )
+          .join('')}</nav></div>
+        <div class="workspace"><div class="workspace-bar"><strong>Mapa souvislostí<span style="color:var(--accent)">.</span> <span> / Studio Atlas</span></strong><span>Mapa &nbsp; · &nbsp; 5 webů &nbsp; · &nbsp; 51 vazeb</span></div>
+        <div class="workspace-body"><section class="graph" aria-label="Rozbalená bublina s cílovými stránkami"><div class="graph-caption">${number('1')} ROZBALENÁ BUBLINA · DOMÉNA A KAŽDÁ STRÁNKA</div>
+        <svg class="wires" viewBox="0 0 800 505" preserveAspectRatio="none"><path d="M130 255 C220 120 370 135 450 207"/><path d="M132 256 C223 125 370 136 450 209"/><path d="M134 257 C224 130 370 137 450 211"/><path d="M130 260 C220 370 360 365 466 286"/><path d="M134 260 C220 364 360 362 466 286"/><path d="M130 258 C245 258 260 241 410 240"/></svg>
+        <div class="origin"><b>a</b><strong>atlas.example</strong><small>6 stránek</small>${variant === 1 ? external('atlas.example') : variant === 2 ? inline('atlas.example', 'Otevřít web') : open('atlas.example', 'Web')}</div>
+        <div class="cluster"><div class="cluster-title">${variant === 2 ? inline('journal.example') : `journal.example ${variant === 1 ? external('journal.example') : open('journal.example', 'Web')}`}</div><p class="cluster-sub">6 známých cílových stránek</p><div class="pages">${paths.map(pageChip).join('')}</div>
+        ${variant === 1 ? '<div class="tooltip">Otevřít stránku v nové kartě</div>' : variant === 3 ? `<div class="popover"><strong>${pageTitle}</strong><span class="url-text">${selectedUrl}</span>${open(selectedUrl, 'Otevřít stránku', true)}</div>` : ''}</div>
+        <div class="graph-help">${v.help}</div></section>
+        <aside class="inspector"><div class="section-label">${number('2')}<span class="eyebrow">DETAIL STRÁNKY</span><span class="close">×</span></div><div class="site-mark">j</div><h2>${pageTitle}</h2>
+        ${variant === 3 ? `<div class="url-text">https://${selectedUrl}</div>${open(selectedUrl, 'Otevřít stránku', true)}` : urlLine(selectedUrl)}<div class="status"><i></i>Pouze známý cíl odkazu</div><div class="section-heading">Vazby této stránky <span>3</span></div>
+        ${linkRow('atlas.example/work', selectedUrl)}${linkRow('atlas.example/journal', selectedUrl)}${linkRow(selectedUrl, 'objects.example/collection')}
+        <p class="note">Otevřít lze zdroj i cíl každé vazby. Šipka › zobrazí její detail.</p></aside></div></div>
+        <div class="elsewhere"><h2>Stejný princip na dalších místech</h2><span>Každá zobrazená webová adresa má cestu ven.</span></div>
+        <div class="cards"><section class="card"><h3>${number('3')} Weby a propojené domény</h3><div class="mini-row"><span class="avatar">a</span><div style="flex:1">${urlLine('atlas.example')}</div></div><div class="mini-row"><span class="avatar" style="color:var(--pink)">j</span><div style="flex:1">${urlLine('journal.example')}</div></div><p class="note">Také v nadpisu detailu domény a propojení.</p></section>
+        <section class="card"><h3>${number('4')} Tabulka všech odkazů</h3><table class="mini-table"><thead><tr><th>ZDROJOVÁ STRÁNKA</th><th>CÍLOVÁ STRÁNKA</th></tr></thead><tbody><tr><td>${urlLine('atlas.example/work')}</td><td>${urlLine('journal.example/stories')}</td></tr></tbody></table><p class="note">Obě URL dostupné přímo v řádku.</p></section>
+        <section class="card"><h3>${number('5')} Detail konkrétní vazby</h3><div class="mini-label">ZDROJOVÁ STRÁNKA</div>${urlLine('atlas.example/work')}<div class="mini-label">↓ &nbsp; CÍLOVÁ STRÁNKA</div>${urlLine('journal.example/stories')}</section>
+        <section class="card"><h3>${number('6')} Průběh a výsledky skenu</h3><div class="log-status">✓ &nbsp; 200 · Stránka načtena</div>${urlLine('atlas.example/work')}<div class="mini-label">CÍL PŘESMĚROVÁNÍ · 301</div>${urlLine('journal.example/stories')}<p class="note">Včetně URL u chyb načítání.</p></section></div>
+        <footer class="bottom"><span><strong>${v.verdict}</strong></span><span>Odkazy → nová karta · Fiktivní domény z dema</span></footer>`;
+        document.querySelectorAll('[data-page]').forEach((button) =>
+          button.addEventListener('click', () => {
+            selectedPath = button.dataset.page;
+            render();
+          }),
+        );
+        document.querySelectorAll('[data-detail]').forEach((button) =>
+          button.addEventListener('click', () => {
+            const panel = document.querySelector('.inspector');
+            panel.innerHTML = `<div class="section-label">${number('5')}<span class="eyebrow">DETAIL ODKAZU</span></div><button id="back" class="open-button">← Zpět na stránku</button><div class="mini-label" style="margin-top:24px">ZDROJOVÁ STRÁNKA</div><h2>Vybraná vazba</h2>${urlLine(button.dataset.source)}<div class="mini-label" style="margin-top:24px">CÍLOVÁ STRÁNKA</div>${urlLine(button.dataset.detail)}<p class="note">Ukázka otevření zdroje i cíle z detailu vazby.</p>`;
+            document.getElementById('back').addEventListener('click', render);
+          }),
+        );
+      }
+      document.getElementById('theme').addEventListener('click', () => {
+        const dark = document.documentElement.dataset.theme !== 'midnight';
+        document.documentElement.dataset.theme = dark ? 'midnight' : 'signal';
+        document.getElementById('theme').textContent = dark
+          ? 'Denní režim'
+          : 'Noční režim';
+      });
+      render();
+    </script>
+  </body>
+</html>
