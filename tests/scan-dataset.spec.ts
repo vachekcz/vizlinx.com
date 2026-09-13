@@ -190,6 +190,38 @@ async function mockScan(page: BrowserPage, current: () => ScanSnapshot) {
   });
 }
 
+async function sitePositions(page: BrowserPage) {
+  return page.locator('[data-drag-site]').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const circle = node.querySelector('circle')!;
+      return {
+        id: node.getAttribute('data-drag-site')!,
+        x: Number(circle.getAttribute('cx')),
+        y: Number(circle.getAttribute('cy')),
+      };
+    }),
+  );
+}
+
+async function expectBalancedLiveLayout(page: BrowserPage) {
+  const positions = await sitePositions(page);
+  const hub = positions.find((site) => site.id === 'https://alpha.cz')!;
+  const targets = positions.filter((site) => site.id !== hub.id);
+  expect(targets.length).toBeGreaterThan(2);
+  const distances = targets.map((site) =>
+    Math.hypot(site.x - hub.x, site.y - hub.y),
+  );
+  expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(1);
+  const angles = targets
+    .map((site) => Math.atan2(site.y - hub.y, site.x - hub.x))
+    .sort((a, b) => a - b);
+  const expectedGap = (2 * Math.PI) / targets.length;
+  for (let index = 0; index < angles.length; index++) {
+    const next = angles[index + 1] ?? angles[0] + 2 * Math.PI;
+    expect(Math.abs(next - angles[index] - expectedGap)).toBeLessThan(0.002);
+  }
+}
+
 test('renders a live arbitrary dataset and keeps a moved expanded origin stable as results arrive', async ({
   page,
 }) => {
@@ -370,7 +402,7 @@ test('limits live map detail while preserving every discovered link in table and
   await expect(page.locator('tbody tr')).toHaveCount(240);
 });
 
-test('keeps crowded live domains and long labels apart as the map grows, resets and expands', async ({
+test('balances crowded live domains by default and preserves manual placement as the map expands', async ({
   page,
 }, testInfo) => {
   const domains = [
@@ -396,23 +428,59 @@ test('keeps crowded live domains and long labels apart as the map grows, resets 
   current.sites = current.sites.slice(0, 1);
   await mockScan(page, () => current);
   await page.clock.install();
+  const pollScan = async () => {
+    const responsePromise = page.waitForResponse('**/scans/adapter-test');
+    await page.clock.fastForward(3000);
+    const response = await responsePromise;
+    await response.finished();
+    await page.clock.runFor(50);
+  };
   await page.goto('/scan?id=adapter-test');
   await expect(page.locator('.site-node')).toHaveCount(9);
   await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
+  const initialPositions = await sitePositions(page);
+  await pollScan();
+  expect(await sitePositions(page)).toEqual(initialPositions);
   const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
   const initialFrame = await graph.getAttribute('viewBox');
+  for (let step = 0; step < 3; step++)
+    await page
+      .getByRole('button', { name: 'Přiblížit mapu', exact: true })
+      .click();
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(9);
+  await expectSiteSpacing(page, false);
+  for (let step = 0; step < 3; step++)
+    await page
+      .getByRole('button', { name: 'Oddálit mapu', exact: true })
+      .click();
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(0);
+  await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
   current = { ...current, results: [result({ links })] };
-  await page.clock.fastForward(3000);
+  await pollScan();
   await expect(page.locator('.site-node')).toHaveCount(11);
   await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
   await expect(graph).not.toHaveAttribute('viewBox', initialFrame!);
+  await page.locator('.graph-area').screenshot({
+    path: testInfo.outputPath('balanced-live-map.png'),
+  });
+  const grownPositions = await sitePositions(page);
+  await page.reload();
+  await expect(page.locator('.site-node')).toHaveCount(11);
+  await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
+  expect(await sitePositions(page)).toEqual(grownPositions);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
   await page.getByLabel('Další odkazované weby').uncheck();
   await expect(page.locator('.site-node')).toHaveCount(1);
   await page.getByLabel('Další odkazované weby').check();
   await expect(page.locator('.site-node')).toHaveCount(11);
   await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
   const domain = page.getByRole('button', {
     name: 'Doména doubleblindmag.com',
     exact: true,
@@ -420,6 +488,15 @@ test('keeps crowded live domains and long labels apart as the map grows, resets 
   await domain.focus();
   for (let step = 0; step < 8; step++) await domain.press('Shift+ArrowRight');
   await expectSiteSpacing(page);
+  const movedPositions = await sitePositions(page);
+  const movedDomain = movedPositions.find(
+    (site) => site.id === 'https://doubleblindmag.com',
+  );
+  expect(movedDomain).not.toEqual(
+    grownPositions.find((site) => site.id === movedDomain!.id),
+  );
+  await pollScan();
+  expect(await sitePositions(page)).toEqual(movedPositions);
   await domain.press('Enter');
   await page
     .getByRole('button', { name: 'Zobrazit známé cílové URL', exact: true })
@@ -431,5 +508,14 @@ test('keeps crowded live domains and long labels apart as the map grows, resets 
     }),
   ).toHaveCount(1);
   await expectSiteSpacing(page);
+  expect(
+    (await sitePositions(page)).find((site) => site.id === movedDomain!.id),
+  ).toEqual(movedDomain);
+  const expandedPositions = await sitePositions(page);
+  await pollScan();
+  expect(await sitePositions(page)).toEqual(expandedPositions);
   await graph.screenshot({ path: testInfo.outputPath('crowded-map.png') });
+  await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
+  await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
 });
