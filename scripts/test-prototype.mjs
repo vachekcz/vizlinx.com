@@ -5,83 +5,102 @@ import { resolve, extname } from 'node:path';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { chromium, expect } from '@playwright/test';
-import { EXTENSION_ID } from '../shared/extension.ts';
-import {
-  buildTestExtension,
-  TEST_APP_ORIGIN,
-  TEST_APP_PORT,
-  TEST_FIXTURE_PORT,
-} from './build-test-extension.mjs';
 
-const appOrigin = TEST_APP_ORIGIN;
-const origins = ['http://a.vizlinx.com', 'http://b.vizlinx.com'];
-let serverFetches = 0;
+const appPort = 8897;
+const appOrigin = `http://127.0.0.1:${appPort}`;
+const origins = ['https://a.vizlinx.com', 'https://b.vizlinx.com'];
+const quotaOrigin = 'https://quota.vizlinx.com';
+const fetched = [];
+const apiFailures = [];
 let context;
+let browser;
 let mf;
 let app;
-const fetched = [];
 let releaseSlowPage;
-let releaseQuotaPage;
-const resultUploads = [];
-const fixtures = createServer((request, response) => {
-  fetched.push(`${request.headers.host}${request.url}`);
-  if (request.url === '/robots.txt') {
-    response.writeHead(404);
-    response.end();
-    return;
-  }
-  response.writeHead(200, { 'Content-Type': 'text/html' });
-  if (request.url === '/quota-root') {
-    response.end(
-      '<title>Quota root</title><a href="/quota-slow">Next page</a>',
-    );
-    return;
-  }
-  if (request.url === '/quota-slow') {
-    releaseQuotaPage = () => response.end('<title>Quota second page</title>');
-    return;
-  }
-  if (
-    request.headers.host === 'a.vizlinx.com' &&
-    ['/slow', '/slow-regular'].includes(request.url)
-  ) {
-    releaseSlowPage = () =>
-      response.end(
-        request.url === '/slow-regular'
-          ? '<title>Regular pairing</title>'
-          : '<title>Slow alpha</title><main><a href="/next">Queued</a><a href="http://b.vizlinx.com/deep">Partner</a></main>',
-      );
-    return;
-  }
-  if (request.headers.host === 'a.vizlinx.com' && request.url === '/next') {
-    response.end('<title>Next alpha</title><main>Done</main>');
-    return;
-  }
-  response.end(
-    request.headers.host === 'a.vizlinx.com'
-      ? '<title>Alpha</title><main><a href="http://b.vizlinx.com/deep">Partner</a></main>'
-      : request.url === '/deep'
-        ? '<title>Beta detail</title><main><a href="http://a.vizlinx.com/">Home</a></main>'
-        : '<title>Beta</title><main>No links here</main>',
+let slowPageReleased = false;
+
+const html = (body) =>
+  new Response(body, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+
+// All outbound traffic stays inside the fixture: the browser has no extension,
+// and actual Worker fetch/HTML parsing/D1 writes run against public-looking URLs.
+async function fixture(request) {
+  const url = new URL(request.url);
+  assert.ok(
+    [...origins, quotaOrigin].includes(url.origin),
+    `Unexpected server fetch: ${url.href}`,
   );
-});
+  fetched.push(url.href);
+  if (url.pathname === '/robots.txt') return new Response('', { status: 404 });
+  if (url.origin === quotaOrigin) {
+    const index = url.pathname === '/' ? 0 : Number(url.pathname.slice(1));
+    assert.ok(Number.isInteger(index) && index >= 0 && index <= 100);
+    return html(
+      `<title>Quota ${index}</title><main>${index < 100 ? `<a href="/${index + 1}">Next page</a>` : 'Last page'}</main>`,
+    );
+  }
+  if (url.origin === origins[0] && url.pathname === '/pause-root') {
+    return html(
+      `<title>Pause root</title><main><a href="/pause-slow">Next page</a><a href="${origins[1]}/deep">Partner</a></main>`,
+    );
+  }
+  if (url.origin === origins[0] && url.pathname === '/pause-slow') {
+    if (!slowPageReleased)
+      await new Promise((done) => {
+        releaseSlowPage = () => {
+          slowPageReleased = true;
+          done();
+        };
+      });
+    return html(
+      `<title>Paused page</title><main><a href="${origins[1]}/deep">Partner</a></main>`,
+    );
+  }
+  if (url.origin === origins[0])
+    return html(
+      `<title>Alpha</title><main><a href="${origins[1]}/deep">Partner</a></main>`,
+    );
+  if (url.pathname === '/deep')
+    return html(
+      `<title>Beta detail</title><main><a href="${origins[0]}/">Home</a></main>`,
+    );
+  return html('<title>Beta</title><main>No links here</main>');
+}
+
 const listen = (server, port) =>
   new Promise((done, reject) =>
     server.once('error', reject).listen(port, '127.0.0.1', done),
   );
 const close = (server) =>
   new Promise((done) => {
-    if (!server) {
-      done();
-      return;
-    }
+    if (!server) return done();
     server.closeAllConnections();
     server.close(done);
   });
 
 try {
   const bundle = await build({
-    entryPoints: ['worker/index.ts'],
+    stdin: {
+      resolveDir: process.cwd(),
+      // Advance the clock only between real Queue deliveries and remove delivery
+      // delays in this test bundle. Production throttle and quota code is intact.
+      contents: `import worker from './worker/index.ts';
+        let elapsed = 0;
+        const realNow = Date.now.bind(Date);
+        Date.now = () => realNow() + elapsed;
+        function testEnvironment(env) {
+          return { ...env, CRAWL_QUEUE: { send: (body) => env.CRAWL_QUEUE.send(body) } };
+        }
+        export default {
+          fetch(request, env, ctx) { return worker.fetch(request, testEnvironment(env), ctx); },
+          queue(batch, env, ctx) {
+            elapsed += 1_001;
+            return worker.queue(batch, testEnvironment(env), ctx);
+          },
+        };`,
+    },
     bundle: true,
     format: 'esm',
     platform: 'browser',
@@ -93,17 +112,23 @@ try {
       modules: true,
       script: bundle.outputFiles[0].text,
       compatibilityDate: '2026-09-11',
+      bindings: { CRAWLER_ENABLED: 'true' },
       d1Databases: ['DB'],
+      queueProducers: { CRAWL_QUEUE: 'prototype-crawl' },
+      queueConsumers: {
+        'prototype-crawl': {
+          maxBatchSize: 1,
+          maxBatchTimeout: 0,
+          maxRetries: 0,
+        },
+      },
       serviceBindings: {
         ASSETS: () =>
           new Response('Asset requests must use the local asset server.', {
             status: 500,
           }),
       },
-      outboundService: () => {
-        serverFetches += 1;
-        throw new Error('The backend must never crawl a website.');
-      },
+      outboundService: fixture,
     }),
   );
   const db = await mf.getD1Database('DB');
@@ -121,7 +146,6 @@ try {
     '.woff2': 'font/woff2',
     '.svg': 'image/svg+xml',
     '.png': 'image/png',
-    '.zip': 'application/zip',
   };
   app = createServer(async (request, response) => {
     try {
@@ -134,14 +158,13 @@ try {
           headers: request.headers,
           ...(body.length ? { body } : {}),
         });
-        if (request.method === 'PUT' && request.url.endsWith('/results'))
-          resultUploads.push({
-            body: JSON.parse(body.toString()),
-            status: result.status,
-          });
         const headers = Object.fromEntries(result.headers);
         const cookies = result.headers.getSetCookie();
         if (cookies.length) headers['set-cookie'] = cookies;
+        if (!result.ok)
+          apiFailures.push(
+            `${request.method} ${request.url}: ${result.status} ${await result.clone().text()}`,
+          );
         response.writeHead(result.status, headers);
         response.end(Buffer.from(await result.arrayBuffer()));
         return;
@@ -161,135 +184,113 @@ try {
         'Content-Type': mime[extname(asset)] ?? 'application/octet-stream',
       });
       response.end(content);
-    } catch {
+    } catch (error) {
+      console.error(error);
       response.writeHead(500);
       response.end('Local test server failed.');
     }
   });
-  await listen(app, TEST_APP_PORT);
-  await listen(fixtures, TEST_FIXTURE_PORT);
-  const extension = await buildTestExtension();
-  context = await chromium.launchPersistentContext('', {
-    channel: 'chromium',
-    headless: true,
+  await listen(app, appPort);
+  browser = await chromium.launch({ headless: true });
+  context = await browser.newContext({
     viewport: { width: 1600, height: 1000 },
-    args: [
-      `--disable-extensions-except=${extension}`,
-      `--load-extension=${extension}`,
-      '--no-proxy-server',
-      `--host-resolver-rules=MAP *.vizlinx.com 127.0.0.1:${TEST_FIXTURE_PORT}`,
-    ],
   });
   context.setDefaultTimeout(15_000);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const unpaired = await context.newPage();
-  await unpaired.goto(`chrome-extension://${EXTENSION_ID}/runner.html`);
-  await expect(unpaired.locator('#status')).toContainText(
-    'Otevřít skenovací kartu',
-  );
-  await expect(unpaired.locator('#map')).toHaveAttribute(
-    'href',
-    `${appOrigin}/scan`,
-  );
-  await expect(unpaired.locator('#start')).toBeDisabled();
-  await unpaired.close();
-  await page.goto(`${appOrigin}/scan`);
-  await expect(page.getByRole('heading', { name: 'Nová mapa' })).toBeVisible();
-  await expect(
-    page.getByRole('link', { name: 'Stáhni rozšíření' }),
-  ).toHaveCount(0);
-  await expect(page.locator('.scan-install')).toContainText(
-    'build/extension-dev',
-  );
-  await expect(page.getByText('Rozšíření je připojené')).toBeVisible();
-  await page.getByLabel('Weby k prozkoumání').fill(origins[0]);
-  await page.getByLabel('Interval požadavků (sekundy)').fill('1');
-  await page.getByLabel('Limit stránek na web').fill('5');
-  await page.getByRole('button', { name: 'Připravit sken' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Otevřít skenovací kartu' }),
-  ).toBeVisible();
-  const mapUrl = page.url();
-  const id = new URL(mapUrl).searchParams.get('id');
-  assert.match(id, /^[a-f0-9-]{36}$/);
-  const opened = context.waitForEvent('page');
-  await page.getByRole('button', { name: 'Otevřít skenovací kartu' }).click();
-  const runner = await opened;
-  await runner.waitForLoadState();
-  await expect(runner.locator('#sites li')).toHaveCount(1);
-  await expect(runner.locator('#map')).toHaveAttribute('href', mapUrl);
-  const settings = await context.newPage();
-  await settings.goto(`chrome://extensions/?id=${EXTENSION_ID}`);
-  await settings.evaluate(
-    ({ id, origin }) =>
-      chrome.developerPrivate.addHostPermission(id, `${origin}/*`),
-    { id: EXTENSION_ID, origin: origins[0] },
-  );
-  await runner.locator('#start').click();
-  await expect(runner.locator('#status')).toContainText('Hotovo.', {
-    timeout: 20_000,
+  await context.route('**/*', (route) => {
+    const url = new URL(route.request().url());
+    assert.equal(
+      url.origin,
+      appOrigin,
+      'The browser must never fetch crawled websites',
+    );
+    return route.continue();
   });
-  await expect(page.locator('.scan-stats')).toContainText('1 načtených', {
-    timeout: 10_000,
-  });
+  const scanRow = (id) =>
+    db
+      .prepare('SELECT status, limit_reason FROM scans WHERE id = ?1')
+      .bind(id)
+      .first();
+  const pageRows = (id) =>
+    db
+      .prepare(
+        'SELECT source_url, result_json FROM page_results WHERE scan_id = ?1 ORDER BY source_url',
+      )
+      .bind(id)
+      .all();
+  async function createScan(url) {
+    await page.goto(`${appOrigin}/scan`);
+    await expect(
+      page.getByRole('heading', { name: 'Nová mapa' }),
+    ).toBeVisible();
+    await page.getByLabel('Weby k prozkoumání').fill(url);
+    await page.getByLabel('Interval požadavků (sekundy)').fill('1');
+    await page
+      .getByRole('button', { name: 'Spustit sken', exact: true })
+      .click();
+    await expect(page).toHaveURL(/\?id=[a-f0-9-]{36}$/);
+    const id = new URL(page.url()).searchParams.get('id');
+    assert.match(id, /^[a-f0-9-]{36}$/);
+    return id;
+  }
+  async function addSite(origin) {
+    await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
+    await page.getByLabel('Nový web', { exact: true }).fill(origin);
+    await page.getByLabel('Interval nového webu (sekundy)').fill('1');
+    await page
+      .getByRole('button', { name: 'Přidat do mapy', exact: true })
+      .click();
+    await expect(
+      page.getByRole('button', {
+        name: 'Pokračovat ve skenování',
+        exact: true,
+      }),
+    ).toBeEnabled();
+  }
+
+  const id = await createScan(origins[0]);
+  await expect.poll(async () => (await scanRow(id)).status).toBe('completed');
+  await expect(page.locator('.scan-stats')).toContainText('1 načtených');
   assert.equal(
-    fetched.some((url) => url.startsWith('b.vizlinx.com')),
+    fetched.some((url) => url.startsWith(origins[1])),
     false,
-    'An external link stays known without fetching its host',
+    'External links must not expand the approved fetch scope',
   );
-  const original = await db
-    .prepare(
-      'SELECT result_json FROM page_results WHERE scan_id = ?1 AND source_url = ?2',
-    )
-    .bind(id, `${origins[0]}/`)
-    .first();
+  const original = (await pageRows(id)).results;
   assert.equal(
-    JSON.parse(original.result_json).links[0].targetUrl,
+    JSON.parse(original[0].result_json).links[0].targetUrl,
     `${origins[1]}/deep`,
   );
-  await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
-  await page.getByLabel('Nový web', { exact: true }).fill(origins[1]);
-  await page
-    .getByRole('button', { name: 'Přidat do mapy', exact: true })
-    .click();
-  await expect(
-    page.getByRole('button', { name: 'Pokračovat v rozšíření', exact: true }),
-  ).toBeVisible();
-  const expandedOpened = context.waitForEvent('page');
-  await page
-    .getByRole('button', { name: 'Pokračovat v rozšíření', exact: true })
-    .click();
-  const expandedRunner = await expandedOpened;
-  await expect(expandedRunner.locator('#sites li')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  const logPanel = page.getByRole('dialog', { name: 'Průběh skenu' });
+  const logRows = logPanel
+    .getByRole('region', { name: 'Záznamy skenu' })
+    .locator('li');
+  await expect(logRows).toHaveCount(4);
+  await expect(logRows.nth(0)).toContainText('Spuštěn sken');
+  await expect(logRows.nth(1)).toContainText(
+    'Zkontrolována pravidla robots.txt',
+  );
+  await expect(logRows.nth(1)).toContainText(`${origins[0]}/robots.txt`);
+  await expect(logRows.nth(2)).toContainText('Načteno');
+  await expect(logRows.nth(2)).toContainText('HTTP 200');
+  await expect(logRows.nth(2)).toContainText('1 odkazů');
+  await expect(logRows.nth(2)).toContainText(`${origins[0]}/`);
+  await expect(logRows.nth(3)).toContainText('Známá fronta je dokončená');
+  await logPanel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
+  await addSite(origins[1]);
   assert.equal(
-    fetched.some((url) => url.startsWith('b.vizlinx.com')),
+    fetched.some((url) => url.startsWith(origins[1])),
     false,
-    'Pairing an expanded scope must not start host requests',
+    'Adding a website waits for the explicit resume action',
   );
-  await settings.evaluate(
-    ({ id, origin }) =>
-      chrome.developerPrivate.addHostPermission(id, `${origin}/*`),
-    { id: EXTENSION_ID, origin: origins[1] },
-  );
-  // An old card must not silently adopt a newly paired scope, even when its host permission exists.
-  await runner.locator('#start').click();
-  await expect(runner.locator('#status')).toContainText(
-    'Rozsah mapy se změnil',
-  );
-  assert.equal(
-    fetched.some((url) => url.startsWith('b.vizlinx.com')),
-    false,
-    'An old card cannot start the added host without another explicit confirmation',
-  );
-  await expandedRunner.locator('#start').click();
-  await expect(expandedRunner.locator('#status')).toContainText('Hotovo.', {
-    timeout: 20_000,
-  });
-  await expect(page.locator('.scan-stats')).toContainText('3 načtených', {
-    timeout: 10_000,
-  });
+  await page
+    .getByRole('button', { name: 'Pokračovat ve skenování', exact: true })
+    .click();
+  await expect.poll(async () => (await scanRow(id)).status).toBe('completed');
+  await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   await expect(page.locator('[data-connection]')).toHaveCount(2);
   await expect(
     page.getByRole('button', { name: 'Doména a.vizlinx.com', exact: true }),
@@ -297,43 +298,47 @@ try {
   await expect(
     page.getByRole('button', { name: 'Doména b.vizlinx.com', exact: true }),
   ).toBeVisible();
-  assert.equal(
-    fetched.includes('b.vizlinx.com/deep'),
-    true,
-    'An approved cross-origin deep link is crawled even when absent from the target root',
+  assert.ok(
+    fetched.includes(`${origins[1]}/deep`),
+    'A discovered deep link is scanned after approving its origin',
   );
-  const persisted = await db
-    .prepare('SELECT source_url FROM page_results WHERE scan_id = ?1')
-    .bind(id)
-    .all();
-  assert.equal(persisted.results.length, 3);
   assert.deepEqual(
-    await db
-      .prepare(
-        'SELECT result_json FROM page_results WHERE scan_id = ?1 AND source_url = ?2',
-      )
-      .bind(id, `${origins[0]}/`)
-      .first(),
+    (await pageRows(id)).results.filter(
+      (row) => row.source_url === `${origins[0]}/`,
+    ),
     original,
-    'Adding a host preserves the existing page result',
   );
   assert.equal(
-    fetched.filter((url) => url === 'a.vizlinx.com/').length,
+    fetched.filter((url) => url === `${origins[0]}/`).length,
     1,
-    'The previously completed page is never recrawled',
+    'Existing successful pages must not be recrawled',
   );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logRows).toHaveCount(10);
+  await expect(logRows.filter({ hasText: 'Načteno' })).toHaveCount(3);
+  await expect(
+    logRows.filter({ hasText: 'Zkontrolována pravidla robots.txt' }),
+  ).toHaveCount(2);
+  await expect(logRows.last()).toContainText('Známá fronta je dokončená');
+  const persistedLog = await logRows.allTextContents();
   await page.reload();
   await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   await expect(page.locator('[data-connection]')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logRows).toHaveCount(persistedLog.length);
+  assert.deepEqual(
+    await logRows.allTextContents(),
+    persistedLog,
+    'Real crawler history must survive a browser reload',
+  );
+  await logPanel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
   await page
     .getByRole('button', { name: 'Zobrazit tabulku', exact: true })
     .click();
   await expect(page.locator('tbody tr')).toHaveCount(2);
-  await expect(page.locator('tbody')).toContainText('a.vizlinx.com');
-  await expect(page.locator('tbody')).toContainText('/deep');
   await page
     .getByRole('button', {
-      name: 'Detail odkazu http://a.vizlinx.com/ → http://b.vizlinx.com/deep',
+      name: `Detail odkazu ${origins[0]}/ → ${origins[1]}/deep`,
       exact: true,
     })
     .click();
@@ -343,249 +348,88 @@ try {
     path: 'test-results/prototype-live.png',
     fullPage: true,
   });
-  // Add a host while the old runner is still fetching. Its late outbox must survive
-  // the revoked token, and the replacement session must wait for the old writer.
-  await page.goto(`${appOrigin}/scan`);
-  await page.getByLabel('Weby k prozkoumání').fill(`${origins[0]}/slow`);
-  await page.getByLabel('Interval požadavků (sekundy)').fill('1');
-  await page.getByLabel('Limit stránek na web').fill('5');
-  await page.getByRole('button', { name: 'Připravit sken' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Otevřít skenovací kartu', exact: true }),
-  ).toBeVisible();
-  const slowId = new URL(page.url()).searchParams.get('id');
-  const slowOpened = context.waitForEvent('page');
+
+  // Pause a real in-flight fetch, then change scope and resume from persisted
+  // results. Late work from the old generation must not undo the paused state.
+  const pausedId = await createScan(`${origins[0]}/pause-root`);
+  await expect.poll(() => typeof releaseSlowPage).toBe('function');
+  const activity = page.getByTestId('scan-activity');
+  await expect(activity).toBeVisible();
+  await expect(activity).toContainText('Načítám stránku');
+  await expect(activity).toContainText(`${origins[0]}/pause-slow`);
+  await expect(activity).toHaveClass(/is-running/);
   await page
-    .getByRole('button', { name: 'Otevřít skenovací kartu', exact: true })
-    .click();
-  const slowRunner = await slowOpened;
-  await slowRunner.locator('#start').click();
-  await expect
-    .poll(() => fetched.includes('a.vizlinx.com/slow'), { timeout: 10_000 })
-    .toBe(true);
-  const previousToken = await slowRunner.evaluate(
-    async (id) =>
-      (await chrome.storage.local.get(`scan:${id}`))[`scan:${id}`].token,
-    slowId,
-  );
-  await page.getByRole('button', { name: 'Přidat web', exact: true }).click();
-  await page.getByLabel('Nový web', { exact: true }).fill(origins[1]);
-  await page
-    .getByRole('button', { name: 'Přidat do mapy', exact: true })
-    .click();
-  const replacementOpened = context.waitForEvent('page', { timeout: 30_000 });
-  await page
-    .getByRole('button', { name: 'Pokračovat v rozšíření', exact: true })
+    .getByRole('button', { name: 'Pozastavit sken', exact: true })
     .click();
   await expect
-    .poll(() =>
-      slowRunner.evaluate(async () =>
-        (await navigator.locks.query()).pending.some(
-          (lock) => lock.name === 'vizlinx:runner',
-        ),
-      ),
-    )
-    .toBe(true);
-  assert.equal(
-    await slowRunner.evaluate(
-      async (id) =>
-        (await chrome.storage.local.get(`scan:${id}`))[`scan:${id}`].token,
-      slowId,
-    ),
-    previousToken,
-    'Pairing cannot overwrite the session while a runner holds the write lock',
-  );
+    .poll(async () => (await scanRow(pausedId)).status)
+    .toBe('paused');
+  await expect(activity).toContainText('Skenování pozastaveno');
+  await expect(activity).not.toHaveClass(/is-running/);
   releaseSlowPage();
-  const replacementRunner = await replacementOpened;
-  await expect(replacementRunner.locator('#sites li')).toHaveCount(2);
-  await expect(slowRunner.locator('#status')).toContainText('Spojení vypršelo');
-  const recovered = await replacementRunner.evaluate(
-    async (id) => (await chrome.storage.local.get(`scan:${id}`))[`scan:${id}`],
-    slowId,
+  const savedRoot = (await pageRows(pausedId)).results.find((row) =>
+    row.source_url.endsWith('/pause-root'),
   );
-  assert.notEqual(recovered.token, previousToken);
-  assert.equal(recovered.outbox.sourceUrl, `${origins[0]}/slow`);
-  assert.equal(recovered.outbox.title, 'Slow alpha');
-  assert.equal(recovered.queue.includes(`${origins[1]}/`), true);
-  await replacementRunner.locator('#start').click();
-  await expect(replacementRunner.locator('#status')).toContainText('Hotovo.', {
-    timeout: 30_000,
-  });
-  await expect(page.locator('.scan-stats')).toContainText('5 načtených', {
-    timeout: 10_000,
-  });
-  assert.equal(
-    fetched.filter((url) => url === 'a.vizlinx.com/slow').length,
-    1,
-    'The interrupted page is uploaded from its outbox without being fetched again',
-  );
-  const recoveredRows = await db
-    .prepare('SELECT source_url FROM page_results WHERE scan_id = ?1')
-    .bind(slowId)
-    .all();
-  assert.equal(recoveredRows.results.length, 5);
-  assert.equal(
-    recoveredRows.results.some(
-      (row) => row.source_url === `${origins[0]}/next`,
-    ),
-    true,
-    'Links from the recovered outbox are added to the queue',
-  );
-  // Reopening a running scanner without changing its scope must also rotate the
-  // token before waiting for the old runner, rather than timing out on its lock.
-  await page.goto(`${appOrigin}/scan`);
+  assert.ok(savedRoot, 'Completed results exist before pausing');
+  await addSite(origins[1]);
   await page
-    .getByLabel('Weby k prozkoumání')
-    .fill(`${origins[0]}/slow-regular`);
-  await page.getByLabel('Interval požadavků (sekundy)').fill('1');
-  await page.getByRole('button', { name: 'Připravit sken' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Otevřít skenovací kartu', exact: true }),
-  ).toBeVisible();
-  const regularId = new URL(page.url()).searchParams.get('id');
-  const regularOpened = context.waitForEvent('page');
-  await page
-    .getByRole('button', { name: 'Otevřít skenovací kartu', exact: true })
-    .click();
-  const regularRunner = await regularOpened;
-  await regularRunner.locator('#start').click();
-  await expect
-    .poll(() => fetched.includes('a.vizlinx.com/slow-regular'), {
-      timeout: 10_000,
-    })
-    .toBe(true);
-  const reopened = context.waitForEvent('page', { timeout: 30_000 });
-  await page
-    .getByRole('button', { name: 'Otevřít skenovací kartu', exact: true })
+    .getByRole('button', { name: 'Pokračovat ve skenování', exact: true })
     .click();
   await expect
-    .poll(() =>
-      regularRunner.evaluate(async () =>
-        (await navigator.locks.query()).pending.some(
-          (lock) => lock.name === 'vizlinx:runner',
-        ),
-      ),
-    )
-    .toBe(true);
-  releaseSlowPage();
-  const resumedRunner = await reopened;
-  await expect(regularRunner.locator('#status')).toContainText(
-    'Spojení vypršelo',
-  );
-  await expect(resumedRunner.locator('#sites li')).toHaveCount(1);
-  await resumedRunner.locator('#start').click();
-  await expect(resumedRunner.locator('#status')).toContainText('Hotovo.', {
-    timeout: 10_000,
-  });
-  assert.equal(
-    fetched.filter((url) => url === 'a.vizlinx.com/slow-regular').length,
-    1,
-  );
-  assert.equal(
-    (
-      await db
-        .prepare(
-          'SELECT COUNT(*) AS count FROM page_results WHERE scan_id = ?1',
-        )
-        .bind(regularId)
-        .first()
-    ).count,
-    1,
-  );
-  // Lower a page limit while a real HTML fetch is in flight. The Worker must
-  // refuse that result once; a reload must not retry until the UI raises the limit.
-  await page.goto(`${appOrigin}/scan`);
-  await page.getByLabel('Weby k prozkoumání').fill(`${origins[0]}/quota-root`);
-  await page.getByLabel('Interval požadavků (sekundy)').fill('1');
-  await page.getByLabel('Limit stránek na web').fill('2');
-  await page.getByRole('button', { name: 'Připravit sken' }).click();
-  await expect(
-    page.getByRole('button', { name: 'Otevřít skenovací kartu', exact: true }),
-  ).toBeVisible();
-  const quotaId = new URL(page.url()).searchParams.get('id');
-  const quotaOpened = context.waitForEvent('page');
-  await page
-    .getByRole('button', { name: 'Otevřít skenovací kartu', exact: true })
-    .click();
-  const quotaRunner = await quotaOpened;
-  await quotaRunner.locator('#start').click();
-  await expect
-    .poll(() => fetched.includes('a.vizlinx.com/quota-slow'), {
-      timeout: 10_000,
-    })
-    .toBe(true);
-  await page
-    .getByRole('button', { name: 'Doména a.vizlinx.com', exact: true })
-    .click();
-  await page.getByLabel('Limit stránek skenu', { exact: true }).fill('1');
-  const lowered = page.waitForResponse(
-    (response) =>
-      response.url().endsWith(`/api/v1/scans/${quotaId}`) &&
-      response.request().method() === 'PATCH',
-  );
-  await page.getByLabel('Limit stránek skenu', { exact: true }).press('Enter');
-  assert.equal((await lowered).status(), 200);
-  releaseQuotaPage();
-  await expect(quotaRunner.locator('#status')).toContainText(
-    'Zvyšte limit webu',
-  );
-  const quotaUploads = () =>
-    resultUploads.filter(
-      (upload) => upload.body.sourceUrl === `${origins[0]}/quota-slow`,
-    );
+    .poll(async () => (await scanRow(pausedId)).status)
+    .toBe('completed');
+  const resumedRows = (await pageRows(pausedId)).results;
   assert.deepEqual(
-    quotaUploads().map((upload) => upload.status),
-    [429],
+    resumedRows.find((row) => row.source_url.endsWith('/pause-root')),
+    savedRoot,
   );
-  await quotaRunner.reload();
-  const quotaControl = quotaRunner.waitForResponse((response) =>
-    response.url().endsWith(`/api/v1/runner/scans/${quotaId}/control`),
-  );
-  await quotaRunner.locator('#start').click();
-  assert.equal((await quotaControl).status(), 200);
-  await expect(quotaRunner.locator('#status')).toContainText(
-    'Zvyšte limit webu',
-  );
-  await expect(quotaRunner.locator('#start')).toBeEnabled();
-  assert.equal(quotaUploads().length, 1);
-  await expect(
-    page.getByText(/Dosažen limit skenu\. V detailu webu/),
-  ).toBeVisible();
-  await page.getByLabel('Limit stránek skenu', { exact: true }).fill('2');
-  const raised = page.waitForResponse(
-    (response) =>
-      response.url().endsWith(`/api/v1/scans/${quotaId}`) &&
-      response.request().method() === 'PATCH',
-  );
-  await page.getByLabel('Limit stránek skenu', { exact: true }).press('Enter');
-  assert.equal((await raised).status(), 200);
-  const quotaResumed = context.waitForEvent('page');
-  await page
-    .getByRole('button', { name: 'Pokračovat v rozšíření', exact: true })
-    .click();
-  const resumedQuotaRunner = await quotaResumed;
-  await resumedQuotaRunner.locator('#start').click();
-  await expect(resumedQuotaRunner.locator('#status')).toContainText('Hotovo.');
-  await expect(page.locator('.scan-stats')).toContainText('2 načtených', {
-    timeout: 10_000,
-  });
-  assert.deepEqual(
-    quotaUploads().map((upload) => upload.status),
-    [429, 200],
-  );
-  assert.deepEqual(quotaUploads()[0].body, quotaUploads()[1].body);
   assert.equal(
-    fetched.filter((url) => url === 'a.vizlinx.com/quota-slow').length,
+    fetched.filter((url) => url === `${origins[0]}/pause-root`).length,
     1,
   );
+  assert.ok(resumedRows.some((row) => row.source_url === `${origins[1]}/deep`));
+
+  const quotaId = await createScan(quotaOrigin);
+  await expect
+    .poll(async () => (await scanRow(quotaId)).status, { timeout: 60_000 })
+    .toBe('limited');
+  assert.equal((await scanRow(quotaId)).limit_reason, 'page_limit');
+  const quotaRows = (await pageRows(quotaId)).results;
+  assert.equal(quotaRows.length, 100);
+  const quotaRequests = fetched.filter(
+    (url) => url.startsWith(quotaOrigin) && !url.endsWith('/robots.txt'),
+  );
+  assert.equal(
+    quotaRequests.length,
+    100,
+    'The page budget must be checked before the 101st fetch',
+  );
+  assert.equal(new Set(quotaRequests).size, 100);
+  assert.equal(fetched.includes(`${quotaOrigin}/100`), false);
+  await expect(page.locator('.scan-stats')).toContainText('100 načtených');
+  const banner = page.getByRole('alert').filter({
+    has: page.getByRole('heading', {
+      name: 'Dosažen limit 100 stránek na web',
+    }),
+  });
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText(/kontaktuj správce/i);
+  await page.screenshot({
+    path: 'test-results/prototype-page-limit.png',
+    fullPage: true,
+  });
+  await page.reload();
+  await expect(banner).toBeVisible();
+  await expect(page.locator('.scan-stats')).toContainText('100 načtených');
   assert.deepEqual(errors, []);
-  assert.equal(serverFetches, 0);
+  assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/D1/extension; add a host to a completed map; stale-card scope consent; in-flight token/outbox recovery; live graph/table and reload persistence; zero backend crawl requests.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches and persistent administrator limit notice.',
   );
 } finally {
+  releaseSlowPage?.();
   await context?.close();
+  await browser?.close();
   await close(app);
-  await close(fixtures);
   await mf?.dispose();
 }

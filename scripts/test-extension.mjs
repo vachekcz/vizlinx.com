@@ -408,7 +408,7 @@ try {
     for (let index = 1; index < calls.length; index += 1)
       assert.ok(
         calls[index].at - calls[index - 1].at >= 950,
-        `Rate limit respected for ${host}`,
+        `Rate limit respected for ${host}: ${calls[index - 1].path} -> ${calls[index].path}, ${calls[index].at - calls[index - 1].at} ms`,
       );
   }
   assert.equal(
@@ -634,7 +634,7 @@ try {
 
   scan.id = 'fixture-upload-page-ceiling';
   scan.status = 'waiting';
-  scan.sites[0].maxPages = 50;
+  scan.sites[0].maxPages = 100;
   results.clear();
   uploads.length = 0;
   uploadLimitCode = 'page_limit';
@@ -646,7 +646,7 @@ try {
   await expect(ceilingQuota.locator('#status')).not.toContainText('Zvyšte');
   await ceilingQuota.reload();
   await expect(ceilingQuota.locator('#status')).toContainText(
-    'maximální limit 50 stránek',
+    'maximální limit 100 stránek',
   );
   assert.equal(uploads.length, 1);
 

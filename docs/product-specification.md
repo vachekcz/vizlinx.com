@@ -6,6 +6,9 @@ last_updated: 2026-09-12
 
 # Vizlinx.com — produktové zadání
 
+> **Aktualizace 12. 9. 2026:** Pavel schválil přesun skenování na Cloudflare Workers + Queues, bez rozšíření, s pevným limitem 100 stránek na origin. Aktuální implementační kontrakt je v [serverovém prototypu](tasks/server-scan-prototype.md). Níže uvedená lokální architektura popisuje původní etapu; její požadavky na umístění exekuce byly nahrazeny.
+
+
 Zadání pro [Vizlinx.com](../README.md), rozpracované z Pavlova původního nápadu a upřesnění 2026-09-11. Implementační návrh je v [technické specifikaci](technical-specification.md).
 
 ## Produkt jednou větou

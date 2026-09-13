@@ -8,6 +8,7 @@ let mf;
 let db;
 let outboundRequests = 0;
 const authGates = new Map();
+const queuedCrawls = [];
 const base = 'https://vizlinx.com';
 const site = {
   origin: 'https://example.com',
@@ -42,6 +43,11 @@ before(async () => {
       contents: `import worker from './worker/index.ts';
       export default {
         fetch(request, env) {
+          env = { ...env, CRAWLER_ENABLED: 'true', ADMIN_EMAIL: '',
+            CRAWL_QUEUE: { send: (body, options) => env.CRAWL_SINK.fetch('https://queue.invalid/', {
+              method: 'POST', body: JSON.stringify({ body, options })
+            }) }
+          };
           const gate = request.headers.get('X-Test-Auth-Gate');
           if (!gate) return worker.fetch(request, env);
           const database = {
@@ -81,6 +87,10 @@ before(async () => {
       d1Databases: ['DB'],
       serviceBindings: {
         ASSETS: () => new Response('asset'),
+        CRAWL_SINK: async (request) => {
+          queuedCrawls.push(await request.json());
+          return new Response('queued');
+        },
         AUTH_GATE: async (request) => {
           const gate = authGates.get(new URL(request.url).pathname.slice(1));
           assert.ok(
@@ -118,6 +128,7 @@ afterEach(async () => {
     db.prepare('DELETE FROM creation_quotas'),
   ]);
   authGates.clear();
+  queuedCrawls.length = 0;
 });
 after(async () => {
   assert.equal(outboundRequests, 0);
@@ -619,7 +630,7 @@ test('ten-scan limit and bounded bodies prevent unbounded visitor storage', asyn
       await request('/scans', {
         method: 'POST',
         cookie,
-        body: { sites: [{ ...site, maxPages: 51 }] },
+        body: { sites: [{ ...site, maxPages: 101 }] },
       })
     ).status,
     400,
@@ -1141,4 +1152,356 @@ test('concurrent append and site-control PATCH preserve every acknowledged chang
     }
     if (patch.status === 200) assert.equal(stored.sites[0].intervalMs, 17000);
   }
+});
+
+test('server start requires ownership and same origin, fixes the page cap, and revokes the extension', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice, { maxPages: 20 });
+  const { token } = await pair(alice, scan.id);
+  const path = `/scans/${scan.id}/start`;
+  assert.equal((await request(path, { method: 'POST', body: {} })).status, 401);
+  assert.equal(
+    (await request(path, { method: 'POST', cookie: bob, body: {} })).status,
+    404,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        method: 'POST',
+        cookie: alice,
+        origin: 'https://evil.org',
+        body: {},
+      })
+    ).status,
+    403,
+  );
+  assert.equal(queuedCrawls.length, 0);
+  const response = await request(path, {
+    method: 'POST',
+    cookie: alice,
+    body: {},
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const started = await response.json();
+  assert.equal(started.status, 'running');
+  assert.equal(started.sites[0].maxPages, 100);
+  const checkpoint = await db
+    .prepare('SELECT crawl_generation, crawl_tick FROM scans WHERE id = ?')
+    .bind(scan.id)
+    .first();
+  assert.deepEqual(queuedCrawls, [
+    {
+      body: {
+        scanId: scan.id,
+        generation: checkpoint.crawl_generation,
+        tick: checkpoint.crawl_tick,
+      },
+      options: { delaySeconds: 0 },
+    },
+  ]);
+  assert.equal(
+    (await request(`/runner/scans/${scan.id}`, { token })).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}/pairing-ticket`, {
+        method: 'POST',
+        cookie: alice,
+        body: {},
+      })
+    ).status,
+    409,
+  );
+  const repeated = await request(path, {
+    method: 'POST',
+    cookie: alice,
+    body: {},
+  });
+  assert.equal(repeated.status, 200);
+  assert.equal(
+    queuedCrawls.length,
+    1,
+    'Repeated start must not multiply queue work.',
+  );
+  const paused = await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie: alice,
+    body: { status: 'paused', sites: [{ ...site, maxPages: 1 }] },
+  });
+  assert.equal(paused.status, 200);
+  assert.equal((await paused.json()).sites[0].maxPages, 100);
+});
+
+test('running settings preserve the run deadline and start quota while resumes consume it', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  const path = `/scans/${scan.id}`;
+  assert.equal(
+    (await request(`${path}/start`, { method: 'POST', cookie, body: {} }))
+      .status,
+    200,
+  );
+  const day = Math.floor(Date.now() / 86_400_000);
+  const bucket = Buffer.from(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(`start:${day}:203.0.113.10`),
+    ),
+  ).toString('hex');
+  await db
+    .prepare(
+      'UPDATE creation_quotas SET request_count = 99 WHERE bucket_hash = ?',
+    )
+    .bind(bucket)
+    .run();
+  const original = await db
+    .prepare('SELECT crawl_started_at FROM scans WHERE id = ?')
+    .bind(scan.id)
+    .first();
+  for (const change of [
+    { intervalMs: 3000 },
+    { intervalMs: 3000, paused: true },
+    { intervalMs: 5000, paused: false },
+  ]) {
+    const response = await request(path, {
+      method: 'PATCH',
+      cookie,
+      body: { sites: [{ ...site, ...change }] },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).status, 'running');
+  }
+  assert.deepEqual(
+    await db
+      .prepare('SELECT crawl_started_at FROM scans WHERE id = ?')
+      .bind(scan.id)
+      .first(),
+    original,
+    'Settings changes must not reset the running scan deadline.',
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT request_count FROM creation_quotas WHERE bucket_hash = ?',
+        )
+        .bind(bucket)
+        .first()
+    ).request_count,
+    99,
+  );
+  const control = (status) =>
+    request(path, { method: 'PATCH', cookie, body: { status } });
+  assert.equal((await control('paused')).status, 200);
+  assert.equal((await control('waiting')).status, 200);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT request_count FROM creation_quotas WHERE bucket_hash = ?',
+        )
+        .bind(bucket)
+        .first()
+    ).request_count,
+    100,
+  );
+  assert.equal((await control('paused')).status, 200);
+  assert.equal((await control('waiting')).status, 429);
+  assert.equal(
+    (await (await request(path, { cookie })).json()).status,
+    'paused',
+    'Rejected resumes must leave the scan paused.',
+  );
+});
+
+test('server limit reason survives reload and pause without allowing a time-budget bypass', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', status = 'limited', limit_reason = 'time_limit' WHERE id = ?1",
+    )
+    .bind(scan.id)
+    .run();
+  const snapshot = await (
+    await request(`/scans/${scan.id}`, { cookie })
+  ).json();
+  assert.equal(snapshot.limitReason, 'time_limit');
+  const paused = await request(`/scans/${scan.id}`, {
+    method: 'PATCH',
+    cookie,
+    body: { status: 'paused' },
+  });
+  assert.equal((await paused.json()).status, 'limited');
+  const resumed = await request(`/scans/${scan.id}/start`, {
+    method: 'POST',
+    cookie,
+    body: {},
+  });
+  assert.equal(resumed.status, 429);
+  assert.equal(queuedCrawls.length, 0);
+});
+
+test('public scanner configuration exposes only the contact and fixed page cap', async () => {
+  const response = await request('/config');
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    adminEmail: null,
+    maxPagesPerSite: 100,
+  });
+});
+
+test('legacy runner settings and progress never retain server queue activity', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  const { token } = await pair(cookie, scan.id);
+  const progress = () =>
+    request(`/runner/scans/${scan.id}/progress`, {
+      method: 'POST',
+      token,
+      body: { status: 'running' },
+    });
+  assert.equal((await progress()).status, 200);
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}`, {
+        method: 'PATCH',
+        cookie,
+        body: { sites: [{ ...site, intervalMs: 5000 }] },
+      })
+    ).status,
+    200,
+  );
+  let snapshot = await (await request(`/scans/${scan.id}`, { cookie })).json();
+  assert.equal(snapshot.status, 'running');
+  assert.equal(snapshot.activity, undefined);
+  await db
+    .prepare('UPDATE scans SET activity_json = ? WHERE id = ?')
+    .bind(
+      JSON.stringify({ phase: 'queued', updatedAt: new Date().toISOString() }),
+      scan.id,
+    )
+    .run();
+  assert.equal((await progress()).status, 200);
+  snapshot = await (await request(`/scans/${scan.id}`, { cookie })).json();
+  assert.equal(snapshot.status, 'running');
+  assert.equal(snapshot.activity, undefined);
+});
+
+test('scan logs require the owner and expire with the map and visitor', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice);
+  const path = `/scans/${scan.id}/log`;
+  assert.equal((await request(path)).status, 401);
+  assert.equal((await request(path, { cookie: bob })).status, 404);
+  const response = await request(path, { cookie: alice });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { events: [], truncated: false });
+  await db
+    .prepare('UPDATE scans SET created_at = 0 WHERE id = ?')
+    .bind(scan.id)
+    .run();
+  assert.equal((await request(path, { cookie: alice })).status, 404);
+  await db
+    .prepare(
+      'UPDATE visitors SET expires_at = 0 WHERE token_hash = (SELECT owner_hash FROM scans WHERE id = ?)',
+    )
+    .bind(scan.id)
+    .run();
+  assert.equal((await request(path, { cookie: alice })).status, 401);
+});
+
+test('scan activity and control events persist without logging rejected changes', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  const path = `/scans/${scan.id}`;
+  const start = await request(`${path}/start`, {
+    method: 'POST',
+    cookie,
+    body: {},
+  });
+  assert.equal((await start.json()).activity.phase, 'queued');
+  await request(`${path}/start`, { method: 'POST', cookie, body: {} });
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { status: 'paused' },
+      })
+    ).status,
+    200,
+  );
+  const paused = await (await request(path, { cookie })).json();
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.activity.phase, 'paused');
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { sites: [{ ...site, intervalMs: 5000 }] },
+      })
+    ).status,
+    200,
+  );
+  const added = {
+    ...site,
+    origin: 'https://second.org',
+    seedUrl: 'https://second.org/',
+  };
+  const addition = await request(`${path}/sites`, {
+    method: 'POST',
+    cookie,
+    body: { site: added },
+  });
+  assert.equal(addition.status, 201);
+  assert.equal((await addition.json()).activity.phase, 'paused');
+  assert.equal(
+    (
+      await request(`${path}/sites`, {
+        method: 'POST',
+        cookie,
+        body: { site: added },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { status: 'completed' },
+      })
+    ).status,
+    400,
+  );
+  const log = await (await request(`${path}/log`, { cookie })).json();
+  assert.deepEqual(
+    log.events.map((event) => event.type),
+    ['scan_started', 'scan_paused', 'settings_changed', 'site_added'],
+  );
+  assert.equal(log.truncated, false);
+  assert.equal(log.events[3].origin, added.origin);
+  assert.equal(log.events[3].url, added.seedUrl);
+  for (const [index, event] of log.events.entries()) {
+    assert.ok(Number.isFinite(Date.parse(event.at)));
+    assert.equal(event.level, 'info');
+    if (index) assert.ok(event.id > log.events[index - 1].id);
+  }
+  await db.prepare('DELETE FROM scans WHERE id = ?').bind(scan.id).run();
+  assert.equal(
+    (
+      await db
+        .prepare('SELECT COUNT(*) AS count FROM scan_events WHERE scan_id = ?')
+        .bind(scan.id)
+        .first()
+    ).count,
+    0,
+  );
 });

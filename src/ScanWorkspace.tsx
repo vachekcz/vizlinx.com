@@ -2,16 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  Download,
+  AlertTriangle,
+  Mail,
   Globe2,
   Moon,
   Pause,
   Play,
   Plus,
-  RefreshCw,
   Sun,
 } from 'lucide-react';
 import App from './App';
+import ScanLogPanel, { ScanActivityStatus } from './ScanLogPanel';
 import { scanToDataset } from './scan-dataset';
 import { useTheme } from './themes';
 import { API_PREFIX, normalizeScanUrl, SCAN_LIMITS } from '../shared/scan';
@@ -21,18 +22,13 @@ import type {
   ScanStatus,
   ScanSummary,
 } from '../shared/scan';
-import { EXTENSION_ID } from '../shared/extension';
 import './scan-workspace.css';
-
-const localScanner = ['localhost', '127.0.0.1'].includes(
-  window.location.hostname,
-);
 
 const statusLabels: Record<ScanStatus, string> = {
   waiting: 'Připraveno ke skenování',
-  running: 'Skenování běží na tvém počítači',
+  running: 'Skenování běží na serveru',
   paused: 'Skenování pozastaveno',
-  interrupted: 'Skenovací karta není připojená',
+  interrupted: 'Skenování bylo přerušeno',
   completed: 'Známá fronta je dokončená',
   limited: 'Dosažen nastavený limit',
   error: 'Skenování vyžaduje pozornost',
@@ -51,7 +47,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       404: 'Mapa není dostupná v tomto prohlížeči nebo její platnost vypršela.',
       409: 'Stav skenu se změnil. Obnov data a zkus akci znovu.',
       413: 'Výsledek překročil limit prvního prototypu.',
-      429: 'Dosáhl jsi limitu prototypu. Zkus to později.',
+      429: 'Kapacita skenování nebo denní limit jsou vyčerpané. Uložené výsledky zůstávají dostupné. Zkus to později.',
     };
     throw new Error(
       messages[response.status] ??
@@ -61,141 +57,56 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-function extensionMessage(message: {
-  type: string;
-  ticket?: string;
-}): Promise<void> {
-  type Runtime = {
-    lastError?: { message?: string };
-    sendMessage: (
-      id: string,
-      message: object,
-      callback: (reply?: {
-        ok?: boolean;
-        error?: string;
-        protocolVersion?: number;
-      }) => void,
-    ) => void;
-  };
-  const runtime = (window as Window & { chrome?: { runtime?: Runtime } }).chrome
-    ?.runtime;
-  return new Promise((resolve, reject) => {
-    if (!runtime?.sendMessage) {
-      reject(
-        new Error(
-          'Rozšíření není dostupné. Otevři web v Chrome a nainstaluj prototyp.',
-        ),
-      );
-      return;
-    }
-    const timer = window.setTimeout(
-      () =>
-        reject(
-          new Error(
-            'Rozšíření neodpovídá. Zkontroluj, že je v Chrome zapnuté.',
-          ),
-        ),
-      message.type === 'vizlinx:pair' ? 60_000 : 8000,
-    );
-    try {
-      runtime.sendMessage(EXTENSION_ID, message, (reply) => {
-        window.clearTimeout(timer);
-        if (runtime.lastError || !reply?.ok) {
-          reject(
-            new Error(
-              typeof reply?.error === 'string' && reply.error.length <= 300
-                ? reply.error
-                : localScanner
-                  ? 'Pro lokální stránku načti Vizlinx Local Scanner (development) ze složky build/extension-dev a obnov stránku.'
-                  : 'Rozšíření se nepodařilo připojit. Zkontroluj instalaci a zkus to znovu.',
-            ),
-          );
-        } else if (
-          message.type === 'vizlinx:ping' &&
-          reply.protocolVersion !== 2
-        ) {
-          reject(
-            new Error(
-              'Aktualizuj rozšíření: v chrome://extensions klikni u Vizlinx na tlačítko znovu načíst. Potom obnov tuto stránku.',
-            ),
-          );
-        } else resolve();
-      });
-    } catch {
-      window.clearTimeout(timer);
-      reject(
-        new Error(
-          'Pro skenování otevři Vizlinx v Chrome s nainstalovaným rozšířením.',
-        ),
-      );
-    }
-  });
-}
-
-function Installation({
-  connected,
-  onCheck,
+function ScanLimitNotice({
+  reason,
+  adminEmail,
 }: {
-  connected: boolean;
-  onCheck: () => void;
+  reason: ScanSummary['limitReason'];
+  adminEmail: string | null;
 }) {
+  const titles = {
+    page_limit: `Dosažen limit ${SCAN_LIMITS.pagesPerSite} stránek na web`,
+    scan_storage_limit: 'Dosažen limit velikosti mapy',
+    time_limit: 'Dosažen časový limit skenování',
+    daily_limit: 'Dosažen denní limit skenování',
+  };
+  const title = reason ? titles[reason] : 'Dosažen limit skenování';
   return (
-    <details className="scan-install" open={!connected}>
-      <summary>
-        {connected ? 'Rozšíření je připojené' : 'Připojit rozšíření pro Chrome'}
-      </summary>
-      <p>
-        Skenování používá tvoje připojení. První prototyp se instaluje ručně a
-        běží v samostatné otevřené kartě.
-      </p>
-      <ol>
-        <li>
-          {localScanner ? (
-            <>
-              Pro tuto lokální stránku použij{' '}
-              <strong>Vizlinx Local Scanner (development)</strong>. Pokud už máš
-              nainstalovaný Vizlinx Local Scanner bez „development“, odeber ho v{' '}
-              <code>chrome://extensions</code>.
-            </>
-          ) : (
-            <>
-              <a href="/downloads/vizlinx-extension.zip" download>
-                <Download size={15} /> Stáhni rozšíření
-              </a>{' '}
-              a rozbal ZIP.
-            </>
-          )}
-        </li>
-        <li>
-          V Chrome otevři <code>chrome://extensions</code>, zapni „Režim pro
-          vývojáře“ a zvol „Načíst rozbalené“.{' '}
-          {localScanner ? (
-            <>
-              V projektu vizlinx.com vyber složku{' '}
-              <code>build/extension-dev</code>.
-            </>
-          ) : (
-            <>Vyber rozbalenou složku s manifest.json.</>
-          )}
-        </li>
-        <li>
-          Obnov tuto stránku a ověř připojení. V mapě pak klikni na „Otevřít
-          skenovací kartu“; tím se rozšíření spáruje. Přístup k vybraným webům
-          potvrdíš v otevřené kartě.
-        </li>
-      </ol>
-      <button type="button" className="scan-button" onClick={onCheck}>
-        <RefreshCw size={15} /> Ověřit rozšíření
-      </button>
-    </details>
+    <section
+      className="scan-limit-notice"
+      role="alert"
+      aria-labelledby="scan-limit-title"
+    >
+      <AlertTriangle size={28} aria-hidden="true" />
+      <div>
+        <h2 id="scan-limit-title">{title}</h2>
+        <p>
+          Sken se zastavil na bezpečnostním limitu. Dosavadní výsledky zůstávají
+          uložené a můžeš je dál prohlížet.
+        </p>
+        {reason === 'daily_limit' && (
+          <p>
+            Denní rozpočet se obnovuje o půlnoci UTC. Potom můžeš pokračovat ve
+            stejné mapě.
+          </p>
+        )}
+        <p>
+          <strong>Pro vyšší limit kontaktuj správce.</strong>
+        </p>
+        {adminEmail && (
+          <a
+            className="scan-button scan-button-primary"
+            href={`mailto:${adminEmail}?subject=${encodeURIComponent('Vizlinx – žádost o vyšší limit skenování')}`}
+          >
+            <Mail size={16} aria-hidden="true" /> Kontaktovat správce
+          </a>
+        )}
+      </div>
+    </section>
   );
 }
 
-function parseSites(
-  value: string,
-  interval: number,
-  limit: number,
-): ScanSite[] {
+function parseSites(value: string, interval: number): ScanSite[] {
   const seeds = value
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -212,7 +123,7 @@ function parseSites(
     origin,
     seedUrl,
     intervalMs: interval * 1000,
-    maxPages: limit,
+    maxPages: SCAN_LIMITS.pagesPerSite,
     paused: false,
   }));
 }
@@ -229,14 +140,12 @@ export default function ScanWorkspace() {
   const [refreshError, setRefreshError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [connected, setConnected] = useState(false);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [seeds, setSeeds] = useState('');
   const [interval, setIntervalSeconds] = useState(3);
-  const [limit, setLimit] = useState(20);
   const [addingSite, setAddingSite] = useState(false);
   const [newSiteUrl, setNewSiteUrl] = useState('');
   const [newSiteInterval, setNewSiteInterval] = useState(3);
-  const [newSiteLimit, setNewSiteLimit] = useState(20);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const refreshEpoch = useRef(0);
   const actionInFlight = useRef(false);
@@ -259,9 +168,9 @@ export default function ScanWorkspace() {
               : 'Připojení k serveru selhalo.',
           );
       });
-    void extensionMessage({ type: 'vizlinx:ping' })
-      .then(() => {
-        if (!cancelled) setConnected(true);
+    void api<{ adminEmail: string | null; maxPagesPerSite: number }>('/config')
+      .then((config) => {
+        if (!cancelled) setAdminEmail(config.adminEmail);
       })
       .catch(() => {});
     return () => {
@@ -354,55 +263,32 @@ export default function ScanWorkspace() {
       setRefreshRevision((revision) => revision + 1);
     }
   };
-  const checkExtension = () => {
-    void action(async () => {
-      setConnected(false);
-      await extensionMessage({ type: 'vizlinx:ping' });
-      setConnected(true);
-      setNotice('Rozšíření je připravené.');
-    });
-  };
-  const pair = () => {
+  const start = () => {
     void action(async () => {
       if (!scan) return;
-      await extensionMessage({ type: 'vizlinx:ping' });
-      setConnected(true);
-      if (scan.status !== 'waiting' && scan.status !== 'running')
-        await api(`/scans/${scan.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: 'waiting' }),
-        });
-      const { ticket } = await api<{ ticket: string }>(
-        `/scans/${scan.id}/pairing-ticket`,
-        { method: 'POST', body: '{}' },
+      setScan(
+        await api<ScanSnapshot>(`/scans/${scan.id}/start`, {
+          method: 'POST',
+          body: '{}',
+        }),
       );
-      await extensionMessage({ type: 'vizlinx:pair', ticket });
       setNotice(
-        'V otevřené kartě rozšíření potvrď přístup k webům a spusť sken. Tato mapa se průběžně aktualizuje.',
+        'Skenování běží na serveru. Tuto kartu můžeš zavřít a k mapě se později vrátit.',
       );
     });
   };
   const changeSite = (
     id: string,
-    change: Partial<Pick<ScanSite, 'intervalMs' | 'paused' | 'maxPages'>>,
+    change: Partial<Pick<ScanSite, 'intervalMs' | 'paused'>>,
   ) => {
     void action(async () => {
       if (!scan) return;
       const sites = scan.sites.map((site) =>
         site.origin === id ? { ...site, ...change } : site,
       );
-      const raisesLimit =
-        change.maxPages !== undefined &&
-        change.maxPages >
-          (scan.sites.find((site) => site.origin === id)?.maxPages ?? 50);
       await api(`/scans/${scan.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({
-          sites,
-          ...(scan.status === 'limited' && raisesLimit
-            ? { status: 'paused' }
-            : {}),
-        }),
+        body: JSON.stringify({ sites }),
       });
       setScan(await api<ScanSnapshot>(`/scans/${scan.id}`));
     });
@@ -413,7 +299,7 @@ export default function ScanWorkspace() {
       if (!scan) return;
       let site: ScanSite;
       try {
-        const parsed = parseSites(newSiteUrl, newSiteInterval, newSiteLimit);
+        const parsed = parseSites(newSiteUrl, newSiteInterval);
         if (parsed.length !== 1) throw new Error('Expected one origin.');
         site = parsed[0];
       } catch {
@@ -432,7 +318,7 @@ export default function ScanWorkspace() {
       setAddingSite(false);
       setNewSiteUrl('');
       setNotice(
-        'Web je přidaný a dosavadní výsledky zůstaly uložené. Klikni na „Pokračovat v rozšíření“ a potvrď přístup k nové doméně.',
+        'Web je přidaný a dosavadní výsledky zůstaly uložené. Klikni na „Pokračovat ve skenování“ a server prozkoumá i nový web.',
       );
     });
   };
@@ -462,14 +348,23 @@ export default function ScanWorkspace() {
           <button
             className="scan-button scan-button-primary"
             disabled={
-              busy || scan.status === 'completed' || scan.status === 'limited'
+              busy ||
+              scan.status === 'running' ||
+              scan.status === 'completed' ||
+              scan.limitReason === 'time_limit' ||
+              scan.limitReason === 'scan_storage_limit' ||
+              (scan.status === 'limited' && scan.limitReason !== 'daily_limit')
             }
-            onClick={pair}
+            onClick={start}
           >
             <Play size={15} />{' '}
-            {scan.status === 'interrupted' || scan.status === 'paused'
-              ? 'Pokračovat v rozšíření'
-              : 'Otevřít skenovací kartu'}
+            {scan.status === 'interrupted' ||
+            scan.status === 'paused' ||
+            scan.limitReason === 'daily_limit'
+              ? 'Pokračovat ve skenování'
+              : scan.status === 'running'
+                ? 'Skenování běží'
+                : 'Spustit skenování'}
           </button>
           {scan.status === 'running' && (
             <button
@@ -488,6 +383,7 @@ export default function ScanWorkspace() {
               <Pause size={15} /> Pozastavit sken
             </button>
           )}
+          <ScanLogPanel key={scan.id} scan={scan} refreshError={refreshError} />
           <span className="scan-stats">
             {scan.results.filter((result) => result.status === 'ok').length}{' '}
             načtených ·{' '}
@@ -495,6 +391,7 @@ export default function ScanWorkspace() {
             neúspěšných / vynechaných
           </span>
         </div>
+        <ScanActivityStatus scan={scan} refreshError={refreshError} />
         {scan.sites.length >= SCAN_LIMITS.sites && (
           <p className="scan-note">
             Limit prototypu: {SCAN_LIMITS.sites} weby v jedné mapě.
@@ -536,24 +433,14 @@ export default function ScanWorkspace() {
                   }
                 />
               </label>
-              <label>
-                Limit stránek nového webu
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  required
-                  disabled={busy}
-                  value={newSiteLimit}
-                  onChange={(event) =>
-                    setNewSiteLimit(Number(event.target.value))
-                  }
-                />
-              </label>
+              <p className="scan-note">
+                Pevný limit:{' '}
+                <strong>{SCAN_LIMITS.pagesPerSite} stránek na web.</strong>
+              </p>
             </div>
             <p className="scan-note">
               Mapa i nalezené odkazy zůstanou zachované. Přidání pozastaví sken;
-              před pokračováním potvrdíš přístup k novému webu v rozšíření.
+              pokračování spustíš tlačítkem „Pokračovat ve skenování“.
             </p>
             <div className="scan-control-row">
               <button
@@ -575,15 +462,12 @@ export default function ScanWorkspace() {
           </form>
         )}
         <p className="scan-note">
-          Čteme odkazy ze statického HTML. Skenovací kartu nech otevřenou;
-          zavření nebo uspání běh přeruší. Uložené výsledky zůstanou dostupné.
+          Čteme veřejné statické HTML bez spouštění JavaScriptu a bez tvého
+          přihlášení. Sken běží na serveru i po zavření karty. Nejvýše{' '}
+          {SCAN_LIMITS.pagesPerSite} stránek na web.
         </p>
-        {scan.status === 'limited' && (
-          <p className="scan-note">
-            Dosažen limit skenu. V detailu webu můžeš zvýšit limit stránek až na
-            50 a pokračovat. Pokud už máš 50 stránek nebo je plné úložiště mapy,
-            vytvoř novou mapu.
-          </p>
+        {(scan.status === 'limited' || scan.limitReason) && (
+          <ScanLimitNotice reason={scan.limitReason} adminEmail={adminEmail} />
         )}
         {(error || refreshError) && (
           <p className="scan-error" role="alert">
@@ -594,9 +478,6 @@ export default function ScanWorkspace() {
           <p className="scan-notice" role="status">
             {notice}
           </p>
-        )}
-        {!connected && (
-          <Installation connected={connected} onCheck={checkExtension} />
         )}
         {scan.results.some(
           (result) => result.status !== 'ok' || result.truncated,
@@ -643,7 +524,6 @@ export default function ScanWorkspace() {
           pageLimits: Object.fromEntries(
             scan.sites.map((site) => [site.origin, site.maxPages]),
           ),
-          onPageLimitChange: (id, maxPages) => changeSite(id, { maxPages }),
           pausedSites: scan.sites
             .filter((site) => site.paused)
             .map((site) => site.origin),
@@ -679,13 +559,14 @@ export default function ScanWorkspace() {
       </header>
       <div className="scan-content">
         <div className="scan-intro">
-          <span className="scan-eyebrow">LOKÁLNÍ SKEN · PROTOTYP</span>
+          <span className="scan-eyebrow">SERVEROVÝ SKEN · PROTOTYP</span>
           <h1>
             Objev propojení vlastních webů<span>.</span>
           </h1>
           <p>
-            Zadej weby a sleduj, které konkrétní stránky je propojují. Požadavky
-            odešle tvůj počítač, výsledky se uloží do tvé mapy.
+            Zadej weby a sleduj, které konkrétní stránky je propojují. Sken běží
+            na serveru a výsledky se průběžně ukládají do tvé mapy. Nic
+            neinstaluješ a kartu můžeš během skenování zavřít.
           </p>
         </div>
         {(error || refreshError) && (
@@ -719,7 +600,7 @@ export default function ScanWorkspace() {
                   void action(async () => {
                     let sites: ScanSite[];
                     try {
-                      sites = parseSites(seeds, interval, limit);
+                      sites = parseSites(seeds, interval);
                     } catch {
                       throw new Error(
                         'Zadej 1 až 3 veřejné HTTP(S) weby bez přihlašovacích údajů a nestandardních portů. Každý na samostatný řádek.',
@@ -730,6 +611,12 @@ export default function ScanWorkspace() {
                       body: JSON.stringify({ sites }),
                     });
                     selectScan(snapshot.id, snapshot);
+                    setScan(
+                      await api<ScanSnapshot>(`/scans/${snapshot.id}/start`, {
+                        method: 'POST',
+                        body: '{}',
+                      }),
+                    );
                   });
                 }}
               >
@@ -762,17 +649,11 @@ export default function ScanWorkspace() {
                       required
                     />
                   </label>
-                  <label>
-                    Limit stránek na web
-                    <input
-                      type="number"
-                      min={1}
-                      max={50}
-                      value={limit}
-                      onChange={(event) => setLimit(Number(event.target.value))}
-                      required
-                    />
-                  </label>
+                  <p className="scan-note">
+                    Pevný limit:{' '}
+                    <strong>{SCAN_LIMITS.pagesPerSite} stránek na web.</strong>{' '}
+                    Pro vyšší limit kontaktuj správce.
+                  </p>
                 </div>
                 <p className="scan-note">
                   Bez účtu. Mapy patří tomuto prohlížeči a uchovávají se nejvýše
@@ -784,13 +665,25 @@ export default function ScanWorkspace() {
                   type="submit"
                 >
                   <Globe2 size={16} />
-                  {busy ? 'Připravuji mapu…' : 'Připravit sken'}
+                  {busy ? 'Spouštím sken…' : 'Spustit sken'}
                   <ArrowRight size={16} />
                 </button>
               </form>
             </section>
             <aside>
-              <Installation connected={connected} onCheck={checkExtension} />
+              <section className="scan-card">
+                <h2>Jak sken funguje</h2>
+                <p className="scan-note">
+                  Procházíme veřejné odkazy ve statickém HTML. Stránky za
+                  přihlášením a odkazy vytvořené JavaScriptem nemusí být
+                  dostupné.
+                </p>
+                <p className="scan-note">
+                  Výsledky přibývají průběžně. Po zavření této karty sken
+                  pokračuje a uloženou mapu najdeš po návratu v tomto
+                  prohlížeči.
+                </p>
+              </section>
               <section className="scan-card scan-saved">
                 <h2>Uložené mapy</h2>
                 {saved.length ? (

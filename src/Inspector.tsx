@@ -565,7 +565,7 @@ export default function Inspector({
       <div className="inspector-footer">
         <i />{' '}
         {live
-          ? 'Výsledky lokálního skenu. Známá URL neznamená načtenou stránku.'
+          ? 'Výsledky serverového skenu. Známá URL neznamená načtenou stránku.'
           : 'Pouze ukázková data. Žádné požadavky na cílové weby.'}
       </div>
     </aside>

@@ -217,7 +217,7 @@ test('renders a live arbitrary dataset and keeps a moved expanded origin stable 
   await expect(
     page.getByRole('button', { name: 'Ukázka: 20 stránek', exact: true }),
   ).toHaveCount(0);
-  await expect(page.locator('.local-indicator')).toHaveText('Lokální sken');
+  await expect(page.locator('.local-indicator')).toHaveText('Serverový sken');
   const domain = page.getByRole('button', {
     name: 'Doména alpha.cz',
     exact: true,

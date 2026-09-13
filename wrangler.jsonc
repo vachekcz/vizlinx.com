@@ -4,8 +4,25 @@
   "main": "worker/index.ts",
   "account_id": "6d98272604827024f82f94b330498ae7",
   "compatibility_date": "2026-09-11",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
+  "vars": { "CRAWLER_ENABLED": "true", "ADMIN_EMAIL": "" },
+  "limits": { "cpu_ms": 5000 },
+  "queues": {
+    "producers": [{ "binding": "CRAWL_QUEUE", "queue": "vizlinx-com-crawl" }],
+    "consumers": [
+      {
+        "queue": "vizlinx-com-crawl",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_concurrency": 3,
+        "max_retries": 3,
+        "dead_letter_queue": "vizlinx-com-crawl-dead-letter",
+        "retry_delay": 30,
+      },
+    ],
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

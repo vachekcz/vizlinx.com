@@ -1,7 +1,7 @@
 export const API_PREFIX = '/api/v1';
 export const SCAN_LIMITS = {
   sites: 3,
-  pagesPerSite: 50,
+  pagesPerSite: 100,
   linksPerPage: 500,
   discoveredPerPage: 500,
   htmlBytes: 2 * 1024 * 1024,
@@ -57,13 +57,57 @@ export type ScanControl = {
   id: string;
   status: ScanStatus;
   sites: ScanSite[];
+  limitReason?:
+    'page_limit' | 'scan_storage_limit' | 'time_limit' | 'daily_limit';
 };
 export type ScanSummary = ScanControl & {
   createdAt: string;
   updatedAt: string;
   pageCount: number;
 };
-export type ScanSnapshot = ScanSummary & { results: PageResult[] };
+export type ScanActivity = {
+  phase:
+    | 'queued'
+    | 'fetching_robots'
+    | 'fetching_page'
+    | 'waiting'
+    | 'paused'
+    | 'completed'
+    | 'limited'
+    | 'error'
+    | 'interrupted';
+  updatedAt: string;
+  origin?: string;
+  url?: string;
+  nextRequestAt?: string;
+};
+export type ScanLogEvent = {
+  id: number;
+  at: string;
+  type:
+    | 'scan_started'
+    | 'scan_paused'
+    | 'site_added'
+    | 'site_throttled'
+    | 'settings_changed'
+    | 'robots_checked'
+    | 'page_finished'
+    | 'scan_completed'
+    | 'scan_limited'
+    | 'scan_error';
+  level: 'info' | 'warning' | 'error';
+  origin?: string;
+  url?: string;
+  httpStatus?: number;
+  status?: PageStatus;
+  linkCount?: number;
+  reason?: ScanControl['limitReason'];
+};
+export type ScanLogResponse = { events: ScanLogEvent[]; truncated: boolean };
+export type ScanSnapshot = ScanSummary & {
+  results: PageResult[];
+  activity?: ScanActivity;
+};
 export type RunnerSession = { token: string; scan: ScanSnapshot };
 
 // Fetch scope is an exact public HTTP(S) origin, not a suffix match.
