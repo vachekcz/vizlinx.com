@@ -1,0 +1,253 @@
+# Nightly screenshot gallery → GitHub Pages
+#
+# changes → screenshots → deploy. The `changes` and `deploy` jobs are portable
+# as-is; the only per-project work is inside the marked APP SETUP block, the
+# deny-list in `changes`, and WORKFLOW_FILE below.
+#
+# Requires (one-time, outside this file):
+#   - Settings → Pages → Source: "GitHub Actions" (private repo needs GitHub Pro)
+#   - devDependencies: @playwright/test, tsx
+#   - scripts/build-screenshot-gallery.ts + scripts/screenshot-gallery/
+#   - tests/tour/ + playwright.screenshots.config.ts (main config must testIgnore it)
+#
+# The published site is PUBLIC even for a private repo — capture seeded test
+# data only.
+
+name: Nightly Screenshots
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even if the default branch has no new code changes'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: nightly-screenshots
+  cancel-in-progress: false
+
+env:
+  # `gh api` below looks up previous runs by this workflow's FILE name. Renaming
+  # the file without updating this makes the lookup return nothing — the run
+  # then fails open and the gallery rebuilds every night regardless of changes.
+  WORKFLOW_FILE: nightly-screenshots.yml
+  # cs | en — picks the gallery texts and the fold-marker label.
+  GALLERY_LANG: cs
+
+jobs:
+  # Skips the night entirely when nothing that can change the UI landed on the
+  # default branch since the last successful run. Fail-open: any doubt -> run.
+  changes:
+    name: Detect changes since last run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Compare HEAD against last successful run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          decide() {
+            echo "run=$1" >> "$GITHUB_OUTPUT"
+            echo "Decision: run=$1 ($2)"
+          }
+
+          if [[ "$FORCE" == "true" ]]; then
+            decide true "forced via workflow_dispatch"
+            exit 0
+          fi
+
+          LAST_SHA=$(gh api \
+            "repos/$REPO/actions/workflows/$WORKFLOW_FILE/runs?status=success&branch=$DEFAULT_BRANCH&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' || true)
+
+          if [[ -z "$LAST_SHA" ]]; then
+            decide true "no previous successful run"
+            exit 0
+          fi
+          if ! git cat-file -e "$LAST_SHA" 2>/dev/null; then
+            decide true "last run SHA no longer in history"
+            exit 0
+          fi
+
+          # Deny-list of paths that cannot change the UI. verify-and-deploy.yml
+          # has no docs-only filter of its own, so this is the only one; `docs`
+          # excludes the whole docs/** tree, `*.md` the README and friends.
+          # A deny-list on purpose: a forgotten entry here only costs a needless
+          # run, whereas a forgotten entry in an allow-list would silently skip
+          # the gallery on a real UI change.
+          if git diff --quiet "$LAST_SHA" HEAD -- . \
+            ':(exclude)docs' \
+            ':(exclude)*.md' \
+            ':(exclude).vscode' \
+            ':(exclude).editorconfig' \
+            ':(exclude)LICENSE' \
+            ':(exclude).github/ISSUE_TEMPLATE' \
+            ':(exclude).github/CODEOWNERS'; then
+            decide false "no code changes since $LAST_SHA"
+          else
+            decide true "code changed since $LAST_SHA"
+          fi
+
+  screenshots:
+    name: Capture screenshots
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # ---- APP SETUP --------------------------------------------------------
+      # The tour runs against the real Worker so that /scan works: it needs
+      # /api/v1 (session, config, saved maps), which the static preview cannot
+      # serve. Playwright's `webServer` in playwright.screenshots.config.ts
+      # starts `wrangler dev --port 8798 --env-file=/dev/null` itself (local
+      # mode, no Cloudflare token, D1 and the queue in Miniflare) and waits for
+      # the port; this block only prepares what that server serves: the built
+      # assets in dist/ and a migrated local D1 in .wrangler/state.
+      - name: Build app
+        run: npm run build
+
+      - name: Apply D1 migrations to the local database
+        run: npm run db:local
+      # ---- END APP SETUP ----------------------------------------------------
+
+      - name: Get Playwright version
+        # Pins the browser cache to the exact installed version. npm lockfile
+        # shape; for pnpm/yarn read it from the respective lockfile instead.
+        id: playwright-version
+        run: |
+          VERSION=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
+
+      - name: Install Playwright system dependencies
+        # Always: the cache holds the browser, not the apt libraries it links.
+        run: npx playwright install-deps chromium
+
+      - name: Install Playwright browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: Run screenshot tour
+        run: npx playwright test -c playwright.screenshots.config.ts
+        env:
+          CI: true
+          # wrangler dev is started by Playwright's webServer; keep it quiet.
+          WRANGLER_SEND_METRICS: false
+
+      - name: Upload screenshots artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: screenshots-output
+          retention-days: 1
+
+      - name: Upload Playwright report on failure
+        # A failed tour keeps the last working gallery online; the report is
+        # how you find out which state broke.
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: nightly-playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  deploy:
+    name: Build gallery & deploy to Pages
+    needs: [changes, screenshots]
+    # The ref guard keeps the public gallery a default-branch-only publication:
+    # a workflow_dispatch (or a temporary verification trigger) on another
+    # branch still exercises the screenshot job, but never overwrites the
+    # deployed site. Defense in depth on top of the github-pages environment
+    # branch policy, which is repo settings rather than reviewable code.
+    # Derived from the repo so no fork/rename has to edit this line.
+    if: >-
+      needs.changes.outputs.run == 'true' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: screenshots
+          path: screenshots-output
+
+      - name: Build gallery
+        # Writes index.html INTO screenshots-output/ — screenshots + index are
+        # the whole site.
+        run: npx tsx scripts/build-screenshot-gallery.ts
+        env:
+          GALLERY_COMMIT_SHA: ${{ github.sha }}
+          GALLERY_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          # Repo name by default; hardcode a prettier one if it reads badly.
+          GALLERY_TITLE: ${{ github.event.repository.name || github.repository }}
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: screenshots-output
+
+      - id: deployment
+        uses: actions/deploy-pages@v5
