@@ -71,6 +71,87 @@ type SiteBounds = { left: number; top: number; right: number; bottom: number };
 
 const SITE_GAP = 32;
 
+function radialClearance(a: SiteBounds, b: SiteBounds, dx: number, dy: number) {
+  const x =
+    dx > 0.000001
+      ? (a.right - b.left + SITE_GAP) / dx
+      : dx < -0.000001
+        ? (b.right - a.left + SITE_GAP) / -dx
+        : Infinity;
+  const y =
+    dy > 0.000001
+      ? (a.bottom - b.top + SITE_GAP) / dy
+      : dy < -0.000001
+        ? (b.bottom - a.top + SITE_GAP) / -dy
+        : Infinity;
+  // Separating either axis is sufficient to clear two rectangular footprints.
+  return Math.min(x, y);
+}
+
+function balanceSites(sites: Site[], bounds: Record<string, SiteBounds>) {
+  const origins = separateSites(
+    sites.filter((site) => site.scanned),
+    bounds,
+  );
+  const targets = sites.filter((site) => !site.scanned);
+  if (origins.length === 0 || targets.length === 0) return sites;
+  const center = {
+    x: origins.reduce((sum, site) => sum + site.x, 0) / origins.length,
+    y: origins.reduce((sum, site) => sum + site.y, 0) / origins.length,
+  };
+  const innerBounds = {
+    left: Math.min(
+      ...origins.map((site) => site.x - center.x + bounds[site.id].left),
+    ),
+    top: Math.min(
+      ...origins.map((site) => site.y - center.y + bounds[site.id].top),
+    ),
+    right: Math.max(
+      ...origins.map((site) => site.x - center.x + bounds[site.id].right),
+    ),
+    bottom: Math.max(
+      ...origins.map((site) => site.y - center.y + bounds[site.id].bottom),
+    ),
+  };
+  const directions = targets.map((site, index) => {
+    const angle = -Math.PI / 2 + (index * Math.PI * 2) / targets.length;
+    return { site, x: Math.cos(angle), y: Math.sin(angle) };
+  });
+  let radius = 280;
+  for (let first = 0; first < directions.length; first++) {
+    const a = directions[first];
+    radius = Math.max(
+      radius,
+      radialClearance(innerBounds, bounds[a.site.id], a.x, a.y),
+    );
+    for (let second = first + 1; second < directions.length; second++) {
+      const b = directions[second];
+      radius = Math.max(
+        radius,
+        radialClearance(
+          bounds[a.site.id],
+          bounds[b.site.id],
+          b.x - a.x,
+          b.y - a.y,
+        ),
+      );
+    }
+  }
+  // Enlarge the entire ring to fit labels without distorting its equal angles.
+  const positions = new Map(
+    directions.map(({ site, x, y }) => [
+      site.id,
+      {
+        x: center.x + x * (radius + 1),
+        y: center.y + y * (radius + 1),
+      },
+    ]),
+  );
+  for (const origin of origins)
+    positions.set(origin.id, { x: origin.x, y: origin.y });
+  return sites.map((site) => ({ ...site, ...positions.get(site.id) }));
+}
+
 function separateSites(
   sites: Site[],
   bounds: Record<string, SiteBounds>,
@@ -183,6 +264,10 @@ export default function Graph({
   const [dragFrame, setDragFrame] = useState<string | null>(null);
   const dragging = dragFrame !== null;
   const [siteBounds, setSiteBounds] = useState<Record<string, SiteBounds>>({});
+  const measuredBounds = useRef<{
+    key: string;
+    bounds: Record<string, SiteBounds>;
+  } | null>(null);
   const [fontRevision, setFontRevision] = useState(0);
   useEffect(() => {
     let active = true;
@@ -235,6 +320,7 @@ export default function Graph({
         }
       : site,
   );
+  const automaticLayout = useRef(true);
   const previousLayout = useRef<{
     compact: boolean;
     resetKey: number;
@@ -244,26 +330,43 @@ export default function Graph({
     bases: Record<string, { x: number; y: number }>;
   } | null>(null);
   useLayoutEffect(() => {
-    const measured: Record<string, SiteBounds> = {};
-    for (const node of svgRef.current?.querySelectorAll<SVGGElement>(
-      '.site-node',
-    ) ?? []) {
-      const hit = node.querySelector('[data-drag-site]')!;
-      const circle = hit.querySelector('circle')!;
-      const id = hit.getAttribute('data-drag-site')!;
-      const x = Number(circle.getAttribute('cx'));
-      const y = Number(circle.getAttribute('cy'));
-      const radius = Number(circle.getAttribute('r'));
-      const box = node.getBBox();
-      measured[id] = {
-        left: Math.floor(Math.min(box.x - x, -radius - 10) + 0.001),
-        top: Math.floor(Math.min(box.y - y, -radius - 10) + 0.001),
-        right: Math.ceil(Math.max(box.x + box.width - x, radius + 10) - 0.001),
-        bottom: Math.ceil(
-          Math.max(box.y + box.height - y, radius + 10) - 0.001,
-        ),
-      };
+    const nodes = Array.from(
+      svgRef.current?.querySelectorAll<SVGGElement>('.site-node') ?? [],
+    );
+    const measurementKey = JSON.stringify([
+      compact,
+      fontRevision,
+      nodes.map((node) => [
+        node.querySelector('[data-drag-site]')?.getAttribute('data-drag-site'),
+        node.querySelector('[data-drag-site] circle')?.getAttribute('r'),
+        node.textContent,
+      ]),
+    ]);
+    // SVG text bounds can vary slightly with zoom. Only remeasure changed content.
+    if (measuredBounds.current?.key !== measurementKey) {
+      const bounds: Record<string, SiteBounds> = {};
+      for (const node of nodes) {
+        const hit = node.querySelector('[data-drag-site]')!;
+        const circle = hit.querySelector('circle')!;
+        const id = hit.getAttribute('data-drag-site')!;
+        const x = Number(circle.getAttribute('cx'));
+        const y = Number(circle.getAttribute('cy'));
+        const radius = Number(circle.getAttribute('r'));
+        const box = node.getBBox();
+        bounds[id] = {
+          left: Math.floor(Math.min(box.x - x, -radius - 10) + 0.001),
+          top: Math.floor(Math.min(box.y - y, -radius - 10) + 0.001),
+          right: Math.ceil(
+            Math.max(box.x + box.width - x, radius + 10) - 0.001,
+          ),
+          bottom: Math.ceil(
+            Math.max(box.y + box.height - y, radius + 10) - 0.001,
+          ),
+        };
+      }
+      measuredBounds.current = { key: measurementKey, bounds };
     }
+    const measured = measuredBounds.current.bounds;
     const boundsKey = JSON.stringify(measured);
     setSiteBounds((current) =>
       JSON.stringify(current) === boundsKey ? current : measured,
@@ -272,6 +375,9 @@ export default function Graph({
     const reset =
       previous !== null &&
       (previous.compact !== compact || previous.resetKey !== resetKey);
+    if (reset || previous === null) automaticLayout.current = true;
+    if (expanded.length > 0) automaticLayout.current = false;
+    const balanced = live && automaticLayout.current;
     const shiftedBase =
       live &&
       !reset &&
@@ -308,7 +414,7 @@ export default function Graph({
     setPositions((current) => {
       const offsets = reset ? {} : { ...current };
       if (shiftedBase) {
-        // Promoting a known target to a scanned origin must preserve its position.
+        // Preserve manual placement when a known target becomes a scanned origin.
         for (const site of layoutSites) {
           const base = previous?.bases[site.id];
           if (base)
@@ -323,7 +429,10 @@ export default function Graph({
         x: site.x + (offsets[site.id]?.x ?? 0),
         y: site.y + (offsets[site.id]?.y ?? 0),
       }));
-      const placed = separateSites(positioned, measured, anchorId);
+      const initial = balanced
+        ? balanceSites(layoutSites, measured)
+        : positioned;
+      const placed = separateSites(initial, measured, anchorId);
       return {
         ...offsets,
         ...Object.fromEntries(
@@ -345,6 +454,7 @@ export default function Graph({
     inputSites,
     pages,
     fontRevision,
+    live,
   ]);
 
   const sites = layoutSites.map((site) => ({
@@ -377,6 +487,7 @@ export default function Graph({
   );
 
   const moveSite = (id: string, dx: number, dy: number) => {
+    automaticLayout.current = false;
     setPositions((previous) => {
       const positioned = layoutSites.map((site) => ({
         ...site,
