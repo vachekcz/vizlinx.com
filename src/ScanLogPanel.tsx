@@ -77,7 +77,7 @@ export function ScanActivityStatus({
   refreshError?: string;
 }) {
   const [now, setNow] = useState(Date.now);
-  const running = scan.status === 'running' && !refreshError;
+  const running = !scan.archived && scan.status === 'running' && !refreshError;
   useEffect(() => {
     if (!running) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -192,7 +192,7 @@ function LogDrawer({
     const refresh = async () => {
       try {
         const response = await fetch(
-          `${API_PREFIX}/scans/${encodeURIComponent(scan.id)}/log`,
+          `${API_PREFIX}/scans/${encodeURIComponent(scan.id)}${scan.runId ? `/runs/${encodeURIComponent(scan.runId)}` : ''}/log`,
           {
             credentials: 'same-origin',
             signal: controller.signal,
@@ -218,7 +218,7 @@ function LogDrawer({
       } finally {
         if (!controller.signal.aborted) {
           setLoading(false);
-          if (scan.status === 'running')
+          if (!scan.archived && scan.status === 'running')
             timer = window.setTimeout(() => {
               void refresh();
             }, 3000);
@@ -230,7 +230,15 @@ function LogDrawer({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [scan.id, scan.status, logVersion, revision, onErrorCount]);
+  }, [
+    scan.id,
+    scan.runId,
+    scan.archived,
+    scan.status,
+    logVersion,
+    revision,
+    onErrorCount,
+  ]);
   useEffect(() => {
     if (following.current && list.current)
       list.current.scrollTop = list.current.scrollHeight;

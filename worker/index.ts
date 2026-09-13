@@ -1,10 +1,7 @@
 import {
   API_PREFIX,
   SCAN_LIMITS,
-  type PageResult,
-  type ScanControl,
   type ScanActivity,
-  type ScanSite,
   type ScanSnapshot,
   type ScanStatus,
 } from '../shared/scan';
@@ -15,6 +12,16 @@ import {
   type CrawlMessage,
 } from './crawler';
 import { readScanLog, scanLogStatements } from './scan-log';
+import {
+  checkRun,
+  control,
+  currentSummary,
+  readRunHistory,
+  readRunLog,
+  readRunSnapshot,
+  rescan,
+  type ScanRow,
+} from './scan-history';
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RUNNER_TTL_MS = 24 * 60 * 60 * 1000;
@@ -29,21 +36,6 @@ const SCAN_STATUSES: ScanStatus[] = [
   'limited',
   'error',
 ];
-
-type ScanRow = {
-  id: string;
-  owner_hash: string;
-  status: ScanStatus;
-  sites_json: string;
-  created_at: number;
-  updated_at: number;
-  heartbeat_at: number | null;
-  runner_hash: string | null;
-  execution_mode: 'extension' | 'server';
-  crawl_generation: number;
-  limit_reason: ScanControl['limitReason'] | null;
-  activity_json: string | null;
-};
 
 function randomToken(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
@@ -210,39 +202,8 @@ async function runner(
   return row;
 }
 
-function control(row: ScanRow): ScanControl {
-  return {
-    id: row.id,
-    status:
-      row.status === 'running' &&
-      (row.heartbeat_at ?? 0) <
-        Date.now() - (row.execution_mode === 'server' ? 20 * 60_000 : 90_000)
-        ? 'interrupted'
-        : row.status,
-    sites: JSON.parse(row.sites_json) as ScanSite[],
-    ...(row.limit_reason ? { limitReason: row.limit_reason } : {}),
-  };
-}
-
 async function snapshot(env: Env, row: ScanRow): Promise<ScanSnapshot> {
-  const pages = await env.DB.prepare(
-    'SELECT result_json FROM page_results WHERE scan_id = ?1 ORDER BY source_url',
-  )
-    .bind(row.id)
-    .all<{ result_json: string }>();
-  const results = pages.results.map(
-    (page) => JSON.parse(page.result_json) as PageResult,
-  );
-  return {
-    ...control(row),
-    createdAt: new Date(row.created_at).toISOString(),
-    updatedAt: new Date(row.updated_at).toISOString(),
-    pageCount: results.length,
-    results,
-    ...(row.activity_json
-      ? { activity: JSON.parse(row.activity_json) as ScanActivity }
-      : {}),
-  };
+  return readRunSnapshot(env, row.id);
 }
 
 async function handle(request: Request, env: Env): Promise<Response> {
@@ -315,31 +276,46 @@ async function handle(request: Request, env: Env): Promise<Response> {
         .bind(owner, Date.now() - RETENTION_MS)
         .all<ScanRow & { page_count: number }>();
       return json(
-        rows.results.map((row) => ({
-          ...control(row),
-          createdAt: new Date(row.created_at).toISOString(),
-          updatedAt: new Date(row.updated_at).toISOString(),
-          pageCount: row.page_count,
-        })),
+        rows.results.map((row) => currentSummary(row, row.page_count)),
       );
     }
   }
 
+  const historyMatch = path.match(
+    /^\/api\/v1\/scans\/([a-f0-9-]{36})\/runs(?:\/([a-f0-9-]{36})(\/log)?)?$/,
+  );
+  if (historyMatch && request.method === 'GET') {
+    const row = await owned(request, env, historyMatch[1]);
+    if (!historyMatch[2]) return json(await readRunHistory(env, row.id));
+    return json(
+      historyMatch[3]
+        ? await readRunLog(env, row.id, historyMatch[2])
+        : await readRunSnapshot(env, row.id, historyMatch[2]),
+    );
+  }
+
   const webMatch = path.match(
-    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|start|log))?$/,
+    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|start|rescan|log))?$/,
   );
   if (webMatch) {
     const row = await owned(request, env, webMatch[1]);
     if (webMatch[2] === '/log' && request.method === 'GET')
       return json(await readScanLog(env, row.id));
     if (webMatch[2] === '/start' && request.method === 'POST') {
-      await readJson(request);
+      checkRun(row, (await readJson(request)).runId);
       await limitCreation(request, env, 'start');
       await startServerScan(env, row.id, row.crawl_generation);
       return json(await snapshot(env, await owned(request, env, row.id)));
     }
+    if (webMatch[2] === '/rescan' && request.method === 'POST') {
+      checkRun(row, (await readJson(request)).runId, true);
+      await limitCreation(request, env, 'start');
+      await rescan(env, row);
+      return json(await snapshot(env, await owned(request, env, row.id)));
+    }
     if (webMatch[2] === '/sites' && request.method === 'POST') {
       const body = await readJson(request);
+      checkRun(row, body.runId);
       if (['time_limit', 'scan_storage_limit'].includes(row.limit_reason ?? ''))
         throw new ApiError(
           429,
@@ -418,6 +394,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       return json(await snapshot(env, row));
     if (!webMatch[2] && request.method === 'PATCH') {
       const body = await readJson(request);
+      checkRun(row, body.runId);
       if (
         body.status !== undefined &&
         !['paused', 'waiting'].includes(String(body.status))

@@ -1,6 +1,7 @@
 export const API_PREFIX = '/api/v1';
 export const SCAN_LIMITS = {
   sites: 3,
+  runsPerMap: 10,
   pagesPerSite: 100,
   linksPerPage: 500,
   discoveredPerPage: 500,
@@ -72,7 +73,18 @@ export type ScanSummary = ScanControl & {
   createdAt: string;
   updatedAt: string;
   pageCount: number;
+  runId?: string;
+  runNumber?: number;
+  runCreatedAt?: string;
+  archived?: boolean;
 };
+export type ScanRunSummary = ScanSummary & {
+  runId: string;
+  runNumber: number;
+  runCreatedAt: string;
+  archived: boolean;
+};
+export type ScanHistory = { runs: ScanRunSummary[]; limit: number };
 export type ScanActivity = {
   phase:
     | 'queued'
