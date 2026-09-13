@@ -3,9 +3,12 @@ import {
   SCAN_LIMITS,
   type PageResult,
   type ScanSite,
+  type ScanActivity,
+  type ScanControl,
 } from '../shared/scan';
 import { emptyResult } from '../shared/fetch-result';
 import { ApiError } from './validation';
+import { scanLogStatements } from './scan-log';
 import {
   fetchServerPage,
   fetchServerRobots,
@@ -187,16 +190,38 @@ export async function startServerScan(
     ...site,
     maxPages: SCAN_LIMITS.pagesPerSite,
   }));
-  const updated = await env.DB.prepare(
-    `UPDATE scans SET status = 'running', execution_mode = 'server',
+  const started = await env.DB.batch<ScanRow>([
+    env.DB.prepare(
+      `UPDATE scans SET status = 'running', execution_mode = 'server',
     sites_json = ?3, limit_reason = NULL, crawl_generation = crawl_generation + 1,
     crawl_started_at = ?4, crawl_tick = 0, crawl_enqueued_tick = -1, crawl_ready = 0,
     crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?4, updated_at = ?4,
-    runner_hash = NULL, runner_expires_at = NULL, ticket_hash = NULL, ticket_expires_at = NULL
+    runner_hash = NULL, runner_expires_at = NULL, ticket_hash = NULL, ticket_expires_at = NULL,
+    activity_json = ?5
     WHERE id = ?1 AND crawl_generation = ?2 RETURNING *`,
-  )
-    .bind(scanId, row.crawl_generation, JSON.stringify(scanSites), now)
-    .first<ScanRow>();
+    ).bind(
+      scanId,
+      row.crawl_generation,
+      JSON.stringify(scanSites),
+      now,
+      JSON.stringify({
+        phase: 'queued',
+        updatedAt: new Date(now).toISOString(),
+      }),
+    ),
+    ...scanLogStatements(
+      env,
+      scanId,
+      `start:${row.crawl_generation + 1}`,
+      {
+        at: new Date(now).toISOString(),
+        type: 'scan_started',
+        level: 'info',
+      },
+      { sql: 'changes() = 1', bindings: [] },
+    ),
+  ]);
+  const updated = started[0].results[0];
   if (!updated)
     throw new ApiError(409, 'The scan changed. Reload before starting it.');
   try {
@@ -259,12 +284,29 @@ export async function startServerScan(
       .first<ScanRow>();
     if (ready) await enqueueCurrent(env, ready);
   } catch (error) {
-    await env.DB.prepare(
-      `UPDATE scans SET status = 'error', updated_at = ?3
-      WHERE id = ?1 AND crawl_generation = ?2 AND status = 'running'`,
-    )
-      .bind(scanId, updated.crawl_generation, Date.now())
-      .run();
+    const failedAt = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE scans SET status = 'error', updated_at = ?3, activity_json = ?4
+        WHERE id = ?1 AND crawl_generation = ?2 AND status = 'running'`,
+      ).bind(
+        scanId,
+        updated.crawl_generation,
+        Date.now(),
+        JSON.stringify({ phase: 'error', updatedAt: failedAt }),
+      ),
+      ...scanLogStatements(
+        env,
+        scanId,
+        `start-error:${updated.crawl_generation}`,
+        {
+          at: failedAt,
+          type: 'scan_error',
+          level: 'error',
+        },
+        { sql: 'changes() = 1', bindings: [] },
+      ),
+    ]);
     throw error;
   }
 }
@@ -272,30 +314,78 @@ export async function startServerScan(
 async function finish(
   env: Env,
   lease: Lease,
-  reason: string | null,
+  reason: NonNullable<ScanControl['limitReason']> | null,
   paused = false,
 ): Promise<void> {
+  const now = Date.now();
+  const phase = paused ? 'paused' : reason ? 'limited' : 'completed';
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE scans SET status = ?5, limit_reason = ?6,
+      crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?7, updated_at = ?7,
+      activity_json = ?8 WHERE EXISTS (${activeSql}) AND id = ?1`,
+    ).bind(
+      ...leaseBindings(lease),
+      phase,
+      reason,
+      now,
+      JSON.stringify({ phase, updatedAt: new Date(now).toISOString() }),
+    ),
+    ...scanLogStatements(
+      env,
+      lease.scanId,
+      `finish:${lease.generation}`,
+      {
+        at: new Date(now).toISOString(),
+        type: paused
+          ? 'scan_paused'
+          : reason
+            ? 'scan_limited'
+            : 'scan_completed',
+        level: reason ? 'warning' : 'info',
+        ...(reason ? { reason } : {}),
+      },
+      { sql: 'changes() = 1', bindings: [] },
+    ),
+  ]);
+}
+
+async function setActivity(
+  env: Env,
+  lease: Lease,
+  activity: Omit<ScanActivity, 'updatedAt'>,
+): Promise<void> {
   await env.DB.prepare(
-    `UPDATE scans SET status = ?5, limit_reason = ?6,
-    crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?7, updated_at = ?7
-    WHERE EXISTS (${activeSql}) AND id = ?1`,
+    `UPDATE scans SET activity_json = ?5 WHERE EXISTS (${activeSql}) AND id = ?1`,
   )
     .bind(
       ...leaseBindings(lease),
-      paused ? 'paused' : reason ? 'limited' : 'completed',
-      reason,
-      Date.now(),
+      JSON.stringify({ ...activity, updatedAt: new Date().toISOString() }),
     )
     .run();
 }
 
-async function checkpoint(env: Env, lease: Lease, delayMs = 0): Promise<void> {
+async function checkpoint(
+  env: Env,
+  lease: Lease,
+  delayMs = 0,
+  origin?: string,
+): Promise<void> {
+  const now = Date.now();
+  const activity: ScanActivity = {
+    phase: delayMs > 0 ? 'waiting' : 'queued',
+    updatedAt: new Date(now).toISOString(),
+    ...(origin ? { origin } : {}),
+    ...(delayMs > 0
+      ? { nextRequestAt: new Date(now + delayMs).toISOString() }
+      : {}),
+  };
   const row = await env.DB.prepare(
     `UPDATE scans SET crawl_tick = crawl_tick + 1,
-    crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?5, updated_at = ?5
-    WHERE EXISTS (${activeSql}) AND id = ?1 RETURNING *`,
+    crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?5, updated_at = ?5,
+    activity_json = ?6 WHERE EXISTS (${activeSql}) AND id = ?1 RETURNING *`,
   )
-    .bind(...leaseBindings(lease), Date.now())
+    .bind(...leaseBindings(lease), now, JSON.stringify(activity))
     .first<ScanRow>();
   if (row)
     await enqueueCurrent(env, row, Math.max(0, Math.ceil(delayMs / 1000)));
@@ -330,6 +420,31 @@ async function storeResult(
       encoded.byteLength,
       SCAN_LIMITS.pagesPerSite,
       MAX_SCAN_BYTES,
+    ),
+    ...scanLogStatements(
+      env,
+      lease.scanId,
+      `page:${result.sourceUrl}`,
+      {
+        at: new Date().toISOString(),
+        type: 'page_finished',
+        level: ['http_error', 'network_error'].includes(result.status)
+          ? 'error'
+          : result.status === 'ok'
+            ? 'info'
+            : 'warning',
+        origin,
+        url: result.sourceUrl,
+        status: result.status,
+        ...(result.httpStatus !== null
+          ? { httpStatus: result.httpStatus }
+          : {}),
+        linkCount: result.links.reduce(
+          (count, link) => count + link.occurrences,
+          0,
+        ),
+      },
+      { sql: 'changes() = 1', bindings: [] },
     ),
     env.DB.prepare(
       `UPDATE crawl_frontier SET state = 'done' WHERE scan_id = ?1 AND url = ?5
@@ -553,6 +668,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         env,
         lease,
         Math.min(wait, Math.max(0, lease.startedAt + RUN_MS - Date.now())),
+        site.origin,
       );
       return;
     }
@@ -564,12 +680,31 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
       .bind(...leaseBindings(lease), site.origin)
       .first();
     if (!claimed) return;
+    await setActivity(env, lease, {
+      phase: 'fetching_robots',
+      origin: site.origin,
+      url: `${site.origin}/robots.txt`,
+    });
     policy = await fetchServerRobots(site.origin);
     await env.DB.batch([
       env.DB.prepare(
         `UPDATE crawl_robots SET state = 'done', policy_json = ?6
         WHERE scan_id = ?1 AND origin = ?5 AND EXISTS (${activeSql})`,
       ).bind(...leaseBindings(lease), site.origin, JSON.stringify(policy)),
+      ...scanLogStatements(
+        env,
+        lease.scanId,
+        `robots:${site.origin}`,
+        {
+          at: new Date().toISOString(),
+          type: 'robots_checked',
+          level: policy.denied ? 'warning' : 'info',
+          origin: site.origin,
+          url: `${site.origin}/robots.txt`,
+          status: policy.denied ? 'robots_denied' : 'ok',
+        },
+        { sql: 'changes() = 1', bindings: [] },
+      ),
       env.DB.prepare(
         `UPDATE crawl_origin_gates SET next_allowed_at = MAX(next_allowed_at, ?6)
         WHERE origin = ?5 AND EXISTS (${activeSql})`,
@@ -582,6 +717,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         Math.max(1000, site.intervalMs, policy.delayMs),
         Math.max(0, lease.startedAt + RUN_MS - Date.now()),
       ),
+      site.origin,
     );
     return;
   }
@@ -597,6 +733,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         env,
         lease,
         Math.min(wait, Math.max(0, lease.startedAt + RUN_MS - Date.now())),
+        site.origin,
       );
       return;
     }
@@ -609,6 +746,11 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     .bind(...leaseBindings(lease), candidate.url)
     .first();
   if (!claimed) return;
+  await setActivity(env, lease, {
+    phase: 'fetching_page',
+    origin: site.origin,
+    url: candidate.url,
+  });
   const result = robotsAllows(policy, site.origin, candidate.url)
     ? await fetchServerPage(candidate.url, site.origin)
     : emptyResult(

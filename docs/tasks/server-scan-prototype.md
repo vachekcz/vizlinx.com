@@ -9,6 +9,8 @@ Web → API Worker → Cloudflare Queue `vizlinx-com-crawl` → HTML/robots cíl
 Přesné veřejné HTTP(S) originy, standardní porty, bez přihlašovacích údajů, cookies, privátních IP literálů, automatických přesměrování a JavaScript renderingu. HTTP běží přes veřejný Workers `fetch`, bez privátních síťových bindingů, s `global_fetch_strictly_public`, aby vlastní zóna neobcházela veřejnou ochranu. Robots platí pro `VizlinxBot`. Chybějící robots (404/410) povolí sken; nedostupná nebo nečitelná politika jej nepovolí. Skener neobchází CAPTCHA ani blokace serverových IP.
 
 - `GET /api/v1/config` → `{adminEmail: string|null, maxPagesPerSite:100}`.
+- `GET /api/v1/scans/:id/log` s vlastnickou cookie → `{events, truncated}`. Nejvýše 500 nejnovějších událostí v pořadí zápisu, se stejnou retencí a přístupem jako mapa. Událost obsahuje čas, typ, závažnost a případně origin, URL, stav stránky, HTTP status, počet odkazů nebo důvod limitu. Syrové výjimky, HTML ani provozní log Workeru se neposílají do webu.
+- Snapshot obsahuje volitelné `activity`: fázi, čas aktualizace, případně origin, URL a nejbližší čas dalšího požadavku. Rozhraní obnovuje stav po 3 s; odpočet je čekání na povolený termín, nikoli záruka přesného spuštění ve frontě. Běh, pauza i konečný stav jsou viditelné se zavřeným logem. Výpadek aktualizací nesmí tvrdit, že je běh aktuálně ověřený.
 - `POST /api/v1/scans/:id/start` s vlastnickou cookie, stejným Origin a JSON `{}` → `ScanSnapshot`. Spustí nebo obnoví serverový běh; zneplatní tokeny rozšíření a nastaví maxPages na 100.
 - Stávající session, create/list/get scan, PATCH a přidání originu zůstávají. Web po vytvoření mapy volá start automaticky. PATCH a přidání originu zneplatní rozpracovanou generaci úloh.
 - `limitReason` v control/snapshot je volitelně `page_limit`, `scan_storage_limit`, `time_limit` nebo `daily_limit`. Web vysvětlí skutečný důvod a zachová mapu i export výsledků.
@@ -52,7 +54,7 @@ Testy používají izolovanou D1 a kontrolované HTTP odpovědi. `test:crawler` 
 
 ## Nasazení a upozornění
 
-Queue se jednorázově vytvoří příkazem `npx wrangler queues create vizlinx-com-crawl --message-retention-period-secs 86400`; v tomto účtu už existuje. Migrace `0003_server_crawler.sql` a `0004_crawl_ready.sql` rozšiřují stávající D1 bez mazání map. `npm run deploy` sestaví aplikaci, aplikuje migrace a nasadí producenta i consumera. Token potřebuje Workers Scripts Edit, D1 Edit a Queues Edit.
+Queue se jednorázově vytvoří příkazem `npx wrangler queues create vizlinx-com-crawl --message-retention-period-secs 86400`; v tomto účtu už existuje. Migrace `0003_server_crawler.sql`, `0004_crawl_ready.sql` a `0005_scan_log.sql` rozšiřují stávající D1 bez mazání map. Log a aktivita vznikají od nasazení nové verze; historie starších výsledků se nedoplňuje. `npm run deploy` sestaví aplikaci, aplikuje migrace a nasadí producenta i consumera. Token potřebuje Workers Scripts Edit, D1 Edit a Queues Edit.
 
 Na účtu bylo ověřeno aktivní `Billing Budget Alert` s prahem 5 USD a jedním e-mailovým příjemcem. Tato existující politika platí pro účtovanou spotřebu napříč účtem, nikoli výhradně pro Vizlinx. Pokus vytvořit dřívější upozornění při 0,01 USD pro stejného existujícího příjemce skončil 403: současný token dovoluje čtení politik, ale chybí mu Notifications Write. Nic se nezměnilo. Dřívější upozornění lze nastavit v dashboardu přes Billing → Billable Usage nebo po doplnění oprávnění tokenu. [Cloudflare Budget alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/) potvrzuje, že upozornění samo spotřebu nezastaví.
 
@@ -68,3 +70,13 @@ Výsledek HTML skenu nemusí obsahovat odkazy vytvářené JavaScriptem. Přesm�
 - Lokální Wrangler na portu 8797 dokončil reálný sken galerie Vizlinx: 11 URL, 6 úspěšných HTML výsledků. Migrace zachovaly stávající lokální databázi.
 - Produkční Worker `vizlinx-com`, verze `eb08d864-490f-4bd4-a8ca-e439a3c97df8`, dokončil stejný sken: 11 URL, 6 HTML výsledků a 15 odkazových skupin. Čtení mapy bez vlastnické cookie vrací 401. Skutečný D1 binding byl po nasazení ověřen přes API jako `vizlinx-scans`, nikoli lokální nulové ID.
 - Formátování, TypeScript/build i Wrangler dry-run prošly. První provozní test potvrzuje funkčnost, nikoli cenu rozsáhlých nebo souběžných skenů.
+
+## Průběh skenu – 13. 9. 2026
+
+Stálý indikátor ukazuje načítání robots nebo stránky, čekání na frontu/interval, počet zpracovaných stránek a konečný stav. Tlačítko „Průběh skenu“ otevře spodní panel na desktopu a celoobrazovkový dialog na mobilu. Log podporuje filtr originu, jen chyby, zastavení automatického posunu při čtení historie a opětovné sledování. Po zavření dialogu se log nedotazuje; zůstává běžné obnovování snapshotu. Události se zapisují atomicky se změnou stavu nebo uložením výsledku, pod stejnou ochranou generace a lease.
+
+- API: 27 testů, crawler: 16, uložení logu: 4. Ověřena izolace návštěvníků, retence, limit 500 událostí, duplicity, smazání s mapou a pozdní robots/page odpovědi po pauze.
+- UI: 113 úspěšných testů a jeden existující vynechaný mobilní scénář. Nové scénáře pokrývají stálý indikátor, odpočet, filtry, ovládání klávesnicí, automatický posun, chyby spojení a pomalý požadavek logu při současném obnovování mapy. Kompletní E2E ověřil skutečný log z Workeru, zachování historie po reloadu, načítanou URL, pauzu i původní limit 100 stránek.
+- Lokální skutečný sken: 11 stránek, 14 uložených událostí, konečný stav `completed`. Opakované načtení vrátí stejný log a požadavek bez vlastnické cookie dostane 401.
+- Migrace `0005_scan_log.sql` aplikována lokálně i do produkční D1 bez mazání stávajících map.
+- Produkční verze `af8e6f4a-bfea-4b82-93d9-652b64cac2ef` dokončila reálný sken galerie: 11 stránek a 14 událostí (start, robots, výsledky a dokončení). Ověřeno opakované načtení totožné historie, konečná aktivita `completed`, 401 bez vlastnické cookie a načtení aktuálních frontendových assets.

@@ -41,6 +41,8 @@ Otevřete http://127.0.0.1:8797/scan. Wrangler spustí Worker i frontu lokálně
 
 Zadejte 1–3 přesné veřejné originy. Po založení mapy se sken spustí automaticky. Web umožňuje měnit interval požadavků, pozastavit celý sken nebo jednotlivý origin a přidat další web až do limitu tří. Přidání webu zachová ID, výsledky a ruční pozice bublin; běh pozastaví a pokračování se spouští přímo tlačítkem ve webu.
 
+Pod ovládáním je stále vidět aktuální činnost, počet zpracovaných stránek a při běhu načítaná URL nebo čekání na další požadavek. **Průběh skenu** otevře uložený log: na počítači spodní panel, na mobilu přes celou obrazovku. Lze filtrovat web a chyby; při posunu do historie se automatické sledování zastaví. Log uchovává nejvýše 500 nejnovějších událostí po dobu platnosti mapy a obnovuje se při otevřeném panelu. Události starších skenů se zpětně nedoplňují.
+
 Limit je pevně 100 stránek na origin včetně neúspěšných pokusů. Při dosažení se zobrazí výrazná hláška a výzva kontaktovat správce kvůli vyššímu limitu. Uživatelské API limit nezvýší. `ADMIN_EMAIL` ve Wrangler konfiguraci zapíná kontaktní tlačítko; prázdná hodnota ponechá textovou výzvu bez vymyšlené adresy. Denní nebo časový limit a zaplnění mapy mají vlastní důvod zastavení.
 
 Skener respektuje robots.txt pro `VizlinxBot`, čte HTML do 2 MiB, neposílá cookies a nenásleduje přesměrování. Je potřeba zadat konečnou URL, včetně správného `www`. Externí cíle se zobrazí jako známé odkazy, ale neprocházejí se bez přidání originu. Mapa uchovává výsledky 30 dní od založení a patří anonymní relaci stejného prohlížeče. Samotné předání URL nezpřístupní mapu jiným lidem.
@@ -70,6 +72,7 @@ npx playwright install chromium
 npm test
 npm run test:api
 npm run test:crawler
+npm run test:scan-log
 npm run test:extension
 npm run test:prototype
 npm run deploy:check

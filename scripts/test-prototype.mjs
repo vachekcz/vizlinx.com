@@ -263,6 +263,23 @@ try {
     JSON.parse(original[0].result_json).links[0].targetUrl,
     `${origins[1]}/deep`,
   );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  const logPanel = page.getByRole('dialog', { name: 'Průběh skenu' });
+  const logRows = logPanel
+    .getByRole('region', { name: 'Záznamy skenu' })
+    .locator('li');
+  await expect(logRows).toHaveCount(4);
+  await expect(logRows.nth(0)).toContainText('Spuštěn sken');
+  await expect(logRows.nth(1)).toContainText(
+    'Zkontrolována pravidla robots.txt',
+  );
+  await expect(logRows.nth(1)).toContainText(`${origins[0]}/robots.txt`);
+  await expect(logRows.nth(2)).toContainText('Načteno');
+  await expect(logRows.nth(2)).toContainText('HTTP 200');
+  await expect(logRows.nth(2)).toContainText('1 odkazů');
+  await expect(logRows.nth(2)).toContainText(`${origins[0]}/`);
+  await expect(logRows.nth(3)).toContainText('Známá fronta je dokončená');
+  await logPanel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
   await addSite(origins[1]);
   assert.equal(
     fetched.some((url) => url.startsWith(origins[1])),
@@ -296,9 +313,25 @@ try {
     1,
     'Existing successful pages must not be recrawled',
   );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logRows).toHaveCount(10);
+  await expect(logRows.filter({ hasText: 'Načteno' })).toHaveCount(3);
+  await expect(
+    logRows.filter({ hasText: 'Zkontrolována pravidla robots.txt' }),
+  ).toHaveCount(2);
+  await expect(logRows.last()).toContainText('Známá fronta je dokončená');
+  const persistedLog = await logRows.allTextContents();
   await page.reload();
   await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   await expect(page.locator('[data-connection]')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logRows).toHaveCount(persistedLog.length);
+  assert.deepEqual(
+    await logRows.allTextContents(),
+    persistedLog,
+    'Real crawler history must survive a browser reload',
+  );
+  await logPanel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
   await page
     .getByRole('button', { name: 'Zobrazit tabulku', exact: true })
     .click();
@@ -320,12 +353,19 @@ try {
   // results. Late work from the old generation must not undo the paused state.
   const pausedId = await createScan(`${origins[0]}/pause-root`);
   await expect.poll(() => typeof releaseSlowPage).toBe('function');
+  const activity = page.getByTestId('scan-activity');
+  await expect(activity).toBeVisible();
+  await expect(activity).toContainText('Načítám stránku');
+  await expect(activity).toContainText(`${origins[0]}/pause-slow`);
+  await expect(activity).toHaveClass(/is-running/);
   await page
     .getByRole('button', { name: 'Pozastavit sken', exact: true })
     .click();
   await expect
     .poll(async () => (await scanRow(pausedId)).status)
     .toBe('paused');
+  await expect(activity).toContainText('Skenování pozastaveno');
+  await expect(activity).not.toHaveClass(/is-running/);
   releaseSlowPage();
   const savedRoot = (await pageRows(pausedId)).results.find((row) =>
     row.source_url.endsWith('/pause-root'),
@@ -384,7 +424,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; pause and resume; exactly 100 page fetches and persistent administrator limit notice.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches and persistent administrator limit notice.',
   );
 } finally {
   releaseSlowPage?.();

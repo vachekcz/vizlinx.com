@@ -1257,3 +1257,119 @@ test('public scanner configuration exposes only the contact and fixed page cap',
     maxPagesPerSite: 100,
   });
 });
+
+test('scan logs require the owner and expire with the map and visitor', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice);
+  const path = `/scans/${scan.id}/log`;
+  assert.equal((await request(path)).status, 401);
+  assert.equal((await request(path, { cookie: bob })).status, 404);
+  const response = await request(path, { cookie: alice });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { events: [], truncated: false });
+  await db
+    .prepare('UPDATE scans SET created_at = 0 WHERE id = ?')
+    .bind(scan.id)
+    .run();
+  assert.equal((await request(path, { cookie: alice })).status, 404);
+  await db
+    .prepare(
+      'UPDATE visitors SET expires_at = 0 WHERE token_hash = (SELECT owner_hash FROM scans WHERE id = ?)',
+    )
+    .bind(scan.id)
+    .run();
+  assert.equal((await request(path, { cookie: alice })).status, 401);
+});
+
+test('scan activity and control events persist without logging rejected changes', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  const path = `/scans/${scan.id}`;
+  const start = await request(`${path}/start`, {
+    method: 'POST',
+    cookie,
+    body: {},
+  });
+  assert.equal((await start.json()).activity.phase, 'queued');
+  await request(`${path}/start`, { method: 'POST', cookie, body: {} });
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { status: 'paused' },
+      })
+    ).status,
+    200,
+  );
+  const paused = await (await request(path, { cookie })).json();
+  assert.equal(paused.status, 'paused');
+  assert.equal(paused.activity.phase, 'paused');
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { sites: [{ ...site, intervalMs: 5000 }] },
+      })
+    ).status,
+    200,
+  );
+  const added = {
+    ...site,
+    origin: 'https://second.org',
+    seedUrl: 'https://second.org/',
+  };
+  const addition = await request(`${path}/sites`, {
+    method: 'POST',
+    cookie,
+    body: { site: added },
+  });
+  assert.equal(addition.status, 201);
+  assert.equal((await addition.json()).activity.phase, 'paused');
+  assert.equal(
+    (
+      await request(`${path}/sites`, {
+        method: 'POST',
+        cookie,
+        body: { site: added },
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (
+      await request(path, {
+        method: 'PATCH',
+        cookie,
+        body: { status: 'completed' },
+      })
+    ).status,
+    400,
+  );
+  const log = await (await request(`${path}/log`, { cookie })).json();
+  assert.deepEqual(
+    log.events.map((event) => event.type),
+    ['scan_started', 'scan_paused', 'settings_changed', 'site_added'],
+  );
+  assert.equal(log.truncated, false);
+  assert.equal(log.events[3].origin, added.origin);
+  assert.equal(log.events[3].url, added.seedUrl);
+  for (const [index, event] of log.events.entries()) {
+    assert.ok(Number.isFinite(Date.parse(event.at)));
+    assert.equal(event.level, 'info');
+    if (index) assert.ok(event.id > log.events[index - 1].id);
+  }
+  await db.prepare('DELETE FROM scans WHERE id = ?').bind(scan.id).run();
+  assert.equal(
+    (
+      await db
+        .prepare('SELECT COUNT(*) AS count FROM scan_events WHERE scan_id = ?')
+        .bind(scan.id)
+        .first()
+    ).count,
+    0,
+  );
+});

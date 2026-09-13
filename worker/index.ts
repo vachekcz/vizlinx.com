@@ -3,6 +3,7 @@ import {
   SCAN_LIMITS,
   type PageResult,
   type ScanControl,
+  type ScanActivity,
   type ScanSite,
   type ScanSnapshot,
   type ScanStatus,
@@ -13,6 +14,7 @@ import {
   startServerScan,
   type CrawlMessage,
 } from './crawler';
+import { readScanLog, scanLogStatements } from './scan-log';
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const RUNNER_TTL_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +42,7 @@ type ScanRow = {
   execution_mode: 'extension' | 'server';
   crawl_generation: number;
   limit_reason: ScanControl['limitReason'] | null;
+  activity_json: string | null;
 };
 
 function randomToken(): string {
@@ -236,6 +239,9 @@ async function snapshot(env: Env, row: ScanRow): Promise<ScanSnapshot> {
     updatedAt: new Date(row.updated_at).toISOString(),
     pageCount: results.length,
     results,
+    ...(row.activity_json
+      ? { activity: JSON.parse(row.activity_json) as ScanActivity }
+      : {}),
   };
 }
 
@@ -320,10 +326,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   const webMatch = path.match(
-    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|start))?$/,
+    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|start|log))?$/,
   );
   if (webMatch) {
     const row = await owned(request, env, webMatch[1]);
+    if (webMatch[2] === '/log' && request.method === 'GET')
+      return json(await readScanLog(env, row.id));
     if (webMatch[2] === '/start' && request.method === 'POST') {
       await readJson(request);
       await limitCreation(request, env, 'start');
@@ -349,21 +357,42 @@ async function handle(request: Request, env: Env): Promise<Response> {
           'The scan already contains the maximum number of origins.',
         );
       // The scope change and credential revocation must happen together.
-      const updated = await env.DB.prepare(
-        `UPDATE scans SET sites_json = ?1, status = 'paused', updated_at = ?2,
+      const now = Date.now();
+      const activity: ScanActivity = {
+        phase: 'paused',
+        updatedAt: new Date(now).toISOString(),
+      };
+      const [change] = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE scans SET sites_json = ?1, status = 'paused', updated_at = ?2,
         runner_hash = NULL, runner_expires_at = NULL, ticket_hash = NULL,
         ticket_expires_at = NULL, heartbeat_at = NULL,
         crawl_generation = crawl_generation + 1, crawl_lease_token = NULL,
-        crawl_lease_until = NULL, crawl_enqueued_tick = -1
-        WHERE id = ?3 AND sites_json = ?4 RETURNING *`,
-      )
-        .bind(
+        crawl_lease_until = NULL, crawl_enqueued_tick = -1, activity_json = ?5
+        WHERE id = ?3 AND sites_json = ?4 AND crawl_generation = ?6 RETURNING *`,
+        ).bind(
           JSON.stringify([...previous, added]),
-          Date.now(),
+          now,
           row.id,
           row.sites_json,
-        )
-        .first<ScanRow>();
+          JSON.stringify(activity),
+          row.crawl_generation,
+        ),
+        ...scanLogStatements(
+          env,
+          row.id,
+          `site:${row.crawl_generation + 1}`,
+          {
+            at: activity.updatedAt,
+            type: 'site_added',
+            level: 'info',
+            origin: added.origin,
+            url: added.seedUrl,
+          },
+          { sql: 'changes() = 1', bindings: [] },
+        ),
+      ]);
+      const updated = change.results[0] as ScanRow | undefined;
       if (!updated)
         throw new ApiError(409, 'The scan changed. Reload it before retrying.');
       return json(await snapshot(env, updated), 201);
@@ -435,20 +464,43 @@ async function handle(request: Request, env: Env): Promise<Response> {
         ['running', 'waiting'].includes(String(nextStatus ?? row.status))
       )
         await limitCreation(request, env, 'start');
-      const updated = await env.DB.prepare(
-        `UPDATE scans SET status = COALESCE(?1, status), sites_json = ?2, updated_at = ?3,
+      const now = Date.now();
+      const status = (nextStatus ?? row.status) as ScanStatus;
+      const activity: ScanActivity = {
+        phase: status === 'running' || status === 'waiting' ? 'queued' : status,
+        updatedAt: new Date(now).toISOString(),
+      };
+      const [change] = await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE scans SET status = COALESCE(?1, status), sites_json = ?2, updated_at = ?3,
         crawl_generation = crawl_generation + 1, crawl_lease_token = NULL,
-        crawl_lease_until = NULL, crawl_enqueued_tick = -1
-        WHERE id = ?4 AND sites_json = ?5 RETURNING *`,
-      )
-        .bind(
+        crawl_lease_until = NULL, crawl_enqueued_tick = -1, activity_json = ?6
+        WHERE id = ?4 AND sites_json = ?5 AND crawl_generation = ?7 RETURNING *`,
+        ).bind(
           nextStatus,
           JSON.stringify(nextSites),
-          Date.now(),
+          now,
           row.id,
           row.sites_json,
-        )
-        .first<ScanRow>();
+          JSON.stringify(activity),
+          row.crawl_generation,
+        ),
+        ...scanLogStatements(
+          env,
+          row.id,
+          `control:${row.crawl_generation + 1}`,
+          {
+            at: activity.updatedAt,
+            type:
+              body.status === 'paused' && status === 'paused'
+                ? 'scan_paused'
+                : 'settings_changed',
+            level: 'info',
+          },
+          { sql: 'changes() = 1', bindings: [] },
+        ),
+      ]);
+      const updated = change.results[0] as ScanRow | undefined;
       if (!updated)
         throw new ApiError(409, 'The scan changed. Reload it before retrying.');
       if (

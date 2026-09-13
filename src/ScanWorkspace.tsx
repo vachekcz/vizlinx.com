@@ -12,6 +12,7 @@ import {
   Sun,
 } from 'lucide-react';
 import App from './App';
+import ScanLogPanel, { ScanActivityStatus } from './ScanLogPanel';
 import { scanToDataset } from './scan-dataset';
 import { useTheme } from './themes';
 import { API_PREFIX, normalizeScanUrl, SCAN_LIMITS } from '../shared/scan';
@@ -382,6 +383,7 @@ export default function ScanWorkspace() {
               <Pause size={15} /> Pozastavit sken
             </button>
           )}
+          <ScanLogPanel key={scan.id} scan={scan} refreshError={refreshError} />
           <span className="scan-stats">
             {scan.results.filter((result) => result.status === 'ok').length}{' '}
             načtených ·{' '}
@@ -389,6 +391,7 @@ export default function ScanWorkspace() {
             neúspěšných / vynechaných
           </span>
         </div>
+        <ScanActivityStatus scan={scan} refreshError={refreshError} />
         {scan.sites.length >= SCAN_LIMITS.sites && (
           <p className="scan-note">
             Limit prototypu: {SCAN_LIMITS.sites} weby v jedné mapě.

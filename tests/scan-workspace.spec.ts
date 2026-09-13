@@ -820,3 +820,254 @@ for (const reason of ['time_limit', 'scan_storage_limit'] as const) {
     expect(api.startRequests).toHaveLength(0);
   });
 }
+
+test('shows persistent scan activity and expires the request countdown without claiming a fetch', async ({
+  page,
+}) => {
+  const id = '00000000-0000-4000-8000-000000000091';
+  const scan = snapshot(id, {
+    status: 'running',
+    activity: {
+      phase: 'waiting',
+      updatedAt: new Date().toISOString(),
+      nextRequestAt: new Date(Date.now() + 6000).toISOString(),
+      url: 'https://example.com/next',
+    },
+  });
+  const api = await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${id}`);
+  const activity = page.getByTestId('scan-activity');
+  await expect(activity).toContainText('Odstup mezi požadavky');
+  await expect(activity).toContainText('https://example.com/next');
+  await expect(activity).toContainText('0 zpracovaných stránek');
+  await expect(activity).toContainText('Čeká na zpracování', {
+    timeout: 10000,
+  });
+  api.maps.get(id)!.activity!.phase = 'fetching_page';
+  await expect(activity).toContainText('Načítám stránku');
+  await page
+    .getByRole('button', { name: 'Pozastavit sken', exact: true })
+    .click();
+  await expect(activity).toContainText('Skenování pozastaveno');
+  await expect(activity).not.toContainText('Načítám stránku');
+  await expect(activity).not.toContainText('https://example.com/next');
+});
+
+test('opens saved log, filters by origin and errors, restores focus and does not poll while closed', async ({
+  page,
+}, testInfo) => {
+  const id = '00000000-0000-4000-8000-000000000092';
+  const second = {
+    ...site,
+    origin: 'https://other.example',
+    seedUrl: 'https://other.example/',
+  };
+  await mockApi(page, [
+    snapshot(id, { status: 'completed', sites: [site, second] }),
+  ]);
+  let requests = 0;
+  await page.route(`**/scans/${id}/log`, async (route) => {
+    requests++;
+    await route.fulfill({
+      json: {
+        truncated: false,
+        events: [
+          {
+            id: 1,
+            at: '2026-09-12T10:00:00Z',
+            type: 'scan_started',
+            level: 'info',
+          },
+          {
+            id: 2,
+            at: '2026-09-12T10:00:03Z',
+            type: 'page_finished',
+            level: 'info',
+            origin: site.origin,
+            url: 'https://example.com/contact',
+            status: 'ok',
+            httpStatus: 200,
+            linkCount: 12,
+          },
+          {
+            id: 3,
+            at: '2026-09-12T10:00:06Z',
+            type: 'page_finished',
+            level: 'error',
+            origin: second.origin,
+            url: 'https://other.example/private',
+            status: 'http_error',
+            httpStatus: 403,
+          },
+          {
+            id: 4,
+            at: '2026-09-12T10:00:09Z',
+            type: 'scan_completed',
+            level: 'info',
+          },
+        ],
+      },
+    });
+  });
+  await page.goto(`/scan?id=${id}`);
+  const trigger = page.getByRole('button', { name: 'Průběh skenu' });
+  await expect(trigger).toBeVisible();
+  expect(requests).toBe(0);
+  await trigger.click();
+  const panel = page.getByRole('dialog', { name: 'Průběh skenu' });
+  await expect(panel.getByText('HTTP 200', { exact: false })).toBeVisible();
+  await expect(
+    panel.getByText('https://other.example/private', { exact: true }),
+  ).toBeVisible();
+  const requestsAfterOpen = requests;
+  await page.screenshot({
+    path: testInfo.outputPath('scan-log.png'),
+    fullPage: true,
+  });
+  const bounds = await panel.boundingBox();
+  expect(bounds).not.toBeNull();
+  if (testInfo.project.name === 'mobile')
+    expect(bounds!.height).toBe(page.viewportSize()!.height);
+  else expect(bounds!.height).toBeLessThan(page.viewportSize()!.height * 0.7);
+  await panel.getByLabel('Jen chyby').check();
+  await expect(
+    panel.getByText('https://example.com/contact', { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    panel.getByText('https://other.example/private', { exact: true }),
+  ).toBeVisible();
+  await panel
+    .getByRole('combobox', { name: 'Web', exact: true })
+    .selectOption(site.origin);
+  await expect(
+    panel.getByText('Tomuto filtru neodpovídají žádné záznamy.'),
+  ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toHaveCount(0);
+  await expect
+    .poll(() =>
+      trigger.evaluate((element) => element === document.activeElement),
+    )
+    .toBe(true);
+  await expect(trigger).toContainText('1 chyba');
+  expect(requests).toBe(requestsAfterOpen);
+});
+
+test('retries failed logs and preserves scroll position while new events arrive', async ({
+  page,
+}) => {
+  const id = '00000000-0000-4000-8000-000000000093';
+  await mockApi(page, [snapshot(id, { status: 'running' })]);
+  let failure = true;
+  let count = 60;
+  let requests = 0;
+  await page.route(`**/scans/${id}/log`, async (route) => {
+    requests++;
+    if (failure)
+      return route.fulfill({
+        status: 503,
+        json: { error: 'Internal secret must not be shown' },
+      });
+    await route.fulfill({
+      json: {
+        truncated: true,
+        events: Array.from({ length: count }, (_, index) => ({
+          id: index + 1,
+          at: '2026-09-12T10:00:00Z',
+          type: 'page_finished',
+          level: 'info',
+          origin: site.origin,
+          url: `https://example.com/page-${index + 1}`,
+          status: 'ok',
+          httpStatus: 200,
+          linkCount: 2,
+        })),
+      },
+    });
+  });
+  await page.goto(`/scan?id=${id}`);
+  await page.getByRole('button', { name: 'Průběh skenu' }).click();
+  const panel = page.getByRole('dialog');
+  await expect(panel.getByRole('alert')).toContainText(
+    'Průběh skenu se nepodařilo načíst',
+  );
+  await expect(panel).not.toContainText('Internal secret');
+  failure = false;
+  await panel.getByRole('button', { name: 'Zkusit znovu' }).click();
+  const list = panel.getByRole('region', { name: 'Záznamy skenu' });
+  await expect(list.locator('li')).toHaveCount(60);
+  await expect
+    .poll(() => list.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(100);
+  await list.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(
+    panel.getByRole('button', { name: 'Sledovat nové záznamy' }),
+  ).toBeVisible();
+  count = 61;
+  await expect(list.locator('li')).toHaveCount(61, { timeout: 10000 });
+  expect(await list.evaluate((element) => element.scrollTop)).toBe(0);
+  await panel.getByRole('button', { name: 'Sledovat nové záznamy' }).click();
+  await expect
+    .poll(() => list.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(100);
+  await panel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
+  const requestsAtClose = requests;
+  await page.waitForTimeout(3300);
+  expect(requests).toBe(requestsAtClose);
+});
+
+test('lets a slow log request finish while running snapshots keep updating', async ({
+  page,
+}) => {
+  const id = '00000000-0000-4000-8000-000000000094';
+  const api = await mockApi(page, [snapshot(id, { status: 'running' })]);
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requests = 0;
+  await page.route(`**/scans/${id}/log`, async (route) => {
+    requests++;
+    await gate;
+    await route.fulfill({
+      json: {
+        truncated: false,
+        events: [
+          {
+            id: 1,
+            at: '2026-09-12T10:00:00Z',
+            type: 'scan_started',
+            level: 'info',
+          },
+        ],
+      },
+    });
+  });
+  await page.goto(`/scan?id=${id}`);
+  await page.getByRole('button', { name: 'Průběh skenu' }).click();
+  await expect.poll(() => requests).toBeGreaterThan(0);
+  const requestsAtOpen = requests;
+  api.maps.get(id)!.updatedAt = '2026-09-12T10:01:00Z';
+  api.maps.get(id)!.activity = {
+    phase: 'fetching_robots',
+    updatedAt: '2026-09-12T10:01:00Z',
+    origin: site.origin,
+  };
+  await expect(
+    page.getByRole('dialog').getByTestId('scan-activity'),
+  ).toContainText('Kontroluji robots.txt');
+  expect(requests).toBe(requestsAtOpen);
+  release();
+  await expect(
+    page.getByRole('dialog').getByText('Spuštěn sken', { exact: true }),
+  ).toBeVisible();
+  api.snapshotFailure = 503;
+  await expect(
+    page.getByRole('dialog').getByTestId('scan-activity'),
+  ).toContainText('Aktuální stav se nedaří ověřit', { timeout: 10000 });
+  await expect(
+    page.getByRole('dialog').locator('.scan-activity-spinner'),
+  ).toHaveCount(0);
+});

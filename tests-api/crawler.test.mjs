@@ -31,6 +31,7 @@ before(async () => {
         export default { async fetch(request, env) {
           const input = await request.json();
           const queue = { async send(body, options) {
+            if (input.failQueue) throw new Error('Simulated delivery failure: private diagnostic');
             await env.QUEUE_SPY.fetch('https://queue.invalid/', { method: 'POST', body: JSON.stringify({ body, options }) });
           } };
           const bound = { ...env, CRAWL_QUEUE: queue, CRAWLER_ENABLED: input.enabled === false ? 'false' : 'true' };
@@ -159,6 +160,17 @@ async function pages(id) {
   ).results.map(({ result_json }) => JSON.parse(result_json));
 }
 
+async function events(id) {
+  return (
+    await db
+      .prepare(
+        'SELECT event_json FROM scan_events WHERE scan_id = ? ORDER BY id',
+      )
+      .bind(id)
+      .all()
+  ).results.map(({ event_json }) => JSON.parse(event_json));
+}
+
 test('a large site stops at exactly 100 pages and a restart or duplicate cannot fetch page 101', async () => {
   respond = (request) =>
     new URL(request.url).pathname === '/robots.txt'
@@ -177,6 +189,12 @@ test('a large site stops at exactly 100 pages and a restart or duplicate cannot 
   assert.equal(new Set(requests.map((request) => request.url)).size, 101);
   assert.equal((await scan(id)).status, 'limited');
   assert.equal((await scan(id)).limit_reason, 'page_limit');
+  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'limited');
+  assert.equal(
+    (await events(id)).filter((event) => event.type === 'page_finished').length,
+    100,
+  );
+  assert.equal((await events(id)).at(-1).type, 'scan_limited');
   await call({ action: 'tick', body: first });
   await start(id);
   await drain();
@@ -294,16 +312,30 @@ test('a revoked generation cannot write a result after its already-started fetch
   await next();
   const inFlight = next();
   await started.promise;
+  assert.equal(
+    JSON.parse((await scan(id)).activity_json).phase,
+    'fetching_page',
+  );
+  const beforePauseEvents = await events(id);
   await db
     .prepare(
-      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL, crawl_lease_until = NULL, crawl_enqueued_tick = -1 WHERE id = ?",
+      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL, crawl_lease_until = NULL, crawl_enqueued_tick = -1, activity_json = ? WHERE id = ?",
     )
-    .bind(id)
+    .bind(
+      JSON.stringify({ phase: 'paused', updatedAt: new Date().toISOString() }),
+      id,
+    )
     .run();
   released.resolve();
   await inFlight;
   assert.equal((await pages(id)).length, 0);
   assert.equal((await scan(id)).status, 'paused');
+  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'paused');
+  assert.deepEqual(
+    await events(id),
+    beforePauseEvents,
+    'Revoked generation must not log the late page result or completion',
+  );
   respond = () => {
     throw new Error(
       'A page that was already attempted must not be fetched again',
@@ -420,9 +452,18 @@ test('concurrent duplicate messages share a lease and issue only one robots requ
   };
   const id = await create();
   await start(id);
+  await start(id);
+  assert.equal(
+    (await events(id)).filter((event) => event.type === 'scan_started').length,
+    1,
+  );
   const body = pending.shift().body;
   const first = call({ action: 'tick', body });
   await reached.promise;
+  assert.equal(
+    JSON.parse((await scan(id)).activity_json).phase,
+    'fetching_robots',
+  );
   const duplicate = await call({ action: 'tick', body });
   const outcome = await duplicate.json();
   assert.ok(
@@ -431,6 +472,17 @@ test('concurrent duplicate messages share a lease and issue only one robots requ
   assert.equal(requests.length, 1);
   released.resolve();
   await first;
+  const activity = JSON.parse((await scan(id)).activity_json);
+  assert.equal(activity.phase, 'waiting');
+  assert.equal(activity.origin, origin);
+  assert.ok(
+    Date.parse(activity.nextRequestAt) > Date.parse(activity.updatedAt),
+  );
+  assert.equal(
+    (await events(id)).filter((event) => event.type === 'robots_checked')
+      .length,
+    1,
+  );
   respond = () => html();
   await drain();
   assert.equal(requests.length, 2);
@@ -535,4 +587,55 @@ test('a preparing scan cannot be queued or completed before its durable frontier
   await drain();
   assert.equal((await scan(id)).status, 'completed');
   assert.equal((await pages(id)).length, 1);
+});
+
+test('revoking the generation during robots fetching preserves paused activity and excludes a late robots log', async () => {
+  const reached = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  respond = async () => {
+    reached.resolve();
+    await released.promise;
+    return new Response('User-agent: *\nDisallow: /secret', { status: 200 });
+  };
+  const id = await create();
+  await start(id);
+  const inFlight = next();
+  await reached.promise;
+  await db
+    .prepare(
+      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, activity_json = ? WHERE id = ?",
+    )
+    .bind(
+      JSON.stringify({ phase: 'paused', updatedAt: new Date().toISOString() }),
+      id,
+    )
+    .run();
+  released.resolve();
+  await inFlight;
+  assert.deepEqual(
+    (await events(id)).map((event) => event.type),
+    ['scan_started'],
+  );
+  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'paused');
+  assert.equal(pending.length, 0);
+});
+
+test('a failed initial queue delivery records a safe error and remains resumable', async () => {
+  const id = await create();
+  assert.equal(
+    (await call({ action: 'start', id, failQueue: true })).status,
+    500,
+  );
+  assert.equal((await scan(id)).status, 'error');
+  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'error');
+  assert.deepEqual(
+    (await events(id)).map((event) => event.type),
+    ['scan_started', 'scan_error'],
+  );
+  assert.ok(!JSON.stringify(await events(id)).includes('private diagnostic'));
+  await start(id);
+  await drain();
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'completed');
+  assert.equal((await events(id)).at(-1).type, 'scan_completed');
 });
