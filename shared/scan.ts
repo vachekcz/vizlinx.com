@@ -88,6 +88,7 @@ export type ScanLogEvent = {
     | 'scan_started'
     | 'scan_paused'
     | 'site_added'
+    | 'site_throttled'
     | 'settings_changed'
     | 'robots_checked'
     | 'page_finished'

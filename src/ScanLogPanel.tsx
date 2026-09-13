@@ -37,6 +37,8 @@ function eventLabel(event: ScanLogEvent) {
       return 'Sken pozastaven';
     case 'site_added':
       return 'Přidán web do mapy';
+    case 'site_throttled':
+      return 'Web pozastaven po HTTP 429 – pokračování povol v detailu webu';
     case 'settings_changed':
       return 'Změněno nastavení skenu';
     case 'robots_checked':

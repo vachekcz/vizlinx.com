@@ -272,6 +272,73 @@ test('robots uses VizlinxBot rules and preserves a crawl delay in its queue cont
   );
 });
 
+test('HTTP 429 pauses only its origin, preserves pending URLs, and requires explicit unpause', async () => {
+  const second = {
+    ...site,
+    origin: 'https://second.org',
+    seedUrl: 'https://second.org/',
+  };
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === second.origin) return html();
+    if (url.pathname === '/') return html(['/a-throttle', '/z-pending']);
+    if (url.pathname === '/a-throttle')
+      return new Response('', { status: 429 });
+    return html();
+  };
+  const id = await create([site, second]);
+  await start(id);
+  await drain();
+  const paused = await scan(id);
+  assert.equal(paused.status, 'paused');
+  assert.deepEqual(
+    JSON.parse(paused.sites_json).map((site) => site.paused),
+    [true, false],
+  );
+  assert.equal(
+    requests.some((request) => request.url.endsWith('/z-pending')),
+    false,
+  );
+  assert.ok(
+    (await pages(id)).some((page) => page.sourceUrl === second.seedUrl),
+  );
+  assert.equal(
+    (await pages(id)).find((page) => page.httpStatus === 429).status,
+    'http_error',
+  );
+  const throttles = (await events(id)).filter(
+    (event) => event.type === 'site_throttled',
+  );
+  assert.equal(throttles.length, 1);
+  assert.equal(throttles[0].origin, origin);
+  assert.equal(throttles[0].httpStatus, 429);
+  const count = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    count,
+    'Restarting the map must not override a throttled origin pause',
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site, second]), id)
+    .run();
+  await start(id);
+  await drain();
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal(
+    requests.filter((request) => request.url.endsWith('/z-pending')).length,
+    1,
+  );
+  assert.equal(
+    requests.filter((request) => request.url.endsWith('/a-throttle')).length,
+    1,
+  );
+});
+
 test('the global daily budget is atomic, includes robots, and cannot be bypassed by restarting', async () => {
   const day = Math.floor(Date.now() / 86_400_000);
   await db
@@ -297,55 +364,62 @@ test('the global daily budget is atomic, includes robots, and cannot be bypassed
   }
 });
 
-test('a revoked generation cannot write a result after its already-started fetch', async () => {
-  const started = Promise.withResolvers();
-  const released = Promise.withResolvers();
-  respond = async (request) => {
-    if (new URL(request.url).pathname === '/robots.txt')
-      return new Response('', { status: 404 });
-    started.resolve();
-    await released.promise;
-    return html(['/another']);
-  };
-  const id = await create();
-  await start(id);
-  await next();
-  const inFlight = next();
-  await started.promise;
-  assert.equal(
-    JSON.parse((await scan(id)).activity_json).phase,
-    'fetching_page',
-  );
-  const beforePauseEvents = await events(id);
-  await db
-    .prepare(
-      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL, crawl_lease_until = NULL, crawl_enqueued_tick = -1, activity_json = ? WHERE id = ?",
-    )
-    .bind(
-      JSON.stringify({ phase: 'paused', updatedAt: new Date().toISOString() }),
-      id,
-    )
-    .run();
-  released.resolve();
-  await inFlight;
-  assert.equal((await pages(id)).length, 0);
-  assert.equal((await scan(id)).status, 'paused');
-  assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'paused');
-  assert.deepEqual(
-    await events(id),
-    beforePauseEvents,
-    'Revoked generation must not log the late page result or completion',
-  );
-  respond = () => {
-    throw new Error(
-      'A page that was already attempted must not be fetched again',
+for (const lateStatus of [200, 429])
+  test(`a revoked generation cannot write a late HTTP ${lateStatus} result or throttle the origin`, async () => {
+    const started = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    respond = async (request) => {
+      if (new URL(request.url).pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      started.resolve();
+      await released.promise;
+      return lateStatus === 429
+        ? new Response('', { status: 429 })
+        : html(['/another']);
+    };
+    const id = await create();
+    await start(id);
+    await next();
+    const inFlight = next();
+    await started.promise;
+    assert.equal(
+      JSON.parse((await scan(id)).activity_json).phase,
+      'fetching_page',
     );
-  };
-  await start(id);
-  await drain();
-  assert.equal(requests.length, 2);
-  assert.equal((await pages(id))[0].status, 'network_error');
-});
+    const beforePauseEvents = await events(id);
+    await db
+      .prepare(
+        "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL, crawl_lease_until = NULL, crawl_enqueued_tick = -1, activity_json = ? WHERE id = ?",
+      )
+      .bind(
+        JSON.stringify({
+          phase: 'paused',
+          updatedAt: new Date().toISOString(),
+        }),
+        id,
+      )
+      .run();
+    released.resolve();
+    await inFlight;
+    assert.equal((await pages(id)).length, 0);
+    assert.equal((await scan(id)).status, 'paused');
+    assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'paused');
+    assert.equal(JSON.parse((await scan(id)).sites_json)[0].paused, false);
+    assert.deepEqual(
+      await events(id),
+      beforePauseEvents,
+      'Revoked generation must not log the late page result or completion',
+    );
+    respond = () => {
+      throw new Error(
+        'A page that was already attempted must not be fetched again',
+      );
+    };
+    await start(id);
+    await drain();
+    assert.equal(requests.length, 2);
+    assert.equal((await pages(id))[0].status, 'network_error');
+  });
 
 test('an expired run stops before network activity and its time limit survives control changes', async () => {
   const id = await create();

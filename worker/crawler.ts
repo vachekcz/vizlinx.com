@@ -450,6 +450,37 @@ async function storeResult(
       `UPDATE crawl_frontier SET state = 'done' WHERE scan_id = ?1 AND url = ?5
       AND EXISTS (${activeSql}) AND EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?5)`,
     ).bind(...leaseBindings(lease), result.sourceUrl),
+    ...(result.httpStatus === 429
+      ? [
+          env.DB.prepare(
+            `UPDATE scans SET sites_json = ?5 WHERE id = ?1 AND EXISTS (${activeSql})
+            AND sites_json != ?5
+            AND EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?6)`,
+          ).bind(
+            ...leaseBindings(lease),
+            JSON.stringify(
+              sites.map((site) =>
+                site.origin === origin ? { ...site, paused: true } : site,
+              ),
+            ),
+            result.sourceUrl,
+          ),
+          ...scanLogStatements(
+            env,
+            lease.scanId,
+            `throttled:${result.sourceUrl}`,
+            {
+              at: new Date().toISOString(),
+              type: 'site_throttled',
+              level: 'warning',
+              origin,
+              url: result.sourceUrl,
+              httpStatus: 429,
+            },
+            { sql: 'changes() = 1', bindings: [] },
+          ),
+        ]
+      : []),
     // The result, completed frontier entry and newly discovered links commit together.
     ...sites.map((site) =>
       env.DB.prepare(
