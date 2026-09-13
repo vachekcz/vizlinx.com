@@ -1996,12 +1996,16 @@ tbody tr:hover {
   color: var(--accent, #2457ff);
   cursor: pointer;
 }
-.graph-external-link > rect {
+.graph-external-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+.graph-external-link > .graph-external-background {
   fill: var(--surface, #fff);
   stroke: transparent;
 }
-.graph-external-link:hover > rect,
-.graph-external-link:focus-visible > rect {
+.graph-external-link:hover > .graph-external-background,
+.graph-external-link:focus-visible > .graph-external-background {
   fill: var(--raised, #eaf0ff);
   stroke: var(--accent, #2457ff);
 }

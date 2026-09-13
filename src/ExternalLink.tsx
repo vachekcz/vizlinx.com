@@ -33,10 +33,12 @@ export function GraphExternalLink({
   url,
   x,
   y,
+  touch = false,
 }: {
   url: string;
   x: number;
   y: number;
+  touch?: boolean;
 }) {
   const href = externalUrl(url);
   if (!href) return null;
@@ -51,13 +53,28 @@ export function GraphExternalLink({
         data-interactive="true"
       >
         <title>{`Otevřít ${url} v nové kartě`}</title>
-        <rect width="26" height="26" rx="6" />
+        <rect
+          className="graph-external-hit"
+          x={touch ? -9 : 0}
+          y={touch ? -9 : 0}
+          width={touch ? 44 : 26}
+          height={touch ? 44 : 26}
+          rx="6"
+        />
+        <rect
+          className="graph-external-background"
+          width="26"
+          height="26"
+          rx="6"
+          pointerEvents="none"
+        />
         <ExternalLinkIcon
           x={6}
           y={6}
           width={14}
           height={14}
           aria-hidden="true"
+          pointerEvents="none"
         />
       </a>
     </g>

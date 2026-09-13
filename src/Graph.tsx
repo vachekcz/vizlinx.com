@@ -40,14 +40,19 @@ function activate(event: KeyboardEvent<SVGGElement>, action: () => void) {
   }
 }
 
-function calculatePageLayout(site: Site, compact: boolean, pages: Page[]) {
+function calculatePageLayout(
+  site: Site,
+  compact: boolean,
+  pages: Page[],
+  rowGap: number,
+) {
   const count = pages.filter((page) => page.siteId === site.id).length;
   const columns = count > 6 ? (compact ? 3 : 4) : 2;
   const rows = Math.ceil(count / columns);
   const width = columns * 144 - 6;
   const radius = Math.max(
     122,
-    Math.ceil(Math.hypot(width / 2, ((rows - 1) * 43) / 2 + 15) + 25),
+    Math.ceil(Math.hypot(width / 2, ((rows - 1) * rowGap) / 2 + 15) + 25),
   );
   return { columns, rows, width, radius };
 }
@@ -57,14 +62,21 @@ function calculatePagePosition(
   site: Site,
   compact: boolean,
   pages: Page[],
+  rowGap: number,
 ) {
   const index = pages
     .filter((item) => item.siteId === site.id)
     .findIndex((item) => item.id === page.id);
-  const { columns, rows, width } = calculatePageLayout(site, compact, pages);
+  const { columns, rows, width } = calculatePageLayout(
+    site,
+    compact,
+    pages,
+    rowGap,
+  );
   return {
     x: site.x - width / 2 + 15 + (index % columns) * 144,
-    y: site.y - ((rows - 1) * 43) / 2 + Math.floor(index / columns) * 43,
+    y:
+      site.y - ((rows - 1) * rowGap) / 2 + Math.floor(index / columns) * rowGap,
   };
 }
 
@@ -266,10 +278,14 @@ export default function Graph({
           .map((character) => character.charCodeAt(0).toString(16))
           .join('-')}`
       : `arrow-${id}`;
+  const [touchTargets, setTouchTargets] = useState(
+    () => window.matchMedia('(pointer: coarse)').matches,
+  );
+  const rowGap = touchTargets ? 52 : 43;
   const pageLayout = (site: Site, compact: boolean) =>
-    calculatePageLayout(site, compact, pages);
+    calculatePageLayout(site, compact, pages, rowGap);
   const pagePosition = (page: Page, site: Site, compact: boolean) =>
-    calculatePagePosition(page, site, compact, pages);
+    calculatePagePosition(page, site, compact, pages, rowGap);
   const svgRef = useRef<SVGSVGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
@@ -347,6 +363,7 @@ export default function Graph({
     );
     const measurementKey = JSON.stringify([
       compact,
+      touchTargets,
       fontRevision,
       nodes.map((node) => [
         node.querySelector('[data-drag-site]')?.getAttribute('data-drag-site'),
@@ -374,8 +391,11 @@ export default function Graph({
           left: Math.floor(Math.min(box.x - x, -radius - 10) + 0.001),
           top: Math.floor(Math.min(box.y - y, -radius - 10) + 0.001),
           right: Math.ceil(
-            Math.max(box.x + box.width - x, radius + 10, domainWidth / 2 + 32) -
-              0.001,
+            Math.max(
+              box.x + box.width - x,
+              radius + 10,
+              domainWidth / 2 + (touchTargets ? 50 : 32),
+            ) - 0.001,
           ),
           bottom: Math.ceil(
             Math.max(box.y + box.height - y, radius + 10) - 0.001,
@@ -470,6 +490,7 @@ export default function Graph({
     });
   }, [
     compact,
+    touchTargets,
     resetKey,
     expanded,
     focusedExpanded,
@@ -534,9 +555,17 @@ export default function Graph({
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 760px)');
-    const update = () => setCompact(query.matches);
+    const touchQuery = window.matchMedia('(pointer: coarse)');
+    const update = () => {
+      setCompact(query.matches);
+      setTouchTargets(touchQuery.matches);
+    };
     query.addEventListener('change', update);
-    return () => query.removeEventListener('change', update);
+    touchQuery.addEventListener('change', update);
+    return () => {
+      query.removeEventListener('change', update);
+      touchQuery.removeEventListener('change', update);
+    };
   }, []);
 
   useEffect(() => {
@@ -1120,9 +1149,10 @@ export default function Graph({
                     site.x +
                     (boundsFor(site).domainWidth ?? site.domain.length * 7) /
                       2 +
-                    6
+                    (touchTargets ? 15 : 6)
                   }
                   y={open ? site.y - radius + 19 : site.y + 5}
+                  touch={touchTargets}
                 />
                 {open &&
                   sitePages.map((page) => {
@@ -1191,8 +1221,9 @@ export default function Graph({
                         </g>
                         <GraphExternalLink
                           url={pageUrl(page)}
-                          x={position.x + 95}
+                          x={position.x + (touchTargets ? 93 : 95)}
                           y={position.y - 13}
+                          touch={touchTargets}
                         />
                       </g>
                     );
