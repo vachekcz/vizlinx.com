@@ -83,6 +83,34 @@ test('redirect metadata resolves paths but never follows changed origins or unsa
   }
 });
 
+test('unsupported redirect statuses preserve the target with an accurate reason', async (t) => {
+  for (const status of [300, 304, 305]) {
+    const mock = t.mock.method(
+      globalThis,
+      'fetch',
+      async () =>
+        new Response(null, {
+          status,
+          headers: { Location: '/landing' },
+        }),
+    );
+    const result = await fetchServerPage(
+      'https://example.com/',
+      'https://example.com',
+    );
+    assert.deepEqual(result.redirect, {
+      kind: 'invalid',
+      reason: 'unsupported_status',
+      targetUrl: 'https://example.com/landing',
+    });
+    assert.equal(
+      result.error,
+      `Unsupported redirect status HTTP ${status} was not followed.`,
+    );
+    mock.mock.restore();
+  }
+});
+
 function streamedResponse(chunks, headers = {}) {
   const state = { reads: 0, cancelled: false };
   const response = new Response(
