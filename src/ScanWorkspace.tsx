@@ -157,6 +157,7 @@ export default function ScanWorkspace() {
   const [runs, setRuns] = useState<ScanRunSummary[]>([]);
   const [runLimit, setRunLimit] = useState(10);
   const [historyError, setHistoryError] = useState('');
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [scan, setScan] = useState<ScanSnapshot | null>(null);
   const [saved, setSaved] = useState<ScanSummary[]>([]);
   const [ready, setReady] = useState(false);
@@ -262,13 +263,20 @@ export default function ScanWorkspace() {
       .catch(() => {
         if (!cancelled)
           setHistoryError(
-            'Historii skenů se nepodařilo načíst. Obnov stránku a zkus to znovu.',
+            'Historii skenů se nepodařilo načíst. Zkus načtení zopakovat.',
           );
       });
     return () => {
       cancelled = true;
     };
-  }, [ready, scanId, scan?.runId, scan?.status, refreshRevision]);
+  }, [
+    ready,
+    scanId,
+    scan?.runId,
+    scan?.status,
+    refreshRevision,
+    historyRevision,
+  ]);
 
   const selectScan = (
     id: string | null,
@@ -568,7 +576,16 @@ export default function ScanWorkspace() {
         )}
         {historyError && (
           <p className="scan-error" role="alert">
-            {historyError}
+            {historyError}{' '}
+            <button
+              className="scan-button"
+              onClick={() => {
+                setHistoryError('');
+                setHistoryRevision((revision) => revision + 1);
+              }}
+            >
+              Zkusit načíst historii znovu
+            </button>
           </p>
         )}
         <ScanActivityStatus scan={scan} refreshError={refreshError} />

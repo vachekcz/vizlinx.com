@@ -70,7 +70,7 @@ describe('scan history', () => {
       convertV4MiniflareOptions({
         modules: true,
         script: output.outputFiles[0].text,
-        compatibilityDate: '2026-09-12',
+        compatibilityDate: '2026-09-11',
         d1Databases: ['DB'],
         serviceBindings: {
           ASSETS: () => new Response('asset'),
@@ -682,6 +682,23 @@ describe('scan history', () => {
       const scan = await create(cookie);
       const arrived = Promise.withResolvers();
       const release = Promise.withResolvers();
+      const pending = [];
+      async function withinTimeout(promise, label) {
+        let timer;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error(`Timed out waiting for ${label}.`)),
+                5000,
+              );
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      }
       fixtureResponse = async (request) => {
         if (new URL(request.url).pathname === '/robots.txt')
           return new Response('User-agent: *\nAllow: /');
@@ -692,23 +709,38 @@ describe('scan history', () => {
           { headers: { 'Content-Type': 'text/html' } },
         );
       };
-      const consume = (body) =>
-        mf.dispatchFetch(`${base}/test-consume`, {
+      const consume = (body) => {
+        const work = mf.dispatchFetch(`${base}/test-consume`, {
           method: 'POST',
           body: JSON.stringify(body),
         });
-      await request(`/scans/${scan.id}/start`, {
-        method: 'POST',
-        cookie,
-        body: {},
-      });
-      assert.equal((await consume(queued[0].body)).status, 200);
-      await db
-        .prepare('UPDATE crawl_origin_gates SET next_allowed_at = 0')
-        .run();
-      const inFlight = consume(queued.at(-1).body);
+        pending.push(work);
+        // Observe early failures while waiting for the fixture to arrive.
+        void work.catch(() => {});
+        return work;
+      };
       try {
-        await arrived.promise;
+        const started = await request(`/scans/${scan.id}/start`, {
+          method: 'POST',
+          cookie,
+          body: {},
+        });
+        assert.equal(started.status, 200);
+        assert.equal(queued.length, 1);
+        assert.equal(
+          (await withinTimeout(consume(queued[0].body), 'robots tick')).status,
+          200,
+        );
+        assert.equal(
+          queued.length,
+          2,
+          'Robots tick must enqueue one page tick.',
+        );
+        await db
+          .prepare('UPDATE crawl_origin_gates SET next_allowed_at = 0')
+          .run();
+        const inFlight = consume(queued[1].body);
+        await withinTimeout(arrived.promise, 'page request');
         const paused = await request(`/scans/${scan.id}`, {
           method: 'PATCH',
           cookie,
@@ -721,7 +753,10 @@ describe('scan history', () => {
           await request(`/scans/${scan.id}/runs/${scan.runId}/log`, { cookie })
         ).json();
         release.resolve();
-        assert.equal((await inFlight).status, 200);
+        assert.equal(
+          (await withinTimeout(inFlight, 'released page tick')).status,
+          200,
+        );
         assert.deepEqual(await snapshot(cookie, scan.id), current);
         assert.deepEqual(await snapshot(cookie, scan.id, scan.runId), archived);
         assert.deepEqual(
@@ -745,7 +780,11 @@ describe('scan history', () => {
         );
       } finally {
         release.resolve();
-        await inFlight;
+        try {
+          await withinTimeout(Promise.allSettled(pending), 'queue cleanup');
+        } finally {
+          fixtureResponse = undefined;
+        }
       }
     },
   );

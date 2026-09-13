@@ -1379,7 +1379,6 @@ test('explains the history limit and prevents another rescan without deleting hi
   page,
 }) => {
   const state = await mockHistory(page, 'limited');
-  state.api.maps.get(state.first.id)!.limitReason = 'page_limit';
   state.archives = Array.from({ length: 9 }, (_, index) => ({
     ...state.first,
     runId: `00000000-0000-4000-8000-${String(index + 200).padStart(12, '0')}`,
@@ -1399,4 +1398,39 @@ test('explains the history limit and prevents another rescan without deleting hi
     page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
   ).toHaveClass(/scan-button-primary/);
   expect(state.archives).toHaveLength(9);
+});
+
+test('recovers a failed history load and allows rescanning without a page reload', async ({
+  page,
+}) => {
+  const state = await mockHistory(page);
+  let requests = 0;
+  await page.route(
+    `**${API_PREFIX}/scans/${state.first.id}/runs`,
+    async (route) => {
+      requests += 1;
+      if (requests === 1) return route.fulfill({ status: 503, json: {} });
+      return route.fallback();
+    },
+  );
+  await page.goto(`/scan?id=${state.first.id}`);
+  const rescan = page.getByRole('button', {
+    name: 'Skenovat znovu',
+    exact: true,
+  });
+  await expect(page.getByRole('alert')).toContainText(
+    'Historii skenů se nepodařilo načíst',
+  );
+  await expect(rescan).toBeDisabled();
+  await page
+    .getByRole('button', { name: 'Zkusit načíst historii znovu', exact: true })
+    .click();
+  await expect(rescan).toBeEnabled();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(requests).toBe(2);
+  await rescan.click();
+  await expect(page.getByTestId('scan-activity')).toContainText(
+    'Čeká na zpracování',
+  );
+  expect(state.rescanBodies).toHaveLength(1);
 });
