@@ -20,7 +20,7 @@ const DAY_MS = 86_400_000;
 const RETENTION_MS = 30 * DAY_MS;
 const RUN_MS = 15 * 60_000;
 const LEASE_MS = 120_000;
-const DAILY_REQUESTS = 10_000;
+export const DAILY_REQUESTS = 10_000;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
 const FRONTIER_SIZE = SCAN_LIMITS.pagesPerSite + 1;
 

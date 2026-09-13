@@ -1137,3 +1137,266 @@ test('lets a slow log request finish while running snapshots keep updating', asy
     page.getByRole('dialog').locator('.scan-activity-spinner'),
   ).toHaveCount(0);
 });
+
+async function mockHistory(
+  page: Page,
+  status: ScanSnapshot['status'] = 'completed',
+) {
+  const first = snapshot('00000000-0000-4000-8000-000000000099', {
+    runId: '00000000-0000-4000-8000-000000000101',
+    runNumber: 1,
+    runCreatedAt: '2026-09-12T08:00:00.000Z',
+    archived: false,
+    status,
+    results: [savedResult],
+    pageCount: 1,
+  });
+  const api = await mockApi(page, [first]);
+  const state = {
+    api,
+    first,
+    archives: [] as ScanSnapshot[],
+    rescanBodies: [] as unknown[],
+    historyGate: undefined as Promise<void> | undefined,
+    historyRequested: false,
+    logGate: undefined as Promise<void> | undefined,
+    logRequested: false,
+    limit: 10,
+  };
+  await page.route(`**${API_PREFIX}/scans/${first.id}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const current = api.maps.get(first.id)!;
+    if (path.endsWith('/rescan')) {
+      const body = route.request().postDataJSON();
+      state.rescanBodies.push(body);
+      expect(body).toEqual({ runId: current.runId });
+      state.archives.unshift({ ...structuredClone(current), archived: true });
+      const next = snapshot(first.id, {
+        runId: '00000000-0000-4000-8000-000000000102',
+        runNumber: 2,
+        runCreatedAt: '2026-09-13T08:00:00.000Z',
+        archived: false,
+        status: 'running',
+        activity: { phase: 'queued', updatedAt: '2026-09-13T08:00:00.000Z' },
+      });
+      api.maps.set(first.id, next);
+      return route.fulfill({ json: next });
+    }
+    if (path.endsWith('/runs')) {
+      return route.fulfill({
+        json: { runs: [current, ...state.archives], limit: state.limit },
+      });
+    }
+    const match = path.match(/\/runs\/([^/]+)(\/log)?$/);
+    if (!match) return route.fallback();
+    const run = [current, ...state.archives].find(
+      (item) => item.runId === match[1],
+    );
+    if (!run) return route.fulfill({ status: 404, json: {} });
+    if (match[2]) {
+      state.logRequested = true;
+      if (state.logGate) await state.logGate;
+      return route.fulfill({
+        json: {
+          truncated: false,
+          events: [
+            {
+              id: 1,
+              at: run.updatedAt,
+              level: 'info',
+              type: 'page_finished',
+              status: 'ok',
+              url: `https://example.com/log-run-${run.runNumber}`,
+            },
+          ],
+        },
+      });
+    }
+    const response = structuredClone(run);
+    state.historyRequested = true;
+    if (state.historyGate) await state.historyGate;
+    return route.fulfill({
+      json: response,
+      headers: { 'X-Test-History': 'loaded' },
+    });
+  });
+  return state;
+}
+
+test('rescans the same map live and preserves a read-only history with its own log after reload', async ({
+  page,
+}) => {
+  const state = await mockHistory(page);
+  const { first } = state;
+  await page.clock.install();
+  await page.goto(`/scan?id=${first.id}`);
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await expect(
+    page.getByRole('button', { name: 'Spustit skenování', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toHaveClass(/scan-button-primary/);
+  await page
+    .getByRole('button', { name: 'Skenovat znovu', exact: true })
+    .click();
+  await expect(page).toHaveURL(`/scan?id=${first.id}`);
+  await expect(page.getByTestId('link-count')).toHaveText('0');
+  await expect(page.getByTestId('scan-activity')).toContainText(
+    'Čeká na zpracování',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toBeDisabled();
+  expect(state.rescanBodies).toHaveLength(1);
+  state.api.maps.get(first.id)!.results = [savedResult];
+  await page.clock.fastForward(3000);
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await page
+    .getByLabel('Historie skenů', { exact: true })
+    .selectOption(first.runId!);
+  await expect(page.getByText('Prohlížíš historii · sken #1')).toBeVisible();
+  await expect(page).toHaveURL(`/scan?id=${first.id}&run=${first.runId}`);
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Přidat web', exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole('button', { name: 'Doména example.com', exact: true })
+    .click();
+  await expect(
+    page.getByRole('slider', { name: /Interval skenu/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', {
+      name: 'Pozastavit skenování webu',
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText('Prohlížíš historii · sken #1')).toBeVisible();
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'https://example.com/log-run-1',
+  );
+  await page.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
+  await page.getByRole('button', { name: 'Zpět na aktuální sken' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Pozastavit sken', exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(`/scan?id=${first.id}`);
+});
+
+test('ignores an older current snapshot after rescan and an archived response after returning to current', async ({
+  page,
+}) => {
+  const state = await mockHistory(page);
+  await page.clock.install();
+  await page.goto(`/scan?id=${state.first.id}`);
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toBeEnabled();
+  let releaseSnapshot = () => {};
+  state.api.nextSnapshotGate = new Promise<void>((resolve) => {
+    releaseSnapshot = resolve;
+  });
+  await page.clock.fastForward(3000);
+  await expect.poll(() => state.api.heldSnapshotStarted).toBe(true);
+  await page
+    .getByRole('button', { name: 'Skenovat znovu', exact: true })
+    .click();
+  await expect(page.getByTestId('link-count')).toHaveText('0');
+  const oldResponse = page.waitForResponse(
+    (response) => response.headers()['x-test-snapshot'] === 'held',
+  );
+  releaseSnapshot();
+  await (await oldResponse).finished();
+  await expect(page.getByTestId('link-count')).toHaveText('0');
+  let releaseHistory = () => {};
+  state.historyGate = new Promise<void>((resolve) => {
+    releaseHistory = resolve;
+  });
+  await page
+    .getByLabel('Historie skenů', { exact: true })
+    .selectOption(state.first.runId!);
+  await expect.poll(() => state.historyRequested).toBe(true);
+  await page.getByRole('button', { name: 'Zpět na aktuální sken' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Pozastavit sken', exact: true }),
+  ).toBeVisible();
+  const historicResponse = page.waitForResponse(
+    (response) => response.headers()['x-test-history'] === 'loaded',
+  );
+  releaseHistory();
+  await (await historicResponse).finished();
+  await expect(page.getByText('Prohlížíš historii · sken #1')).toHaveCount(0);
+  await expect(page.getByTestId('link-count')).toHaveText('0');
+});
+
+test('never shows a stale log from a prior run and keeps archived paused scans read-only', async ({
+  page,
+}) => {
+  const state = await mockHistory(page, 'paused');
+  await page.goto(`/scan?id=${state.first.id}`);
+  await expect(
+    page.getByRole('button', { name: 'Pokračovat ve skenování', exact: true }),
+  ).toHaveClass(/scan-button-primary/);
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).not.toHaveClass(/scan-button-primary/);
+  let releaseLog = () => {};
+  state.logGate = new Promise<void>((resolve) => {
+    releaseLog = resolve;
+  });
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect.poll(() => state.logRequested).toBe(true);
+  await page.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
+  await page
+    .getByRole('button', { name: 'Skenovat znovu', exact: true })
+    .click();
+  state.logGate = undefined;
+  releaseLog();
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'https://example.com/log-run-2',
+  );
+  await expect(page.getByRole('dialog')).not.toContainText(
+    'https://example.com/log-run-1',
+  );
+  await page.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
+  await page
+    .getByLabel('Historie skenů', { exact: true })
+    .selectOption(state.first.runId!);
+  await expect(page.getByText('Prohlížíš historii · sken #1')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Pokračovat ve skenování', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('explains the history limit and prevents another rescan without deleting history', async ({
+  page,
+}) => {
+  const state = await mockHistory(page, 'limited');
+  state.api.maps.get(state.first.id)!.limitReason = 'page_limit';
+  state.archives = Array.from({ length: 9 }, (_, index) => ({
+    ...state.first,
+    runId: `00000000-0000-4000-8000-${String(index + 200).padStart(12, '0')}`,
+    archived: true,
+  }));
+  await page.goto(`/scan?id=${state.first.id}`);
+  await expect(
+    page.getByText('Dosažen limit 10 průchodů této mapy.', { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole('button', { name: 'Spustit skenování', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toHaveClass(/scan-button-primary/);
+  expect(state.archives).toHaveLength(9);
+});

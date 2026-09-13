@@ -18,6 +18,8 @@ let mf;
 let app;
 let releaseSlowPage;
 let slowPageReleased = false;
+let historyVersion = 1;
+let releaseHistoryPage;
 
 const html = (body) =>
   new Response(body, {
@@ -34,6 +36,18 @@ async function fixture(request) {
   );
   fetched.push(url.href);
   if (url.pathname === '/robots.txt') return new Response('', { status: 404 });
+  if (url.origin === origins[0] && url.pathname === '/history-root')
+    return html(
+      `<title>History ${historyVersion}</title><a href="/history-${historyVersion === 1 ? 'old' : 'new'}">Detail</a><a href="${origins[1]}/${historyVersion === 1 ? 'old' : 'new'}">Partner</a>`,
+    );
+  if (url.origin === origins[0] && url.pathname === '/history-old')
+    return html('<title>Removed page</title>Old content');
+  if (url.origin === origins[0] && url.pathname === '/history-new') {
+    await new Promise((done) => {
+      releaseHistoryPage = done;
+    });
+    return html('<title>New page</title>New content');
+  }
   if (url.origin === origins[0] && url.pathname === '/redirect-start')
     return new Response('', {
       status: 302,
@@ -467,11 +481,93 @@ try {
   );
   assert.deepEqual(errors, []);
   assert.deepEqual(apiFailures, []);
+
+  const historyId = await createScan(`${origins[0]}/history-root`);
+  await expect
+    .poll(async () => (await scanRow(historyId)).status)
+    .toBe('completed');
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  const readApi = async (path) => {
+    const response = await context.request.get(
+      `${appOrigin}/api/v1/scans/${historyId}${path}`,
+    );
+    assert.equal(response.status(), 200);
+    return response.json();
+  };
+  const oldRun = await readApi('');
+  const oldLog = await readApi(`/runs/${oldRun.runId}/log`);
+  historyVersion = 2;
+  await page
+    .getByRole('button', { name: 'Skenovat znovu', exact: true })
+    .click();
+  await expect.poll(() => typeof releaseHistoryPage).toBe('function');
+  await expect(page.locator('.scan-stats')).toContainText('1 načtených');
+  await expect(page.getByTestId('scan-activity')).toHaveClass(/is-running/);
+  assert.equal(new URL(page.url()).searchParams.get('id'), historyId);
+  const liveRun = await readApi('');
+  assert.notEqual(liveRun.runId, oldRun.runId);
+  assert.equal(liveRun.runNumber, 2);
+  assert.equal(liveRun.results.length, 1);
+  assert.equal(liveRun.results[0].title, 'History 2');
+  assert.ok(
+    !liveRun.results.some((result) =>
+      result.sourceUrl.endsWith('/history-old'),
+    ),
+  );
+  await page
+    .getByLabel('Historie skenů', { exact: true })
+    .selectOption(oldRun.runId);
+  await expect(page).toHaveURL(new RegExp(`&run=${oldRun.runId}$`));
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(
+    page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logRows).toHaveCount(oldLog.events.length);
+  await expect(logPanel).toContainText(`${origins[0]}/history-old`);
+  await page.reload();
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  const archivedRun = await readApi(`/runs/${oldRun.runId}`);
+  assert.equal(archivedRun.archived, true);
+  assert.deepEqual(archivedRun.results, oldRun.results);
+  assert.deepEqual(await readApi(`/runs/${oldRun.runId}/log`), oldLog);
+  releaseHistoryPage();
+  await expect
+    .poll(async () => (await scanRow(historyId)).status)
+    .toBe('completed');
+  await page
+    .getByRole('button', { name: 'Zpět na aktuální sken', exact: true })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`\\?id=${historyId}$`));
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  const finalRun = await readApi('');
+  assert.equal(
+    finalRun.results.find((result) => result.sourceUrl.endsWith('/history-new'))
+      ?.status,
+    'ok',
+  );
+  assert.ok(
+    !finalRun.results.some((result) =>
+      result.sourceUrl.endsWith('/history-old'),
+    ),
+  );
+  assert.deepEqual(
+    (await readApi(`/runs/${oldRun.runId}`)).results,
+    oldRun.results,
+  );
+  assert.equal((await readApi('/runs')).runs.length, 2);
+  await page.screenshot({
+    path: 'test-results/prototype-scan-history.png',
+    fullPage: true,
+  });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching; live rescan of the same map with immutable historical results and logs.',
   );
 } finally {
   releaseSlowPage?.();
+  releaseHistoryPage?.();
   await context?.close();
   await browser?.close();
   await close(app);
