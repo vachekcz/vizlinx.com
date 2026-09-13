@@ -67,42 +67,78 @@ function calculatePagePosition(
   };
 }
 
-function makeRoomForExpansion(
+type SiteBounds = { left: number; top: number; right: number; bottom: number };
+
+const SITE_GAP = 32;
+
+function separateSites(
   sites: Site[],
-  expanded: string[],
-  anchorId: string,
-  compact: boolean,
-  pages: Page[],
+  bounds: Record<string, SiteBounds>,
+  anchorId?: string,
 ) {
   const placed = sites.map((site) => ({ ...site }));
-  const radii = placed.map((site) =>
-    expanded.includes(site.id)
-      ? calculatePageLayout(site, compact, pages).radius
-      : site.radius,
-  );
-  // Only overlapping neighbours move; the newly expanded domain stays pinned.
-  for (let pass = 0; pass < 60; pass += 1) {
+  const overlap = (a: Site, b: Site) => {
+    const first = bounds[a.id];
+    const second = bounds[b.id];
+    return {
+      x: Math.min(
+        a.x + first.right - b.x - second.left + SITE_GAP,
+        b.x + second.right - a.x - first.left + SITE_GAP,
+      ),
+      y: Math.min(
+        a.y + first.bottom - b.y - second.top + SITE_GAP,
+        b.y + second.bottom - a.y - first.top + SITE_GAP,
+      ),
+    };
+  };
+  // Include labels and halos, and keep the domain being manipulated pinned.
+  for (let pass = 0; pass < 100; pass += 1) {
     let moved = false;
     for (let first = 0; first < placed.length; first += 1) {
       for (let second = first + 1; second < placed.length; second += 1) {
         const a = placed[first];
         const b = placed[second];
+        const collision = overlap(a, b);
+        if (collision.x <= 0 || collision.y <= 0) continue;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const distance = Math.hypot(dx, dy);
-        const overlap = radii[first] + radii[second] + 40 - distance;
-        if (overlap <= 0.1) continue;
         const nx = distance > 0 ? dx / distance : 1;
         const ny = distance > 0 ? dy / distance : 0;
+        const shift =
+          Math.min(
+            Math.abs(nx) > 0 ? collision.x / Math.abs(nx) : Infinity,
+            Math.abs(ny) > 0 ? collision.y / Math.abs(ny) : Infinity,
+          ) + 0.1;
         const aShare = a.id === anchorId ? 0 : b.id === anchorId ? 1 : 0.5;
-        a.x -= nx * overlap * aShare;
-        a.y -= ny * overlap * aShare;
-        b.x += nx * overlap * (1 - aShare);
-        b.y += ny * overlap * (1 - aShare);
+        a.x -= nx * shift * aShare;
+        a.y -= ny * shift * aShare;
+        b.x += nx * shift * (1 - aShare);
+        b.y += ny * shift * (1 - aShare);
         moved = true;
       }
     }
-    if (!moved) break;
+    if (!moved) return placed;
+  }
+  // A crowded layout must still terminate with enough room for every domain.
+  const settled: Site[] = [];
+  const anchor = placed.find((site) => site.id === anchorId);
+  if (anchor) settled.push(anchor);
+  for (const site of placed) {
+    if (site === anchor) continue;
+    if (
+      settled.some((other) => {
+        const collision = overlap(site, other);
+        return collision.x > 0 && collision.y > 0;
+      })
+    ) {
+      site.x =
+        Math.max(...settled.map((other) => other.x + bounds[other.id].right)) +
+        SITE_GAP -
+        bounds[site.id].left +
+        0.1;
+    }
+    settled.push(site);
   }
   return placed;
 }
@@ -146,6 +182,17 @@ export default function Graph({
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const [dragFrame, setDragFrame] = useState<string | null>(null);
   const dragging = dragFrame !== null;
+  const [siteBounds, setSiteBounds] = useState<Record<string, SiteBounds>>({});
+  const [fontRevision, setFontRevision] = useState(0);
+  useEffect(() => {
+    let active = true;
+    void document.fonts.ready.then(() => {
+      if (active) setFontRevision((value) => value + 1);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const [positions, setPositions] = useState<
     Record<string, { x: number; y: number }>
   >({});
@@ -193,10 +240,34 @@ export default function Graph({
     resetKey: number;
     expanded: string[];
     visibleIds: string[];
-    pageCounts: string;
+    boundsKey: string;
     bases: Record<string, { x: number; y: number }>;
   } | null>(null);
   useLayoutEffect(() => {
+    const measured: Record<string, SiteBounds> = {};
+    for (const node of svgRef.current?.querySelectorAll<SVGGElement>(
+      '.site-node',
+    ) ?? []) {
+      const hit = node.querySelector('[data-drag-site]')!;
+      const circle = hit.querySelector('circle')!;
+      const id = hit.getAttribute('data-drag-site')!;
+      const x = Number(circle.getAttribute('cx'));
+      const y = Number(circle.getAttribute('cy'));
+      const radius = Number(circle.getAttribute('r'));
+      const box = node.getBBox();
+      measured[id] = {
+        left: Math.floor(Math.min(box.x - x, -radius - 10) + 0.001),
+        top: Math.floor(Math.min(box.y - y, -radius - 10) + 0.001),
+        right: Math.ceil(Math.max(box.x + box.width - x, radius + 10) - 0.001),
+        bottom: Math.ceil(
+          Math.max(box.y + box.height - y, radius + 10) - 0.001,
+        ),
+      };
+    }
+    const boundsKey = JSON.stringify(measured);
+    setSiteBounds((current) =>
+      JSON.stringify(current) === boundsKey ? current : measured,
+    );
     const previous = previousLayout.current;
     const reset =
       previous !== null &&
@@ -208,23 +279,17 @@ export default function Graph({
         const base = previous?.bases[site.id];
         return base && (base.x !== site.x || base.y !== site.y);
       });
-    const added = focusedExpanded.filter(
-      (id) => !previous?.expanded.includes(id),
-    );
+    const added = expanded.filter((id) => !previous?.expanded.includes(id));
     const newVisibleSite = inputSites.some(
       (site) => !previous?.visibleIds.includes(site.id),
     );
-    const pageCounts = focusedExpanded
-      .map((id) => `${id}:${pages.filter((page) => page.siteId === id).length}`)
-      .join('|');
-    const resizedExpansion =
-      previous !== null && previous.pageCounts !== pageCounts;
+    const resized = previous?.boundsKey !== boundsKey;
     previousLayout.current = {
       compact,
       resetKey,
-      expanded: focusedExpanded,
+      expanded,
       visibleIds: inputSites.map((site) => site.id),
-      pageCounts,
+      boundsKey,
       bases: Object.fromEntries(
         layoutSites.map((site) => [site.id, { x: site.x, y: site.y }]),
       ),
@@ -233,14 +298,13 @@ export default function Graph({
       !reset &&
       added.length === 0 &&
       !newVisibleSite &&
-      !resizedExpansion &&
+      !resized &&
       !shiftedBase
     )
       return;
     const anchorId = [...added, ...focusedExpanded].find((id) =>
       inputSites.some((site) => site.id === id),
     );
-    if (!reset && !anchorId && !shiftedBase) return;
     setPositions((current) => {
       const offsets = reset ? {} : { ...current };
       if (shiftedBase) {
@@ -259,15 +323,7 @@ export default function Graph({
         x: site.x + (offsets[site.id]?.x ?? 0),
         y: site.y + (offsets[site.id]?.y ?? 0),
       }));
-      const placed = anchorId
-        ? makeRoomForExpansion(
-            positioned,
-            focusedExpanded,
-            anchorId,
-            compact,
-            pages,
-          )
-        : positioned;
+      const placed = separateSites(positioned, measured, anchorId);
       return {
         ...offsets,
         ...Object.fromEntries(
@@ -281,39 +337,66 @@ export default function Graph({
         ),
       };
     });
-  }, [compact, resetKey, focusedExpanded, inputSites, pages]);
+  }, [
+    compact,
+    resetKey,
+    expanded,
+    focusedExpanded,
+    inputSites,
+    pages,
+    fontRevision,
+  ]);
 
   const sites = layoutSites.map((site) => ({
     ...site,
     x: site.x + (positions[site.id]?.x ?? 0),
     y: site.y + (positions[site.id]?.y ?? 0),
   }));
-  const framingRadius = (site: Site) =>
-    focusedExpanded.includes(site.id)
-      ? pageLayout(site, compact).radius
-      : site.radius;
+  const boundsFor = (site: Site): SiteBounds =>
+    siteBounds[site.id] ?? {
+      left: -site.radius - 10,
+      top: -site.radius - 10,
+      right: site.radius + 10,
+      bottom: site.radius + 35,
+    };
   const minX = Math.min(
     0,
-    ...sites.map((site) => site.x - framingRadius(site) - 25),
+    ...sites.map((site) => site.x + boundsFor(site).left - 25),
   );
   const minY = Math.min(
     0,
-    ...sites.map((site) => site.y - framingRadius(site) - 25),
+    ...sites.map((site) => site.y + boundsFor(site).top - 25),
   );
   const maxX = Math.max(
     compact ? 600 : 1000,
-    ...sites.map((site) => site.x + framingRadius(site) + 25),
+    ...sites.map((site) => site.x + boundsFor(site).right + 25),
   );
   const maxY = Math.max(
     compact ? 820 : 760,
-    ...sites.map((site) => site.y + framingRadius(site) + 80),
+    ...sites.map((site) => site.y + boundsFor(site).bottom + 50),
   );
 
   const moveSite = (id: string, dx: number, dy: number) => {
-    setPositions((previous) => ({
-      ...previous,
-      [id]: { x: (previous[id]?.x ?? 0) + dx, y: (previous[id]?.y ?? 0) + dy },
-    }));
+    setPositions((previous) => {
+      const positioned = layoutSites.map((site) => ({
+        ...site,
+        x: site.x + (previous[site.id]?.x ?? 0) + (site.id === id ? dx : 0),
+        y: site.y + (previous[site.id]?.y ?? 0) + (site.id === id ? dy : 0),
+      }));
+      const placed = separateSites(positioned, siteBounds, id);
+      return {
+        ...previous,
+        ...Object.fromEntries(
+          placed.map((site, index) => [
+            site.id,
+            {
+              x: site.x - layoutSites[index].x,
+              y: site.y - layoutSites[index].y,
+            },
+          ]),
+        ),
+      };
+    });
   };
 
   useEffect(() => {
@@ -360,6 +443,7 @@ export default function Graph({
       zoom: Math.min(2.8, Math.max(0.6, previous.zoom * factor)),
     }));
   const reset = () => {
+    previousLayout.current = null;
     setPositions({});
     setCamera({ x: 0, y: 0, zoom: 1 });
     onExpandedChange([]);
