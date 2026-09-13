@@ -52,7 +52,7 @@
 
 - **Symptom:** `wrangler deploy --dry-run` vypíše `env.DB (00000000-0000-0000-0000-000000000000)`.
 - **Příčina:** `wrangler.jsonc` má `preview_database_id` nastavené na nulové UUID, aby lokální `dev:api` a `db:local` držely původní lokální databázi; dry-run tento preview identifikátor zobrazuje.
-- **Řešení:** nic neměnit. Skutečný deploy binduje `database_id` = `vizlinx-scans` (ověřeno přes Cloudflare API po nasazení, `[archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype):81`). Přepsání `preview_database_id` na produkční ID by lokální mapy „ztratilo“ a `db:local` by začal od prázdné DB.
+- **Řešení:** nic neměnit. Skutečný deploy binduje `database_id` = `vizlinx-scans` (ověřeno přes Cloudflare API po nasazení, [archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype)). Přepsání `preview_database_id` na produkční ID by lokální mapy „ztratilo“ a `db:local` by začal od prázdné DB.
 - **Stav:** trvalá vlastnost konfigurace, komentář přímo ve `wrangler.jsonc`.
 
 ## Testy dělí migrace na středníku
