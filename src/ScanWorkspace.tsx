@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCcw,
   Sun,
 } from 'lucide-react';
 import App from './App';
@@ -24,6 +25,7 @@ import type {
   ScanSnapshot,
   ScanStatus,
   ScanSummary,
+  ScanRunSummary,
 } from '../shared/scan';
 import './scan-workspace.css';
 
@@ -36,6 +38,19 @@ const statusLabels: Record<ScanStatus, string> = {
   limited: 'Dosažen nastavený limit',
   error: 'Skenování vyžaduje pozornost',
 };
+
+function runLabel(run: ScanSummary) {
+  const status = {
+    waiting: 'Připraveno',
+    running: 'Běží',
+    paused: 'Pozastaveno',
+    interrupted: 'Přerušeno',
+    completed: 'Dokončeno',
+    limited: 'Dosažen limit',
+    error: 'Chyba',
+  }[run.status];
+  return `#${run.runNumber ?? 1} · ${new Date(run.runCreatedAt ?? run.createdAt).toLocaleString('cs-CZ', { dateStyle: 'short', timeStyle: 'short' })} · ${status}`;
+}
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_PREFIX}${path}`, {
@@ -136,6 +151,13 @@ export default function ScanWorkspace() {
   const [scanId, setScanId] = useState<string | null>(() =>
     new URL(window.location.href).searchParams.get('id'),
   );
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(() =>
+    new URL(window.location.href).searchParams.get('run'),
+  );
+  const [runs, setRuns] = useState<ScanRunSummary[]>([]);
+  const [runLimit, setRunLimit] = useState(10);
+  const [historyError, setHistoryError] = useState('');
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [scan, setScan] = useState<ScanSnapshot | null>(null);
   const [saved, setSaved] = useState<ScanSummary[]>([]);
   const [ready, setReady] = useState(false);
@@ -152,6 +174,7 @@ export default function ScanWorkspace() {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const refreshEpoch = useRef(0);
   const actionInFlight = useRef(false);
+  const historical = Boolean(scan?.archived);
   const dataset = useMemo(
     () => (scan ? scanToDataset(scan) : undefined),
     [scan],
@@ -185,9 +208,9 @@ export default function ScanWorkspace() {
     if (!ready) return;
     let cancelled = false;
     let fetching = false;
-    let finished = false;
+    let archivedLoaded = false;
     const refresh = async () => {
-      if (fetching || finished || actionInFlight.current) return;
+      if (fetching || archivedLoaded || actionInFlight.current) return;
       fetching = true;
       const epoch = refreshEpoch.current;
       const current = () =>
@@ -195,12 +218,11 @@ export default function ScanWorkspace() {
       try {
         if (scanId) {
           const snapshot = await api<ScanSnapshot>(
-            `/scans/${encodeURIComponent(scanId)}`,
+            `/scans/${encodeURIComponent(scanId)}${selectedRunId ? `/runs/${encodeURIComponent(selectedRunId)}` : ''}`,
           );
           if (current()) {
             setScan(snapshot);
-            finished =
-              snapshot.status === 'completed' || snapshot.status === 'limited';
+            archivedLoaded = Boolean(snapshot.archived);
           }
         } else {
           const maps = await api<ScanSummary[]>('/scans');
@@ -226,7 +248,35 @@ export default function ScanWorkspace() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [ready, scanId, refreshRevision]);
+  }, [ready, scanId, selectedRunId, refreshRevision]);
+
+  useEffect(() => {
+    if (!ready || !scanId || !scan?.runId) return;
+    let cancelled = false;
+    void api<{ runs: ScanRunSummary[]; limit: number }>(`/scans/${scanId}/runs`)
+      .then((result) => {
+        if (cancelled) return;
+        setRuns(result.runs);
+        setRunLimit(result.limit);
+        setHistoryError('');
+      })
+      .catch(() => {
+        if (!cancelled)
+          setHistoryError(
+            'Historii skenů se nepodařilo načíst. Zkus načtení zopakovat.',
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    ready,
+    scanId,
+    scan?.runId,
+    scan?.status,
+    refreshRevision,
+    historyRevision,
+  ]);
 
   const selectScan = (
     id: string | null,
@@ -235,6 +285,9 @@ export default function ScanWorkspace() {
     refreshEpoch.current += 1;
     setScan(snapshot);
     setScanId(id);
+    setSelectedRunId(null);
+    setRuns([]);
+    setHistoryError('');
     setError('');
     setRefreshError('');
     setNotice('');
@@ -244,6 +297,21 @@ export default function ScanWorkspace() {
       null,
       '',
       id ? `/scan?id=${encodeURIComponent(id)}` : '/scan',
+    );
+  };
+  const selectRun = (runId: string | null) => {
+    if (actionInFlight.current) return;
+    refreshEpoch.current += 1;
+    setSelectedRunId(runId);
+    setScan(null);
+    setError('');
+    setRefreshError('');
+    setNotice('');
+    setAddingSite(false);
+    window.history.replaceState(
+      null,
+      '',
+      `/scan?id=${encodeURIComponent(scanId!)}${runId ? `&run=${encodeURIComponent(runId)}` : ''}`,
     );
   };
   const action = async (work: () => Promise<void>) => {
@@ -268,11 +336,11 @@ export default function ScanWorkspace() {
   };
   const start = () => {
     void action(async () => {
-      if (!scan) return;
+      if (!scan || historical) return;
       setScan(
         await api<ScanSnapshot>(`/scans/${scan.id}/start`, {
           method: 'POST',
-          body: '{}',
+          body: JSON.stringify({ runId: scan.runId }),
         }),
       );
       setNotice(
@@ -285,13 +353,13 @@ export default function ScanWorkspace() {
     change: Partial<Pick<ScanSite, 'intervalMs' | 'paused'>>,
   ) => {
     void action(async () => {
-      if (!scan) return;
+      if (!scan || historical) return;
       const sites = scan.sites.map((site) =>
         site.origin === id ? { ...site, ...change } : site,
       );
       await api(`/scans/${scan.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ sites }),
+        body: JSON.stringify({ sites, runId: scan.runId }),
       });
       setScan(await api<ScanSnapshot>(`/scans/${scan.id}`));
     });
@@ -299,7 +367,7 @@ export default function ScanWorkspace() {
 
   const addSite = () => {
     void action(async () => {
-      if (!scan) return;
+      if (!scan || historical) return;
       let site: ScanSite;
       try {
         const parsed = parseSites(newSiteUrl, newSiteInterval);
@@ -314,7 +382,7 @@ export default function ScanWorkspace() {
         throw new Error('Tento web už je součástí mapy.');
       const updated = await api<ScanSnapshot>(`/scans/${scan.id}/sites`, {
         method: 'POST',
-        body: JSON.stringify({ site }),
+        body: JSON.stringify({ site, runId: scan.runId }),
       });
       setScan(updated);
       setRefreshError('');
@@ -326,7 +394,36 @@ export default function ScanWorkspace() {
     });
   };
 
+  const rescan = () => {
+    void action(async () => {
+      if (!scan || historical || !scan.runId) return;
+      const updated = await api<ScanSnapshot>(`/scans/${scan.id}/rescan`, {
+        method: 'POST',
+        body: JSON.stringify({ runId: scan.runId }),
+      });
+      setSelectedRunId(null);
+      window.history.replaceState(
+        null,
+        '',
+        `/scan?id=${encodeURIComponent(scan.id)}`,
+      );
+      setScan(updated);
+      setAddingSite(false);
+      setNotice(
+        'Nový sken běží. Výsledky přibývají živě; předchozí průchod najdeš v historii skenů.',
+      );
+    });
+  };
+
   if (scan && dataset) {
+    const currentRun =
+      runs.find((run) => !run.archived) ?? (!historical ? scan : null);
+    const rescanIsPrimary =
+      Boolean(scan.runId) &&
+      (scan.status === 'completed' ||
+        scan.limitReason === 'time_limit' ||
+        scan.limitReason === 'scan_storage_limit' ||
+        (scan.status === 'limited' && scan.limitReason !== 'daily_limit'));
     const toolbar = (
       <section
         className="scan-live-controls"
@@ -340,53 +437,83 @@ export default function ScanWorkspace() {
           >
             <ArrowLeft size={15} /> Uložené mapy
           </button>
-          <button
-            className="scan-button"
-            disabled={busy || scan.sites.length >= SCAN_LIMITS.sites}
-            aria-expanded={addingSite}
-            onClick={() => setAddingSite((visible) => !visible)}
-          >
-            <Plus size={15} /> Přidat web
-          </button>
-          <button
-            className="scan-button scan-button-primary"
-            disabled={
-              busy ||
-              scan.status === 'running' ||
-              scan.status === 'completed' ||
-              scan.limitReason === 'time_limit' ||
-              scan.limitReason === 'scan_storage_limit' ||
-              (scan.status === 'limited' && scan.limitReason !== 'daily_limit')
-            }
-            onClick={start}
-          >
-            <Play size={15} />{' '}
-            {scan.status === 'interrupted' ||
-            scan.status === 'paused' ||
-            scan.limitReason === 'daily_limit'
-              ? 'Pokračovat ve skenování'
-              : scan.status === 'running'
-                ? 'Skenování běží'
-                : 'Spustit skenování'}
-          </button>
-          {scan.status === 'running' && (
-            <button
-              className="scan-button"
-              disabled={busy}
-              onClick={() => {
-                void action(async () => {
-                  await api(`/scans/${scan.id}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status: 'paused' }),
-                  });
-                  setScan(await api<ScanSnapshot>(`/scans/${scan.id}`));
-                });
-              }}
-            >
-              <Pause size={15} /> Pozastavit sken
-            </button>
+          {!historical && (
+            <>
+              <button
+                className="scan-button"
+                disabled={busy || scan.sites.length >= SCAN_LIMITS.sites}
+                aria-expanded={addingSite}
+                onClick={() => setAddingSite((visible) => !visible)}
+              >
+                <Plus size={15} /> Přidat web
+              </button>
+              {!rescanIsPrimary && (
+                <button
+                  className="scan-button scan-button-primary"
+                  disabled={
+                    busy ||
+                    scan.status === 'running' ||
+                    scan.status === 'completed' ||
+                    scan.limitReason === 'time_limit' ||
+                    scan.limitReason === 'scan_storage_limit' ||
+                    (scan.status === 'limited' &&
+                      scan.limitReason !== 'daily_limit')
+                  }
+                  onClick={start}
+                >
+                  <Play size={15} />{' '}
+                  {scan.status === 'interrupted' ||
+                  scan.status === 'paused' ||
+                  scan.limitReason === 'daily_limit'
+                    ? 'Pokračovat ve skenování'
+                    : scan.status === 'running'
+                      ? 'Skenování běží'
+                      : 'Spustit skenování'}
+                </button>
+              )}
+              {scan.status === 'running' && (
+                <button
+                  className="scan-button"
+                  disabled={busy}
+                  onClick={() => {
+                    void action(async () => {
+                      await api(`/scans/${scan.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({
+                          status: 'paused',
+                          runId: scan.runId,
+                        }),
+                      });
+                      setScan(await api<ScanSnapshot>(`/scans/${scan.id}`));
+                    });
+                  }}
+                >
+                  <Pause size={15} /> Pozastavit sken
+                </button>
+              )}
+              {scan.runId && (
+                <button
+                  className={`scan-button${rescanIsPrimary ? ' scan-button-primary' : ''}`}
+                  disabled={
+                    busy ||
+                    scan.status === 'running' ||
+                    scan.status === 'waiting' ||
+                    runs.length >= runLimit ||
+                    Boolean(historyError) ||
+                    runs.length === 0
+                  }
+                  onClick={rescan}
+                >
+                  <RotateCcw size={15} /> Skenovat znovu
+                </button>
+              )}
+            </>
           )}
-          <ScanLogPanel key={scan.id} scan={scan} refreshError={refreshError} />
+          <ScanLogPanel
+            key={scan.runId ?? scan.id}
+            scan={scan}
+            refreshError={refreshError}
+          />
           <span className="scan-stats">
             {scan.results.filter((result) => result.status === 'ok').length}{' '}
             načtených ·{' '}
@@ -394,13 +521,80 @@ export default function ScanWorkspace() {
             neúspěšných / vynechaných
           </span>
         </div>
+        {scan.runId && (
+          <div className="scan-history-row">
+            <label htmlFor="scan-history">Historie skenů</label>
+            <select
+              id="scan-history"
+              value={selectedRunId ?? ''}
+              disabled={busy}
+              onChange={(event) => selectRun(event.target.value || null)}
+            >
+              <option value="">
+                Aktuální sken{currentRun ? ` · ${runLabel(currentRun)}` : ''}
+              </option>
+              {runs
+                .filter((run) => run.archived || run.runId === selectedRunId)
+                .map((run) => (
+                  <option key={run.runId} value={run.runId}>
+                    {runLabel(run)}
+                    {run.archived ? '' : ' · aktuální'}
+                  </option>
+                ))}
+            </select>
+            <span className="scan-note">
+              {runs.length || 1}/{runLimit} průchodů · historie se uchovává do
+              vypršení mapy (30 dní od založení)
+            </span>
+          </div>
+        )}
+        {historical && (
+          <div className="scan-history-notice" role="status">
+            <div>
+              <strong>Prohlížíš historii · sken #{scan.runNumber}</strong>
+              <p>
+                Uložený průchod je pouze ke čtení. Nové výsledky a ovládání
+                najdeš v aktuálním skenu.
+              </p>
+            </div>
+            <button className="scan-button" onClick={() => selectRun(null)}>
+              Zpět na aktuální sken
+            </button>
+          </div>
+        )}
+        {runs.length >= runLimit && (
+          <p className="scan-notice" role="status">
+            Dosažen limit {runLimit} průchodů této mapy. Pro vyšší limit
+            kontaktuj správce.
+            {adminEmail && (
+              <>
+                {' '}
+                <a href={`mailto:${adminEmail}`}>Kontaktovat správce</a>
+              </>
+            )}
+          </p>
+        )}
+        {historyError && (
+          <p className="scan-error" role="alert">
+            {historyError}{' '}
+            <button
+              className="scan-button"
+              onClick={() => {
+                setHistoryError('');
+                setHistoryRevision((revision) => revision + 1);
+              }}
+            >
+              Zkusit načíst historii znovu
+            </button>
+          </p>
+        )}
         <ScanActivityStatus scan={scan} refreshError={refreshError} />
         {scan.sites.length >= SCAN_LIMITS.sites && (
           <p className="scan-note">
             Limit prototypu: {SCAN_LIMITS.sites} weby v jedné mapě.
           </p>
         )}
-        {addingSite && (
+        {addingSite && !historical && (
           <form
             className="scan-card scan-add-site"
             aria-label="Přidat web do mapy"
@@ -520,7 +714,7 @@ export default function ScanWorkspace() {
     );
     return (
       <App
-        key={scan.id}
+        key={scan.runId ?? scan.id}
         dataset={dataset}
         live={{
           title: scan.sites
@@ -528,7 +722,7 @@ export default function ScanWorkspace() {
             .join(' · '),
           status: statusLabels[scan.status],
           toolbar,
-          controlsDisabled: busy,
+          controlsDisabled: busy || historical,
           pageLimits: Object.fromEntries(
             scan.sites.map((site) => [site.origin, site.maxPages]),
           ),
@@ -538,12 +732,16 @@ export default function ScanWorkspace() {
           intervals: Object.fromEntries(
             scan.sites.map((site) => [site.origin, site.intervalMs / 1000]),
           ),
-          onPauseSite: (id) =>
-            changeSite(id, {
-              paused: !scan.sites.find((site) => site.origin === id)?.paused,
-            }),
-          onIntervalChange: (id, seconds) =>
-            changeSite(id, { intervalMs: seconds * 1000 }),
+          onPauseSite: historical
+            ? undefined
+            : (id) =>
+                changeSite(id, {
+                  paused: !scan.sites.find((site) => site.origin === id)
+                    ?.paused,
+                }),
+          onIntervalChange: historical
+            ? undefined
+            : (id, seconds) => changeSite(id, { intervalMs: seconds * 1000 }),
         }}
       />
     );
@@ -594,6 +792,11 @@ export default function ScanWorkspace() {
                 ? 'Tuto mapu se nepodařilo otevřít.'
                 : 'Načítám uloženou mapu…'}
             </p>
+            {selectedRunId && (
+              <button className="scan-button" onClick={() => selectRun(null)}>
+                Zpět na aktuální sken
+              </button>
+            )}
             <button className="scan-button" onClick={() => selectScan(null)}>
               Zpět na seznam map
             </button>
@@ -622,7 +825,7 @@ export default function ScanWorkspace() {
                     setScan(
                       await api<ScanSnapshot>(`/scans/${snapshot.id}/start`, {
                         method: 'POST',
-                        body: '{}',
+                        body: JSON.stringify({ runId: snapshot.runId }),
                       }),
                     );
                   });
