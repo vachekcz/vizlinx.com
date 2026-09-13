@@ -56,8 +56,7 @@ export async function fetchServerRobots(origin: string): Promise<StoredRobots> {
       await response.body?.cancel();
       return denied;
     }
-    const body = await boundedText(response);
-    if (new TextEncoder().encode(body).byteLength > 64 * 1024) return denied;
+    const body = await boundedText(response, 64 * 1024);
     const robots = robotsParser(`${origin}/robots.txt`, body);
     const delay = (robots.getCrawlDelay(ROBOT_AGENT) ?? 0) * 1000;
     return {

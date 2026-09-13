@@ -30,6 +30,7 @@ jobs:
       - run: npm run test:api
       - run: npm run test:crawler
       - run: npm run test:scan-log
+      - run: npm run test:fetch-result
       - run: npm run test:extension
       - run: npm run test:prototype
       - run: npm run build

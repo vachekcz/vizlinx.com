@@ -20,6 +20,7 @@
     "test:api": "node scripts/test-api.mjs",
     "test:crawler": "node --test tests-api/crawler.test.mjs",
     "test:scan-log": "node --test tests-api/scan-log.test.mjs",
+    "test:fetch-result": "node --test tests-api/fetch-result.test.mjs",
     "test:extension": "node scripts/test-extension.mjs",
     "test:prototype": "node scripts/test-prototype.mjs",
     "benchmark:scan": "node scripts/benchmark-scan.mjs",
