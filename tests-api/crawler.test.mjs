@@ -206,7 +206,7 @@ test('a large site stops at exactly 100 pages and a restart or duplicate cannot 
   );
 });
 
-test('small sites complete, public exact-origin links are followed, and redirects are never followed', async () => {
+test('small sites complete, public exact-origin links are followed, and external redirects are never followed', async () => {
   respond = (request) => {
     const path = new URL(request.url).pathname;
     if (path === '/robots.txt') return new Response('', { status: 404 });
@@ -250,6 +250,173 @@ test('small sites complete, public exact-origin links are followed, and redirect
         !request.headers.has('Cookie') && !request.headers.has('Authorization'),
     ),
   );
+});
+
+test('same-origin redirect chains run one request per tick and parse links relative to the final URL', async () => {
+  const paths = ['/', '/hop-1', '/hop-2', '/hop-3', '/hop-4', '/sk/'];
+  const statuses = [301, 302, 303, 307, 308];
+  respond = (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/robots.txt') return new Response('', { status: 404 });
+    const index = paths.indexOf(path);
+    if (index >= 0 && index < statuses.length)
+      return new Response('', {
+        status: statuses[index],
+        headers: { Location: paths[index + 1] },
+      });
+    return path === '/sk/'
+      ? html(['contact'], 'Final page')
+      : html([], 'Contact');
+  };
+  const id = await create();
+  await start(id);
+  let ticks = 0;
+  while (pending.length) {
+    assert.ok(
+      ++ticks <= 1000,
+      'Redirect chain did not finish within 1000 ticks',
+    );
+    const count = requests.length;
+    await next();
+    assert.ok(requests.length - count <= 1);
+  }
+  assert.equal((await scan(id)).status, 'completed');
+  assert.deepEqual(
+    requests.map((request) => new URL(request.url).pathname),
+    ['/robots.txt', ...paths, '/sk/contact'],
+  );
+  const results = await pages(id);
+  assert.equal(
+    results.find((result) => result.sourceUrl === `${origin}/sk/`).title,
+    'Final page',
+  );
+  assert.equal(
+    results.find((result) => result.sourceUrl === `${origin}/sk/`).links[0]
+      .targetUrl,
+    `${origin}/sk/contact`,
+  );
+  assert.equal(
+    results.find((result) => result.sourceUrl === `${origin}/`).links.length,
+    0,
+  );
+  const redirects = (await events(id)).filter((event) => event.redirect);
+  assert.equal(redirects.length, 5);
+  assert.ok(
+    redirects.every(
+      (event) =>
+        event.redirect.kind === 'same_origin' && event.level === 'info',
+    ),
+  );
+  assert.equal(redirects[0].redirect.targetUrl, `${origin}/hop-1`);
+});
+
+test('redirect targets respect robots, origin pacing, and URL deduplication', async () => {
+  respond = (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/robots.txt')
+      return new Response(
+        'User-agent: *\nDisallow: /private\nCrawl-delay: 3\n',
+      );
+    return new Response('', { status: 302, headers: { Location: '/private' } });
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal(requests.length, 2);
+  assert.equal(
+    (await pages(id)).find((result) => result.sourceUrl.endsWith('/private'))
+      .status,
+    'robots_denied',
+  );
+
+  respond = (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/robots.txt') return new Response('', { status: 404 });
+    return new Response('', {
+      status: 302,
+      headers: { Location: path === '/' ? '/back' : '/' },
+    });
+  };
+  const loop = await create();
+  await start(loop);
+  await next();
+  await next();
+  const count = requests.length;
+  await next({ resetGate: false });
+  assert.equal(
+    requests.length,
+    count,
+    'Redirect hops must retain the origin request interval',
+  );
+  assert.ok(pending[0].options.delaySeconds >= 1);
+  await drain();
+  assert.equal(
+    (await pages(loop)).length,
+    2,
+    'A redirect loop must visit each URL only once',
+  );
+  assert.equal((await scan(loop)).status, 'completed');
+});
+
+test('external redirects are recorded but do not expand even an approved second origin on restart', async () => {
+  const second = {
+    ...site,
+    origin: 'https://other.org',
+    seedUrl: 'https://other.org/seed',
+  };
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin)
+      return new Response('', {
+        status: 302,
+        headers: { Location: '//other.org/private' },
+      });
+    assert.equal(url.href, second.seedUrl);
+    return html();
+  };
+  const id = await create([site, second]);
+  await start(id);
+  await drain();
+  assert.deepEqual(
+    (await pages(id)).find((result) => result.sourceUrl === site.seedUrl)
+      .redirect,
+    {
+      kind: 'external',
+      targetUrl: 'https://other.org/private',
+    },
+  );
+  assert.equal(
+    (await events(id)).find((event) => event.redirect).redirect.targetUrl,
+    'https://other.org/private',
+  );
+  const count = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, count);
+  assert.equal(
+    requests.some((request) => request.url === 'https://other.org/private'),
+    false,
+  );
+});
+
+test('redirect-only sites cannot exceed the 100 request page budget', async () => {
+  respond = (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/robots.txt') return new Response('', { status: 404 });
+    const index = path === '/' ? 0 : Number(path.slice(1));
+    return new Response('', {
+      status: 302,
+      headers: { Location: `/${index + 1}` },
+    });
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal(requests.length, 101);
+  assert.equal((await pages(id)).length, 100);
+  assert.equal((await scan(id)).limit_reason, 'page_limit');
 });
 
 test('robots uses VizlinxBot rules and preserves a crawl delay in its queue continuation', async () => {
@@ -364,7 +531,7 @@ test('the global daily budget is atomic, includes robots, and cannot be bypassed
   }
 });
 
-for (const lateStatus of [200, 429])
+for (const lateStatus of [200, 302, 429])
   test(`a revoked generation cannot write a late HTTP ${lateStatus} result or throttle the origin`, async () => {
     const started = Promise.withResolvers();
     const released = Promise.withResolvers();
@@ -375,7 +542,9 @@ for (const lateStatus of [200, 429])
       await released.promise;
       return lateStatus === 429
         ? new Response('', { status: 429 })
-        : html(['/another']);
+        : lateStatus === 302
+          ? new Response('', { status: 302, headers: { Location: '/another' } })
+          : html(['/another']);
     };
     const id = await create();
     await start(id);

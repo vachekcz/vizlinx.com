@@ -1,5 +1,10 @@
 import robotsParser from 'robots-parser';
-import { normalizeScanUrl, SCAN_LIMITS, type PageResult } from '../shared/scan';
+import {
+  normalizeScanUrl,
+  normalizeLinkUrl,
+  SCAN_LIMITS,
+  type PageResult,
+} from '../shared/scan';
 import { extractHtml } from '../extension/extract';
 import {
   BodyTooLarge,
@@ -12,7 +17,7 @@ export const ROBOT_AGENT = 'VizlinxBot';
 export type StoredRobots = { body: string; denied: boolean; delayMs: number };
 
 // Use only the public Workers fetch API, never a private network/service binding.
-// Manual redirects keep each request inside the explicitly approved exact origin.
+// Redirect targets are queued separately so every hop retains scope and budgets.
 async function publicFetch(value: string, origin: string): Promise<Response> {
   const url = normalizeScanUrl(value);
   if (new URL(url).origin !== origin)
@@ -79,7 +84,32 @@ export async function fetchServerPage(
     result.httpStatus = response.status;
     if (response.status >= 300 && response.status < 400) {
       result.status = 'redirect_unresolved';
-      result.error = 'Redirect was not followed. Add the final URL explicitly.';
+      const location = response.headers.get('location');
+      const targetUrl = location?.trim()
+        ? normalizeLinkUrl(location, sourceUrl)
+        : null;
+      const supported = [301, 302, 303, 307, 308].includes(response.status);
+      result.redirect =
+        !supported || !targetUrl
+          ? {
+              kind: 'invalid',
+              reason: !supported ? 'unsupported_status' : 'invalid_target',
+              ...(targetUrl ? { targetUrl } : {}),
+            }
+          : {
+              kind:
+                new URL(targetUrl).origin === origin
+                  ? 'same_origin'
+                  : 'external',
+              targetUrl,
+            };
+      if (result.redirect.kind !== 'same_origin')
+        result.error =
+          result.redirect.kind === 'external'
+            ? 'Redirect leaves the source origin and was not followed.'
+            : !supported
+              ? `Unsupported redirect status HTTP ${response.status} was not followed.`
+              : 'Redirect has no supported HTTP(S) target and was not followed.';
     } else if (!response.ok) {
       result.status = 'http_error';
       result.error = `HTTP ${response.status}`;

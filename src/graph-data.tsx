@@ -68,7 +68,7 @@ export function pageStatusLabel(page: Page) {
     case 'network_error':
       return 'Chyba připojení';
     case 'redirect_unresolved':
-      return 'Přesměrování nenásledováno';
+      return 'HTTP přesměrování';
     case 'robots_denied':
       return 'Zakázáno robots.txt';
     case 'not_html':

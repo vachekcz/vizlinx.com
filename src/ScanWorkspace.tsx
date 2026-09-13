@@ -12,7 +12,10 @@ import {
   Sun,
 } from 'lucide-react';
 import App from './App';
-import ScanLogPanel, { ScanActivityStatus } from './ScanLogPanel';
+import ScanLogPanel, {
+  ScanActivityStatus,
+  redirectLabel,
+} from './ScanLogPanel';
 import { scanToDataset } from './scan-dataset';
 import { useTheme } from './themes';
 import { API_PREFIX, normalizeScanUrl, SCAN_LIMITS } from '../shared/scan';
@@ -490,19 +493,24 @@ export default function ScanWorkspace() {
                 .map((result) => (
                   <li key={result.sourceUrl}>
                     <span>{result.sourceUrl}</span> —{' '}
-                    {result.truncated
-                      ? 'výsledek zkrácen limitem'
-                      : {
-                          http_error: 'chyba HTTP',
-                          network_error: 'síťová chyba',
-                          redirect_unresolved:
-                            'přesměrování vyžaduje zadat cílovou URL',
-                          robots_denied: 'zakázáno robots.txt',
-                          not_html: 'není HTML',
-                          too_large: 'stránka je příliš velká',
-                          ok: 'načteno',
-                        }[result.status]}
+                    {result.redirect
+                      ? redirectLabel(result.redirect)
+                      : result.truncated
+                        ? 'výsledek zkrácen limitem'
+                        : {
+                            http_error: 'chyba HTTP',
+                            network_error: 'síťová chyba',
+                            redirect_unresolved:
+                              'přesměrování vyžaduje zadat cílovou URL',
+                            robots_denied: 'zakázáno robots.txt',
+                            not_html: 'není HTML',
+                            too_large: 'stránka je příliš velká',
+                            ok: 'načteno',
+                          }[result.status]}
                     {result.httpStatus ? ` (${result.httpStatus})` : ''}
+                    {result.redirect?.targetUrl && (
+                      <span> → {result.redirect.targetUrl}</span>
+                    )}
                   </li>
                 ))}
             </ul>

@@ -34,6 +34,18 @@ async function fixture(request) {
   );
   fetched.push(url.href);
   if (url.pathname === '/robots.txt') return new Response('', { status: 404 });
+  if (url.origin === origins[0] && url.pathname === '/redirect-start')
+    return new Response('', {
+      status: 302,
+      headers: { Location: '/redirect-final/' },
+    });
+  if (url.origin === origins[0] && url.pathname === '/redirect-final/')
+    return html('<title>Redirect landing</title><a href="out">Next</a>');
+  if (url.origin === origins[0] && url.pathname === '/redirect-final/out')
+    return new Response('', {
+      status: 302,
+      headers: { Location: `${origins[1]}/redirect-must-not-fetch` },
+    });
   if (url.origin === quotaOrigin) {
     const index = url.pathname === '/' ? 0 : Number(url.pathname.slice(1));
     assert.ok(Number.isInteger(index) && index >= 0 && index <= 100);
@@ -422,9 +434,53 @@ try {
   await expect(banner).toBeVisible();
   await expect(page.locator('.scan-stats')).toContainText('100 načtených');
   assert.deepEqual(errors, []);
+  const redirectId = await createScan(`${origins[0]}/redirect-start`);
+  await expect
+    .poll(async () => (await scanRow(redirectId)).status)
+    .toBe('completed');
+  await expect(page.locator('.scan-stats')).toContainText('1 načtených');
+  const redirects = (await pageRows(redirectId)).results.map((row) =>
+    JSON.parse(row.result_json),
+  );
+  assert.equal(redirects.length, 3);
+  assert.deepEqual(
+    redirects.find(
+      (result) => result.sourceUrl === `${origins[0]}/redirect-start`,
+    )?.redirect,
+    { kind: 'same_origin', targetUrl: `${origins[0]}/redirect-final/` },
+  );
+  assert.deepEqual(
+    redirects.find(
+      (result) => result.sourceUrl === `${origins[0]}/redirect-final/out`,
+    )?.redirect,
+    { kind: 'external', targetUrl: `${origins[1]}/redirect-must-not-fetch` },
+  );
+  assert.ok(
+    redirects.some(
+      (result) =>
+        result.sourceUrl === `${origins[0]}/redirect-final/` &&
+        result.status === 'ok',
+    ),
+  );
+  assert.equal(
+    fetched.includes(`${origins[1]}/redirect-must-not-fetch`),
+    false,
+  );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logPanel).toContainText('Přesměrování v rámci webu');
+  await expect(logPanel).toContainText('Přesměrování mimo web – nenásledováno');
+  await expect(logPanel).toContainText(
+    `Cíl přesměrování: ${origins[1]}/redirect-must-not-fetch`,
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  await expect(logPanel).toContainText(
+    `Cíl přesměrování: ${origins[1]}/redirect-must-not-fetch`,
+  );
+  assert.deepEqual(errors, []);
   assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches and persistent administrator limit notice.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching.',
   );
 } finally {
   releaseSlowPage?.();

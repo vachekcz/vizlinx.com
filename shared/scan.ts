@@ -35,6 +35,13 @@ export type FoundLink = {
   region: 'content' | 'navigation' | 'footer' | 'unknown';
   occurrences: number;
 };
+export type ScanRedirect =
+  | { kind: 'same_origin' | 'external'; targetUrl: string }
+  | {
+      kind: 'invalid';
+      targetUrl?: string;
+      reason?: 'unsupported_status' | 'invalid_target';
+    };
 export type PageResult = {
   sourceUrl: string;
   title: string;
@@ -42,6 +49,7 @@ export type PageResult = {
   status: PageStatus;
   httpStatus: number | null;
   error?: string;
+  redirect?: ScanRedirect;
   links: FoundLink[];
   discoveredUrls: string[];
   truncated: boolean;
@@ -101,6 +109,7 @@ export type ScanLogEvent = {
   httpStatus?: number;
   status?: PageStatus;
   linkCount?: number;
+  redirect?: ScanRedirect;
   reason?: ScanControl['limitReason'];
 };
 export type ScanLogResponse = { events: ScanLogEvent[]; truncated: boolean };
