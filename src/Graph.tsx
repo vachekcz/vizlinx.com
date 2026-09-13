@@ -8,7 +8,8 @@ import {
   Plus,
   RotateCcw,
 } from 'lucide-react';
-import { pageStatusLabel, useGraphData } from './graph-data';
+import { GraphExternalLink } from './ExternalLink';
+import { pageStatusLabel, siteUrl, useGraphData } from './graph-data';
 import type { Link, Page, Selection, Site } from './data';
 import ConnectionStroke from './ConnectionStroke';
 import {
@@ -43,7 +44,7 @@ function calculatePageLayout(site: Site, compact: boolean, pages: Page[]) {
   const count = pages.filter((page) => page.siteId === site.id).length;
   const columns = count > 6 ? (compact ? 3 : 4) : 2;
   const rows = Math.ceil(count / columns);
-  const width = columns * 112 - 6;
+  const width = columns * 144 - 6;
   const radius = Math.max(
     122,
     Math.ceil(Math.hypot(width / 2, ((rows - 1) * 43) / 2 + 15) + 25),
@@ -62,12 +63,18 @@ function calculatePagePosition(
     .findIndex((item) => item.id === page.id);
   const { columns, rows, width } = calculatePageLayout(site, compact, pages);
   return {
-    x: site.x - width / 2 + 15 + (index % columns) * 112,
+    x: site.x - width / 2 + 15 + (index % columns) * 144,
     y: site.y - ((rows - 1) * 43) / 2 + Math.floor(index / columns) * 43,
   };
 }
 
-type SiteBounds = { left: number; top: number; right: number; bottom: number };
+type SiteBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  domainWidth?: number;
+};
 
 const SITE_GAP = 32;
 
@@ -238,7 +245,12 @@ export default function Graph({
   resetKey,
   connectionStyle,
 }: Props) {
-  const { pages: allPages, aggregateConnections, live } = useGraphData();
+  const {
+    pages: allPages,
+    aggregateConnections,
+    pageUrl,
+    live,
+  } = useGraphData();
   const pageCounts = new Map<string, number>();
   const pages = live
     ? allPages.filter((page) => {
@@ -353,11 +365,17 @@ export default function Graph({
         const y = Number(circle.getAttribute('cy'));
         const radius = Number(circle.getAttribute('r'));
         const box = node.getBBox();
+        const domainWidth =
+          node
+            .querySelector<SVGTextElement>('.node-domain')
+            ?.getComputedTextLength() ?? 0;
         bounds[id] = {
+          domainWidth,
           left: Math.floor(Math.min(box.x - x, -radius - 10) + 0.001),
           top: Math.floor(Math.min(box.y - y, -radius - 10) + 0.001),
           right: Math.ceil(
-            Math.max(box.x + box.width - x, radius + 10) - 0.001,
+            Math.max(box.x + box.width - x, radius + 10, domainWidth / 2 + 32) -
+              0.001,
           ),
           bottom: Math.ceil(
             Math.max(box.y + box.height - y, radius + 10) - 0.001,
@@ -1096,6 +1114,16 @@ export default function Graph({
                     </text>
                   )}
                 </g>
+                <GraphExternalLink
+                  url={siteUrl(site)}
+                  x={
+                    site.x +
+                    (boundsFor(site).domainWidth ?? site.domain.length * 7) /
+                      2 +
+                    6
+                  }
+                  y={open ? site.y - radius + 19 : site.y + 5}
+                />
                 {open &&
                   sitePages.map((page) => {
                     const position = pagePosition(page, site, compact);
@@ -1104,58 +1132,68 @@ export default function Graph({
                     const action = () =>
                       onSelect({ type: 'page', id: page.id });
                     return (
-                      <g
-                        key={page.id}
-                        data-interactive="true"
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Stránka ${site.domain}${page.path}`}
-                        aria-pressed={active}
-                        className="page-node"
-                        data-page-status={page.status}
-                        onClick={action}
-                        onKeyDown={(event) => activate(event, action)}
-                      >
-                        {live && (
-                          <title>
-                            {page.url} · {pageStatusLabel(page)}
-                          </title>
-                        )}
-                        <rect
-                          x={position.x - 15}
-                          y={position.y - 14}
-                          width="106"
-                          height="29"
-                          rx="8"
-                          fill={active ? site.color : 'var(--surface, #ffffff)'}
-                          stroke={site.color}
-                          strokeOpacity={active ? 1 : 0.23}
-                          strokeDasharray={
-                            page.status && page.status !== 'ok'
-                              ? '3 2'
-                              : undefined
-                          }
-                        />
-                        <circle
-                          cx={position.x - 4}
-                          cy={position.y + 1}
-                          r="3"
-                          fill={active ? 'var(--badge-ink, #fff)' : site.color}
-                        />
-                        <text
-                          x={position.x + 5}
-                          y={position.y + 5}
-                          fill={
-                            active
-                              ? 'var(--badge-ink, #fff)'
-                              : 'var(--ink, #3c4a41)'
-                          }
-                          className="page-label"
+                      <g key={page.id}>
+                        <g
+                          data-interactive="true"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Stránka ${site.domain}${page.path}`}
+                          aria-pressed={active}
+                          className="page-node"
+                          data-page-status={page.status}
+                          onClick={action}
+                          onKeyDown={(event) => activate(event, action)}
                         >
-                          {page.path.length > 13
-                            ? `${page.path.slice(0, 12)}…`
-                            : page.path}
-                        </text>
+                          {live && (
+                            <title>
+                              {page.url} · {pageStatusLabel(page)}
+                            </title>
+                          )}
+                          <rect
+                            x={position.x - 15}
+                            y={position.y - 14}
+                            width="138"
+                            height="29"
+                            rx="8"
+                            fill={
+                              active ? site.color : 'var(--surface, #ffffff)'
+                            }
+                            stroke={site.color}
+                            strokeOpacity={active ? 1 : 0.23}
+                            strokeDasharray={
+                              page.status && page.status !== 'ok'
+                                ? '3 2'
+                                : undefined
+                            }
+                          />
+                          <circle
+                            cx={position.x - 4}
+                            cy={position.y + 1}
+                            r="3"
+                            fill={
+                              active ? 'var(--badge-ink, #fff)' : site.color
+                            }
+                          />
+                          <text
+                            x={position.x + 5}
+                            y={position.y + 5}
+                            fill={
+                              active
+                                ? 'var(--badge-ink, #fff)'
+                                : 'var(--ink, #3c4a41)'
+                            }
+                            className="page-label"
+                          >
+                            {page.path.length > 13
+                              ? `${page.path.slice(0, 12)}…`
+                              : page.path}
+                          </text>
+                        </g>
+                        <GraphExternalLink
+                          url={pageUrl(page)}
+                          x={position.x + 95}
+                          y={position.y - 13}
+                        />
                       </g>
                     );
                   })}

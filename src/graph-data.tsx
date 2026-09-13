@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { sites, pages, links } from './data';
-import type { Connection, GraphDataset, Link, Page } from './data';
+import type { Connection, GraphDataset, Link, Page, Site } from './data';
 
 export type { GraphDataset } from './data';
 export const demoDataset: GraphDataset = { sites, pages, links };
@@ -78,4 +78,8 @@ export function pageStatusLabel(page: Page) {
     default:
       return 'Ukázková stránka';
   }
+}
+
+export function siteUrl(site: Site) {
+  return site.origin ?? `https://${site.domain}`;
 }

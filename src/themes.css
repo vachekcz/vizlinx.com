@@ -114,8 +114,8 @@
     .detail-section-heading,
     .metadata,
     .metadata > div,
-    .detail-link-list > button,
-    .connection-list > button,
+    .detail-link-row,
+    .connection-select,
     td,
     th
   ) {
@@ -178,8 +178,8 @@
     .icon-button:hover,
     .outline-button:hover,
     .toolbar-button:hover,
-    .connection-list > button:hover,
-    .detail-link-list > button:hover,
+    .connection-select:hover,
+    .detail-link-row:hover,
     tbody tr:hover
   ) {
   background: var(--raised);
@@ -217,7 +217,7 @@
     .connection-profile p,
     .detail-tip,
     .empty-note,
-    .detail-link-list > button small,
+    .detail-link-row small,
     .url-stop code,
     .detail-title code,
     .url-connector,
@@ -250,7 +250,7 @@
   :is(
     .site-profile h2,
     .connection-list strong,
-    .detail-link-list > button strong,
+    .detail-link-row strong,
     .detail-title h2,
     .connection-profile h2,
     .workspace-stats strong,
@@ -258,7 +258,7 @@
     .search-field input,
     .inspector-stats strong,
     .empty-table h3,
-    .connection-list > button > svg
+    .connection-select > svg
   ) {
   color: var(--ink);
 }

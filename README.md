@@ -56,6 +56,7 @@ Stará data rozšíření zůstávají čitelná. Spuštění staré mapy přes 
 ## Ovládání dema
 
 - Klik na doménu otevře detail; dvojklik nebo „Prozkoumat stránky“ rozbalí její stránky na stejné pozici. Okolní bubliny se podle potřeby odsunou a ruční posuny zůstanou zachované. Tažení domény mění její polohu, tažení pozadí posouvá celou mapu. Po zaměření domény klávesou Tab ji posouvají šipky (Shift zvětší krok). Přehled obnoví výchozí rozložení.
+- Ikona ↗ u domény nebo URL otevře web v nové kartě. Je dostupná v bublinách, seznamu webů, detailech, tabulce i průběhu skenu včetně chyb a přesměrování. Kliknutí na název dál vybírá detail v mapě.
 - Klik na číslo nebo čáru propojení zobrazí směrové vazby. Výběr konkrétní vazby odhalí zdrojovou i cílovou URL a metadata.
 - Mapa podporuje tažení, zoom kolečkem a tlačítky, automatické zobrazení stránek při přiblížení a návrat do přehledu. Uzly a vazby lze vybrat i klávesnicí.
 - „Ukázka: 20 stránek“ otevře zvětšený cluster `index.example` na jeho současné pozici a zachová zoom i posun pohledu. Karty jsou rozmístěné podle počtu stránek a velikosti obrazovky. Pohled ukazuje vazby této domény; výběr stránky zvýrazní její spojnice a ostatní ztlumí. „Přehled“ obnoví celou mapu.

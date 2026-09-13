@@ -1130,7 +1130,7 @@ h1 > span {
   display: flex;
   flex-direction: column;
 }
-.connection-list > button {
+.connection-select {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1138,7 +1138,7 @@ h1 > span {
   text-align: left;
   border-bottom: 1px solid #f1f3ec;
 }
-.connection-list > button:hover {
+.connection-select:hover {
   background: #fafbf6;
 }
 .connection-list .site-mark.small {
@@ -1147,7 +1147,7 @@ h1 > span {
   border-radius: 7px;
   font-size: 17px;
 }
-.connection-list > button > span:nth-child(2) {
+.connection-select > span:nth-child(2) {
   flex: 1;
 }
 .connection-list strong {
@@ -1168,7 +1168,7 @@ h1 > span {
   font-weight: 500;
   color: #82916f;
 }
-.connection-list > button > svg {
+.connection-select > svg {
   color: #b4bda8;
 }
 .inspector-footer {
@@ -1215,7 +1215,7 @@ h1 > span {
 .connection-profile + .expand-button {
   margin-bottom: 20px;
 }
-.detail-link-list > button {
+.detail-link-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1225,18 +1225,14 @@ h1 > span {
   text-align: left;
   color: #98a68b;
 }
-.detail-link-list > button > span {
-  min-width: 0;
-  flex: 1;
-}
-.detail-link-list > button strong {
+.detail-link-row strong {
   display: block;
   font-size: 10px;
   font-weight: 500;
   color: #667858;
   overflow-wrap: anywhere;
 }
-.detail-link-list > button small {
+.detail-link-row small {
   display: block;
   font-size: 9px;
   line-height: 1.5;
@@ -1244,7 +1240,7 @@ h1 > span {
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
-.detail-link-list > button:hover {
+.detail-link-row:hover {
   background: #f7f9f1;
 }
 .detail-tip,
@@ -1869,7 +1865,7 @@ tbody tr:hover {
     font-size: 12px;
     padding: 12px;
   }
-  .connection-list > button {
+  .connection-select {
     padding: 14px 0;
   }
   .connection-list .site-mark.small {
@@ -1887,11 +1883,11 @@ tbody tr:hover {
     width: 30px;
     height: 30px;
   }
-  .detail-link-list > button strong,
+  .detail-link-row strong,
   .metadata {
     font-size: 12px;
   }
-  .detail-link-list > button small,
+  .detail-link-row small,
   .url-stop code,
   .detail-title code {
     font-size: 11px;
@@ -1957,5 +1953,95 @@ tbody tr:hover {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* Keep external navigation separate from selection and drag controls. */
+.external-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 6px;
+  color: var(--accent, #2457ff);
+  vertical-align: middle;
+}
+.external-link:hover {
+  background: var(--raised, #eaf0ff);
+}
+.external-url {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.external-url > :first-child {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.site-profile > .external-url {
+  align-items: baseline;
+}
+.site-select strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.site-select small {
+  overflow-wrap: anywhere;
+}
+.graph-external-link {
+  color: var(--accent, #2457ff);
+  cursor: pointer;
+}
+.graph-external-link > rect {
+  fill: var(--surface, #fff);
+  stroke: transparent;
+}
+.graph-external-link:hover > rect,
+.graph-external-link:focus-visible > rect {
+  fill: var(--raised, #eaf0ff);
+  stroke: var(--accent, #2457ff);
+}
+.connection-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.connection-select {
+  flex: 1;
+  min-width: 0;
+  border-bottom: 0;
+}
+.connection-select > span:nth-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.detail-link-urls {
+  flex: 1;
+  min-width: 0;
+}
+.detail-link-urls button {
+  padding: 4px 0;
+  text-align: left;
+}
+.detail-link-row > svg,
+.detail-link-row > button {
+  flex-shrink: 0;
+}
+.detail-link-row small {
+  margin-top: 0;
+}
+.connection-profile h2 .external-link svg {
+  color: var(--accent);
+}
+@media (pointer: coarse) {
+  .external-link {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
   }
 }

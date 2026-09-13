@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import ExternalLink from './ExternalLink';
 import {
   AlertTriangle,
   Check,
@@ -140,7 +141,12 @@ export function ScanActivityStatus({
       )}
       <div className="scan-activity-description">
         <strong>{title}</strong>
-        {detail && <span title={detail}>{detail}</span>}
+        {detail && (
+          <span className="scan-activity-detail">
+            <span title={detail}>{detail}</span>
+            {running && <ExternalLink url={detail} />}
+          </span>
+        )}
       </div>
       <span className="scan-activity-count">
         {scan.results.length}{' '}
@@ -384,12 +390,14 @@ function LogDrawer({
                   )}
                   {(event.url || event.origin) && (
                     <span className="scan-log-url">
-                      {event.url || event.origin}
+                      <span>{event.url || event.origin}</span>
+                      <ExternalLink url={event.url || event.origin || ''} />
                     </span>
                   )}
                   {event.redirect?.targetUrl && (
                     <span className="scan-log-url">
-                      Cíl přesměrování: {event.redirect.targetUrl}
+                      <span>Cíl přesměrování: {event.redirect.targetUrl}</span>
+                      <ExternalLink url={event.redirect.targetUrl} />
                     </span>
                   )}
                 </div>

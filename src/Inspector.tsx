@@ -11,7 +11,8 @@ import {
   Play,
   X,
 } from 'lucide-react';
-import { pageStatusLabel, useGraphData } from './graph-data';
+import ExternalLink from './ExternalLink';
+import { pageStatusLabel, siteUrl, useGraphData } from './graph-data';
 import type { Link, Selection, Site } from './data';
 
 const observationFormatter = new Intl.DateTimeFormat('cs-CZ', {
@@ -168,7 +169,10 @@ function LinkDetails({ link }: { link: Link }) {
         />
         <span className="eyebrow">ZDROJOVÁ STRÁNKA</span>
         <strong>{link.source.title}</strong>
-        <code>{pageUrl(link.source)}</code>
+        <div className="external-url">
+          <code>{pageUrl(link.source)}</code>
+          <ExternalLink url={pageUrl(link.source)} />
+        </div>
       </div>
       <div className="url-connector">
         <ArrowRight size={14} />
@@ -181,7 +185,10 @@ function LinkDetails({ link }: { link: Link }) {
         />
         <span className="eyebrow">CÍLOVÁ STRÁNKA</span>
         <strong>{link.target.title}</strong>
-        <code>{pageUrl(link.target)}</code>
+        <div className="external-url">
+          <code>{pageUrl(link.target)}</code>
+          <ExternalLink url={pageUrl(link.target)} />
+        </div>
       </div>
       <dl className="metadata">
         <div>
@@ -226,7 +233,7 @@ function LinkList({
   links: Link[];
   onSelect: Props['onSelect'];
 }) {
-  const { getSite, live } = useGraphData();
+  const { getSite, pageUrl, live } = useGraphData();
   if (!links.length)
     return (
       <p className="empty-note">
@@ -238,23 +245,39 @@ function LinkList({
   return (
     <div className="detail-link-list">
       {links.slice(0, live ? 200 : undefined).map((link) => (
-        <button
-          key={link.id}
-          onClick={() => onSelect({ type: 'link', id: link.id })}
-        >
-          <FileText size={15} />
-          <span>
-            <strong>
-              {getSite(link.source.siteId).domain}
-              {link.source.path}
-            </strong>
-            <small>
-              → {getSite(link.target.siteId).domain}
-              {link.target.path}
-            </small>
-          </span>
-          <ChevronRight size={14} />
-        </button>
+        <div className="detail-link-row" key={link.id}>
+          <FileText size={15} aria-hidden="true" />
+          <div className="detail-link-urls">
+            <div className="external-url">
+              <button
+                aria-label={`${getSite(link.source.siteId).domain}${link.source.path} → ${getSite(link.target.siteId).domain}${link.target.path}`}
+                onClick={() => onSelect({ type: 'link', id: link.id })}
+              >
+                <strong>
+                  {getSite(link.source.siteId).domain}
+                  {link.source.path}
+                </strong>
+              </button>
+              <ExternalLink url={pageUrl(link.source)} />
+            </div>
+            <div className="external-url">
+              <button onClick={() => onSelect({ type: 'link', id: link.id })}>
+                <small>
+                  → {getSite(link.target.siteId).domain}
+                  {link.target.path}
+                </small>
+              </button>
+              <ExternalLink url={pageUrl(link.target)} />
+            </div>
+          </div>
+          <button
+            className="icon-button"
+            aria-label={`Detail odkazu ${pageUrl(link.source)} → ${pageUrl(link.target)}`}
+            onClick={() => onSelect({ type: 'link', id: link.id })}
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
       ))}
       {live && links.length > 200 && (
         <p className="empty-note">
@@ -327,7 +350,10 @@ export default function Inspector({
                   : 'Ukázkový web'
                 : 'Neprozkoumáno'}
             </span>
-            <h2>{site.domain}</h2>
+            <div className="external-url">
+              <h2>{site.domain}</h2>
+              <ExternalLink url={siteUrl(site)} />
+            </div>
             <p>
               {site.name} <span>·</span> {site.category}
             </p>
@@ -443,23 +469,26 @@ export default function Inspector({
                 const outgoing = item.source.id === site.id;
                 const other = outgoing ? item.target : item.source;
                 return (
-                  <button
-                    key={item.id}
-                    onClick={() =>
-                      onSelect({ type: 'connection', id: item.id })
-                    }
-                  >
-                    <SiteMark site={other} small />
-                    <span>
-                      <strong>{other.domain}</strong>
-                      <small>
-                        {outgoing ? 'Odchozí' : 'Příchozí'}{' '}
-                        <ArrowRight size={10} />
-                      </small>
-                    </span>
-                    <b>{item.links.length}</b>
-                    <ChevronRight size={14} />
-                  </button>
+                  <div className="connection-row" key={item.id}>
+                    <button
+                      className="connection-select"
+                      onClick={() =>
+                        onSelect({ type: 'connection', id: item.id })
+                      }
+                    >
+                      <SiteMark site={other} small />
+                      <span>
+                        <strong>{other.domain}</strong>
+                        <small>
+                          {outgoing ? 'Odchozí' : 'Příchozí'}{' '}
+                          <ArrowRight size={10} />
+                        </small>
+                      </span>
+                      <b>{item.links.length}</b>
+                      <ChevronRight size={14} />
+                    </button>
+                    <ExternalLink url={siteUrl(other)} />
+                  </div>
                 );
               })}
           </div>
@@ -475,7 +504,10 @@ export default function Inspector({
           <div className="detail-title">
             <SiteMark site={getSite(page.siteId)} />
             <h2>{page.title}</h2>
-            <code>{pageUrl(page)}</code>
+            <div className="external-url">
+              <code>{pageUrl(page)}</code>
+              <ExternalLink url={pageUrl(page)} />
+            </div>
             <span className="status-chip">
               {live
                 ? pageStatusLabel(page)
@@ -507,9 +539,15 @@ export default function Inspector({
               <SiteMark site={connection.target} />
             </div>
             <h2>
-              {connection.source.domain}
+              <span className="external-url">
+                <span>{connection.source.domain}</span>
+                <ExternalLink url={siteUrl(connection.source)} />
+              </span>
               <ArrowRight size={16} />
-              {connection.target.domain}
+              <span className="external-url">
+                <span>{connection.target.domain}</span>
+                <ExternalLink url={siteUrl(connection.target)} />
+              </span>
             </h2>
             <p>{connection.links.length} unikátních dvojic stránek</p>
           </div>

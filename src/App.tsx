@@ -24,11 +24,17 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
+import ExternalLink from './ExternalLink';
 import Graph from './Graph';
 import Inspector, { SiteMark } from './Inspector';
 import { links as defaultLinks, strengthLinks } from './data';
 import type { GraphDataset, Selection } from './data';
-import { demoDataset, GraphDataProvider, useGraphData } from './graph-data';
+import {
+  demoDataset,
+  GraphDataProvider,
+  siteUrl,
+  useGraphData,
+} from './graph-data';
 import { useTheme } from './themes';
 import { connectionStyles } from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
@@ -427,7 +433,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                     >
                       <SiteMark site={site} small />
                       <span>
-                        <strong>{site.domain}</strong>
+                        <strong title={site.domain}>{site.domain}</strong>
                         <small>
                           <i
                             className={
@@ -441,6 +447,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                         </small>
                       </span>
                     </button>
+                    <ExternalLink url={siteUrl(site)} />
                     {site.scanned && (!live || live.onPauseSite) && (
                       <button
                         className="site-pause icon-button"
@@ -775,16 +782,26 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                                   background: getSite(link.source.siteId).color,
                                 }}
                               />
-                              <strong>
-                                {getSite(link.source.siteId).domain}
-                              </strong>
-                              <small>{link.source.path}</small>
+                              <div className="external-url">
+                                <span>
+                                  <strong>
+                                    {getSite(link.source.siteId).domain}
+                                  </strong>
+                                  <small>{link.source.path}</small>
+                                </span>
+                                <ExternalLink url={pageUrl(link.source)} />
+                              </div>
                             </td>
                             <td>
-                              <strong>
-                                {getSite(link.target.siteId).domain}
-                              </strong>
-                              <small>{link.target.path}</small>
+                              <div className="external-url">
+                                <span>
+                                  <strong>
+                                    {getSite(link.target.siteId).domain}
+                                  </strong>
+                                  <small>{link.target.path}</small>
+                                </span>
+                                <ExternalLink url={pageUrl(link.target)} />
+                              </div>
                             </td>
                             <td>
                               <span className="rel-tag">{link.rel || '—'}</span>
