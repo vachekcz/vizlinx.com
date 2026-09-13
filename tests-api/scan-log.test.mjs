@@ -118,6 +118,15 @@ test('the retained log is chronological, capped at 500, and reports truncation p
     ).count,
     500,
   );
+  const trimmedAgain = await call({ id, events: [event('start:501')] });
+  assert.equal(trimmedAgain.events.length, 500);
+  assert.equal(trimmedAgain.truncated, true);
+  assert.equal(trimmedAgain.events[0].id, initial.events[2].id);
+  assert.deepEqual(
+    await call({ id, events: [event('start:501')], pauseGeneration: 99 }),
+    trimmedAgain,
+    'Duplicate and rejected transitions must not trim an already capped log',
+  );
 });
 
 test('duplicate event keys are scoped to the map and do not duplicate notifications', async () => {

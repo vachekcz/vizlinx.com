@@ -24,12 +24,12 @@ export function scanLogStatements(
       scanId,
     ),
     env.DB.prepare(
-      `UPDATE scans SET scan_log_truncated = 1 WHERE id = ?
-      AND scan_log_truncated = 0 AND (SELECT COUNT(*) FROM scan_events WHERE scan_id = ?) > ?`,
+      `UPDATE scans SET scan_log_truncated = 1 WHERE id = ? AND changes() = 1
+      AND EXISTS (SELECT 1 FROM scan_events WHERE scan_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
     ).bind(scanId, scanId, MAX_EVENTS),
     env.DB.prepare(
-      `DELETE FROM scan_events WHERE scan_id = ? AND id <
-      (SELECT id FROM scan_events WHERE scan_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?)`,
+      `DELETE FROM scan_events WHERE scan_id = ? AND id < CASE WHEN changes() = 1 THEN
+      (SELECT id FROM scan_events WHERE scan_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?) ELSE NULL END`,
     ).bind(scanId, scanId, MAX_EVENTS - 1),
   ];
 }
