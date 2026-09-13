@@ -29,35 +29,63 @@ test('keeps page-link arrowheads outside expanded target cards as the map change
         const tip = path.getPointAtLength(length);
         const before = path.getPointAtLength(Math.max(0, length - 0.1));
         const angle = Math.atan2(tip.y - before.y, tip.x - before.x);
-        // Sample the filled head, including its outline, in graph coordinates.
-        const head = [
-          [0, 0],
-          [-13, -6.5],
-          [-10, 0],
-          [-13, 6.5],
-        ];
-        const covered = head.some(([x, y]) => {
+        const markerId = path.getAttribute('marker-end')!.slice(5, -1);
+        const marker = document.querySelector<SVGMarkerElement>(
+          `marker#${CSS.escape(markerId)}`,
+        )!;
+        const head = marker.querySelector<SVGPathElement>('path')!;
+        const headBounds = head.getBBox();
+        const outline =
+          Number.parseFloat(getComputedStyle(head).strokeWidth) / 2;
+        const headLength = head.getTotalLength();
+        // Sample the actual outline at sub-pixel intervals in marker coordinates.
+        const samples = Math.ceil(headLength / 0.5);
+        const covered = Array.from({ length: samples + 1 }, (_, index) => {
+          const point = head.getPointAtLength((index / samples) * headLength);
+          const x = point.x - marker.refX.baseVal.value;
+          const y = point.y - marker.refY.baseVal.value;
           const px = tip.x + x * Math.cos(angle) - y * Math.sin(angle);
           const py = tip.y + x * Math.sin(angle) + y * Math.cos(angle);
           return (
-            px >= bounds.x - 1 &&
-            px <= bounds.x + bounds.width + 1 &&
-            py >= bounds.y - 1 &&
-            py <= bounds.y + bounds.height + 1
+            px >= bounds.x - outline &&
+            px <= bounds.x + bounds.width + outline &&
+            py >= bounds.y - outline &&
+            py <= bounds.y + bounds.height + outline
           );
-        });
+        }).some(Boolean);
         const distance = Math.hypot(
           Math.max(bounds.x - tip.x, 0, tip.x - bounds.x - bounds.width),
           Math.max(bounds.y - tip.y, 0, tip.y - bounds.y - bounds.height),
         );
-        return [{ targetName, covered, distance }];
+        return [
+          {
+            targetName,
+            covered,
+            distance,
+            outline,
+            headExtent: Math.hypot(headBounds.width, headBounds.height),
+            // The coordinate comparison requires unscaled user-space markers.
+            unscaled:
+              marker.getAttribute('markerUnits') === 'userSpaceOnUse' &&
+              marker.markerWidth.baseVal.value ===
+                marker.viewBox.baseVal.width &&
+              marker.markerHeight.baseVal.value ===
+                marker.viewBox.baseVal.height,
+          },
+        ];
       });
     });
     expect(results.length).toBeGreaterThan(0);
     for (const result of results) {
       expect(result.covered, result.targetName).toBe(false);
-      expect(result.distance, result.targetName).toBeGreaterThanOrEqual(7);
-      expect(result.distance, result.targetName).toBeLessThan(12);
+      expect(result.unscaled, result.targetName).toBe(true);
+      expect(result.distance, result.targetName).toBeGreaterThan(
+        result.outline,
+      );
+      // Keep the direction cue adjacent to the card without coupling to clipping padding.
+      expect(result.distance, result.targetName).toBeLessThan(
+        result.headExtent,
+      );
     }
   }
 
