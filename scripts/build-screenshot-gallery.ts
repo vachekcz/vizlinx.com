@@ -84,6 +84,14 @@ try {
       `Ignored ${pngs.length - rendered} screenshot(s) outside the <viewport>/<section>/<state>.png convention.`,
     );
   }
+  if (rendered === 0) {
+    // Every capture missed the naming convention: publishing would replace the
+    // last working gallery with an empty page, so fail instead.
+    console.error(
+      'No screenshot matched the naming convention; nothing to publish.',
+    );
+    process.exit(1);
+  }
   const html = renderGalleryHtml(model, {
     generatedAt: new Date().toISOString(),
     commitSha: process.env.GALLERY_COMMIT_SHA ?? 'unknown',

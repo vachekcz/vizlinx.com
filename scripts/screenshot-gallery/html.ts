@@ -30,7 +30,9 @@ export const GALLERY_TEXTS = {
 export type GalleryLang = keyof typeof GALLERY_TEXTS;
 
 export function isGalleryLang(value: string): value is GalleryLang {
-  return value in GALLERY_TEXTS;
+  // Own keys only: `in` would also accept inherited names such as "toString"
+  // from GALLERY_LANG and crash the render on a missing texts table.
+  return Object.hasOwn(GALLERY_TEXTS, value);
 }
 
 export type GalleryMeta = {

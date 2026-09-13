@@ -26,8 +26,9 @@ const webServerCommand = process.env.CI
 
 export default defineConfig({
   testDir: './tests/tour',
-  // The tour is a narrative: states build on each other within a spec, and
-  // parallel workers competing over one local D1 produce flaky captures.
+  // Tests inside one spec run in file order so a section's states can build
+  // on each other. Separate spec files still spread across `workers`, so keep
+  // sections independent of one another (own data, no shared mutable state).
   fullyParallel: false,
   timeout: 90_000,
   forbidOnly: Boolean(process.env.CI),
@@ -41,9 +42,10 @@ export default defineConfig({
     // "system" fallback renders the same on every machine.
     colorScheme: 'light',
     // Animations would otherwise land mid-transition in the screenshots.
-    // reducedMotion only exists inside contextOptions — as a bare `use` key it
-    // is silently ignored (and rejected by tsc, which is why this config is
-    // part of tsconfig.node.json's include).
+    // Current Playwright accepts `reducedMotion` both as a bare `use` key and
+    // inside `contextOptions`; it is grouped here with the other emulation
+    // options. This config stays in tsconfig.node.json's include so option
+    // typos surface in `tsc`, not in a nightly run.
     contextOptions: { reducedMotion: 'reduce' },
   },
   // Project names become the top-level folder in screenshots-output/ and the
