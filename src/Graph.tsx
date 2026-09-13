@@ -376,7 +376,7 @@ export default function Graph({
       previous !== null &&
       (previous.compact !== compact || previous.resetKey !== resetKey);
     if (reset || previous === null) automaticLayout.current = true;
-    if (expanded.length > 0) automaticLayout.current = false;
+    if (focusedExpanded.length > 0) automaticLayout.current = false;
     const automatic = automaticLayout.current;
     const balanced = live && automatic;
     const shiftedBase =

@@ -444,6 +444,19 @@ test('balances crowded live domains by default and preserves manual placement as
   expect(await sitePositions(page)).toEqual(initialPositions);
   const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
   const initialFrame = await graph.getAttribute('viewBox');
+  for (let step = 0; step < 3; step++)
+    await page
+      .getByRole('button', { name: 'Přiblížit mapu', exact: true })
+      .click();
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(9);
+  await expectSiteSpacing(page, false);
+  for (let step = 0; step < 3; step++)
+    await page
+      .getByRole('button', { name: 'Oddálit mapu', exact: true })
+      .click();
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(0);
+  await expectSiteSpacing(page);
+  await expectBalancedLiveLayout(page);
   current = { ...current, results: [result({ links })] };
   await pollScan();
   await expect(page.locator('.site-node')).toHaveCount(11);
