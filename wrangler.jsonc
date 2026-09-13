@@ -18,6 +18,7 @@
         "max_batch_timeout": 0,
         "max_concurrency": 3,
         "max_retries": 3,
+        "dead_letter_queue": "vizlinx-com-crawl-dead-letter",
         "retry_delay": 30,
       },
     ],

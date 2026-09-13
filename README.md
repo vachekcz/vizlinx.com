@@ -47,6 +47,8 @@ Limit je pevně 100 stránek na origin včetně neúspěšných pokusů. Při do
 
 Skener respektuje robots.txt pro `VizlinxBot`, čte HTML do 2 MiB, neposílá cookies a nenásleduje přesměrování. Je potřeba zadat konečnou URL, včetně správného `www`. Externí cíle se zobrazí jako známé odkazy, ale neprocházejí se bez přidání originu. Mapa uchovává výsledky 30 dní od založení a patří anonymní relaci stejného prohlížeče. Samotné předání URL nezpřístupní mapu jiným lidem.
 
+HTTP 429 pozastaví další požadavky na dotčený web a zaznamená důvod do průběhu skenu. Ostatní weby pokračují. Až omezení pomine, web lze znovu povolit v jeho detailu a případně obnovit celý sken. Samotné změny intervalu nebo pauzy jednotlivého webu nespotřebovávají denní kvótu startů.
+
 Stará data rozšíření zůstávají čitelná. Spuštění staré mapy přes web ji převede na serverový běh a zneplatní původní párování. Historický návod rozšíření je v [extension/README.md](extension/README.md).
 
 ## Ovládání dema
@@ -73,6 +75,7 @@ npm test
 npm run test:api
 npm run test:crawler
 npm run test:scan-log
+npm run test:fetch-result
 npm run test:extension
 npm run test:prototype
 npm run deploy:check

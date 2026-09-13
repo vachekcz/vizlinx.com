@@ -20,6 +20,10 @@ Zvýšení nad 100 není dostupné ve veřejném API ani přes změnu pole formu
 
 ## Ochrana spotřeby
 
+HTTP 429 na stránce uloží chybový výsledek a atomicky pozastaví daný origin. Další originy pokračují; nevyřízené URL zůstávají uložené. Obnovení celého skenu samo pauzu originu nezruší: vlastník jej nejprve povolí v detailu webu. Událost `site_throttled` vysvětlí důvod v logu. Pozdní odpověď po změně generace nesmí pozastavit origin v novém běhu.
+
+Limit startů se účtuje při explicitním POST `/start` nebo PATCH se stavem `waiting`, nikoli při běžné změně intervalu či pauzy originu. Změny nastavení současně neposouvají začátek probíhajícího časového limitu. Robots má samostatný limit 64 KiB vynucený při čtení streamu i přes `Content-Length`; zkracování velkého výsledku počítá UTF-8/JSON bajty průběžně v lineárním čase.
+
 | Omezení | Hodnota |
 | --- | --- |
 | Weby v mapě | 3 přesné originy |
@@ -54,6 +58,8 @@ Testy používají izolovanou D1 a kontrolované HTTP odpovědi. `test:crawler` 
 
 ## Nasazení a upozornění
 
+Consumer používá dead-letter queue `vizlinx-com-crawl-dead-letter` pro zprávy, které vyčerpaly tři opakování. Je vytvořená s retencí 86 400 sekund, bez automatického consumera: poskytuje čas na diagnostiku a ruční obnovu, není trvalým archivem ani automatickou opravou. Správce může zprávu prohlédnout v Cloudflare Queues a vrátit nezměněný payload do hlavní fronty; generace/checkpoint odmítnou zastaralou práci. Nepoužitý producer binding není potřeba, přesměrování zajišťuje `dead_letter_queue` v konfiguraci consumera. [Dokumentace Cloudflare](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/) popisuje směrování po vyčerpání retry limitu. Pro nový účet je potřeba tuto frontu vytvořit před deployem: `npx wrangler queues create vizlinx-com-crawl-dead-letter --message-retention-period-secs 86400`.
+
 Queue se jednorázově vytvoří příkazem `npx wrangler queues create vizlinx-com-crawl --message-retention-period-secs 86400`; v tomto účtu už existuje. Migrace `0003_server_crawler.sql`, `0004_crawl_ready.sql` a `0005_scan_log.sql` rozšiřují stávající D1 bez mazání map. Log a aktivita vznikají od nasazení nové verze; historie starších výsledků se nedoplňuje. `npm run deploy` sestaví aplikaci, aplikuje migrace a nasadí producenta i consumera. Token potřebuje Workers Scripts Edit, D1 Edit a Queues Edit.
 
 Na účtu bylo ověřeno aktivní `Billing Budget Alert` s prahem 5 USD a jedním e-mailovým příjemcem. Tato existující politika platí pro účtovanou spotřebu napříč účtem, nikoli výhradně pro Vizlinx. Pokus vytvořit dřívější upozornění při 0,01 USD pro stejného existujícího příjemce skončil 403: současný token dovoluje čtení politik, ale chybí mu Notifications Write. Nic se nezměnilo. Dřívější upozornění lze nastavit v dashboardu přes Billing → Billable Usage nebo po doplnění oprávnění tokenu. [Cloudflare Budget alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/) potvrzuje, že upozornění samo spotřebu nezastaví.
@@ -80,3 +86,9 @@ Stálý indikátor ukazuje načítání robots nebo stránky, čekání na front
 - Lokální skutečný sken: 11 stránek, 14 uložených událostí, konečný stav `completed`. Opakované načtení vrátí stejný log a požadavek bez vlastnické cookie dostane 401.
 - Migrace `0005_scan_log.sql` aplikována lokálně i do produkční D1 bez mazání stávajících map.
 - Produkční verze `af8e6f4a-bfea-4b82-93d9-652b64cac2ef` dokončila reálný sken galerie: 11 stránek a 14 událostí (start, robots, výsledky a dokončení). Ověřeno opakované načtení totožné historie, konečná aktivita `completed`, 401 bez vlastnické cookie a načtení aktuálních frontendových assets.
+
+## Opravy po review – 13. 9. 2026
+
+Review doplnilo pauzu originu po HTTP 429, oddělilo kvótu startů od běžných změn nastavení, zpřísnilo streamový limit robots a odstranilo kvadratické zkracování velkých výsledků. API test kontroluje celý Queue payload i zpoždění. Starší skeny z rozšíření neukládají serverovou fázi `queued`; jejich progress odstraňuje případnou historickou aktivitu. Úklid logu navazuje jen na skutečně vloženou událost, trim se provede pouze při překročení 500 záznamů.
+
+Produkční konfigurace fronty byla ověřena přes Cloudflare API: consumer skutečně směruje vyčerpané retry do `vizlinx-com-crawl-dead-letter`, která má retenci 86 400 sekund a žádný automatický consumer. Testy čtení streamu a velikosti výsledku: 9; API po doplnění regresí: 29; crawler: 18; log: 4. Počet API scénářů zahrnuje parametrizovanou smyčku `rotate/append/expire`, proto jej nelze odvodit prostým počítáním výskytů `test(`. Dřívější počty 25 a 27 popisují předchozí ověřené verze.
