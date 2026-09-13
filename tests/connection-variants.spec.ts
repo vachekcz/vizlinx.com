@@ -63,6 +63,16 @@ test('drags a domain independently at zoom and updates its connections', async (
     y: before.y + before.height / 2,
   };
   const dx = testInfo.project.name === 'mobile' ? 45 : 85;
+  const expectDragDistance = async () => {
+    await expect
+      .poll(async () => Math.round((await node.boundingBox())!.x - before.x))
+      .toBe(dx);
+    await expect
+      .poll(async () => Math.round((await node.boundingBox())!.y - before.y))
+      .toBe(-25);
+  };
+  let movedX: string | null;
+  let movedY: string | null;
   if (testInfo.project.name === 'mobile') {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Input.dispatchTouchEvent', {
@@ -77,6 +87,9 @@ test('drags a domain independently at zoom and updates its connections', async (
         ],
       });
     }
+    await expectDragDistance();
+    movedX = await node.getAttribute('cx');
+    movedY = await node.getAttribute('cy');
     await cdp.send('Input.dispatchTouchEvent', {
       type: 'touchEnd',
       touchPoints: [],
@@ -86,11 +99,14 @@ test('drags a domain independently at zoom and updates its connections', async (
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(start.x + dx, start.y - 25, { steps: 5 });
+    await expectDragDistance();
+    movedX = await node.getAttribute('cx');
+    movedY = await node.getAttribute('cy');
     await page.mouse.up();
   }
-  await expect
-    .poll(async () => Math.round((await node.boundingBox())!.x - before.x))
-    .toBe(dx);
+  // Releasing a drag may refit the viewBox around displaced neighbours.
+  await expect(node).toHaveAttribute('cx', movedX!);
+  await expect(node).toHaveAttribute('cy', movedY!);
   await expectSiteSpacing(page, false);
   await expect(page.getByTestId('graph-camera')).toHaveAttribute(
     'transform',
@@ -100,7 +116,8 @@ test('drags a domain independently at zoom and updates its connections', async (
   await page
     .getByRole('button', { name: 'Noční režim', pressed: true })
     .click();
-  expect(Math.round((await node.boundingBox())!.x - before.x)).toBe(dx);
+  await expect(node).toHaveAttribute('cx', movedX!);
+  await expect(node).toHaveAttribute('cy', movedY!);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
   await expect(node).toHaveAttribute('cx', initialX!);
   await expectSiteSpacing(page);
