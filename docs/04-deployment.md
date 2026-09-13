@@ -52,7 +52,7 @@ Staging ani preview URL nejsou (`preview_urls: false`); PR se ověřují testy a
 |---|---|---|---|
 | `CRAWLER_ENABLED` | var | `"true"` | provozní vypínač skeneru: jiná hodnota než `"true"` → `POST /start` a `/rescan` vrací 503, běžící tick skončí jako `paused` (`worker/crawler.ts:133`, `worker/crawler.ts:621`, `worker/scan-history.ts:217`); čtení map funguje dál |
 | `ADMIN_EMAIL` | var | `""` | veřejný kontakt vracený z `GET /api/v1/config`; UI z něj dělá tlačítko při dosažení limitu, prázdný řetězec = jen textová výzva (`worker/index.ts:221`) |
-| `CLOUDFLARE_API_TOKEN` | secret pro CLI | — | jen pro `npm run db:remote` a `wrangler deploy`. Oprávnění podle `.env.example`: Workers Scripts Edit, D1 Edit, Queues Edit a správa vlastních domén zóny `vizlinx.com`. Skutečný rozsah tokenu není v repu ověřitelný; `docs/tasks/server-scan-prototype.md` uvádí jen první tři |
+| `CLOUDFLARE_API_TOKEN` | secret pro CLI | — | jen pro `npm run db:remote` a `wrangler deploy`. Oprávnění podle `.env.example`: Workers Scripts Edit, D1 Edit, Queues Edit a správa vlastních domén zóny `vizlinx.com`. Skutečný rozsah tokenu není v repu ověřitelný; [archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype) uvádí jen první tři |
 
 Po změně `vars` nebo bindingů spusť `npm run typegen` a commitni `worker-configuration.d.ts` — `Env` je z něj typovaný (`CRAWLER_ENABLED: "true"` je literal type, proto kód porovnává na `'true'`).
 
@@ -68,20 +68,20 @@ Lokální `dev:api` a `typegen` běží s `--env-file=/dev/null`: wrangler by ji
 2. Job `deploy` běží jen pro `refs/heads/main` mimo `pull_request` a má `needs: verify`: `npm ci`, stáhne artefakt `site` do `dist/`, `npm run db:remote`, `npx wrangler deploy` — obojí s `CLOUDFLARE_API_TOKEN`. Nasazuje se **přesně ten build, který prošel testy**, ne nový.
 3. `concurrency: vizlinx-${{ github.ref }}` bez `cancel-in-progress` — dva pushe do `main` se nasadí postupně, ne přes sebe. `permissions: contents: read`.
 
-**Ručně:** `npm run deploy` = `npm run build && npm run db:remote && wrangler deploy` (token z `.env`, wrangler ho načte sám). Před tím `npm run deploy:check` = `npm run build && wrangler deploy --dry-run` — funguje bez tokenu, vypíše bindingy a velikost uploadu. Pozor: dry-run u `env.DB` vypisuje nulové `preview_database_id`; skutečný deploy binduje `vizlinx-scans` (ověřeno přes Cloudflare API po nasazení 2026-09-12, `docs/tasks/server-scan-prototype.md:81`, nikoli v tomto repu).
+**Ručně:** `npm run deploy` = `npm run build && npm run db:remote && wrangler deploy` (token z `.env`, wrangler ho načte sám). Před tím `npm run deploy:check` = `npm run build && wrangler deploy --dry-run` — funguje bez tokenu, vypíše bindingy a velikost uploadu. Pozor: dry-run u `env.DB` vypisuje nulové `preview_database_id`; skutečný deploy binduje `vizlinx-scans` (ověřeno přes Cloudflare API po nasazení 2026-09-12, `[archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype):81`, nikoli v tomto repu).
 
 **Ověření po deployi:** `curl -s https://vizlinx.com/api/v1/config` vrací `{"adminEmail":…,"maxPagesPerSite":100}`; `curl -sI https://vizlinx.com/` má `x-robots-tag: noindex, nofollow` z `public/_headers`. Verzi a ID nasazení ukazuje Cloudflare dashboard → Workers & Pages → `vizlinx-com` → Deployments (příkazy `wrangler deployments` / `wrangler rollback` nebyly pro tuto dokumentaci spuštěny).
 
 **Rollback:** repo nemá skript. Migrace jsou aditivní ([03](./03-database.md)), takže revert commitu na `main` (projde `verify` i `deploy`) je bezpečná cesta; okamžitý návrat na předchozí verzi Workeru umožňuje dashboard.
 
-**První nasazení do nového účtu** vyžaduje předem existující fronty `vizlinx-com-crawl` a `vizlinx-com-crawl-dead-letter` a D1 databázi; příkazy `wrangler queues create …` jsou zapsané v `docs/tasks/server-scan-prototype.md:65`, tady nebyly spouštěny.
+**První nasazení do nového účtu** vyžaduje předem existující fronty `vizlinx-com-crawl` a `vizlinx-com-crawl-dead-letter` a D1 databázi; příkazy `wrangler queues create …` jsou zapsané v `[archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype):65`, tady nebyly spouštěny.
 
 ---
 
 ## Fronta a background práce
 
 - Jediný background mechanismus je **consumer fronty ve stejném Workeru** (`export default { queue }`, `worker/index.ts:636`). Žádné cron `triggers` ani Durable Objects; úklid dat se veze na HTTP požadavcích ([03](./03-database.md)).
-- Consumer zpracuje 1 zprávu na invocation, až 3 souběžně (různé mapy, nebo opožděné duplicity — ty vyřeší lease). Neúspěch → `retry` po 120 s z kódu; po vyčerpání `max_retries: 3` zpráva končí ve `vizlinx-com-crawl-dead-letter`, která nemá consumer (retence 86 400 s podle `docs/tasks/server-scan-prototype.md:65`; nastavení fronty není v repu).
+- Consumer zpracuje 1 zprávu na invocation, až 3 souběžně (různé mapy, nebo opožděné duplicity — ty vyřeší lease). Neúspěch → `retry` po 120 s z kódu; po vyčerpání `max_retries: 3` zpráva končí ve `vizlinx-com-crawl-dead-letter`, která nemá consumer (retence 86 400 s podle `[archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype):65`; nastavení fronty není v repu).
 - **Jak ověřit, že žije:** Cloudflare dashboard → Queues → `vizlinx-com-crawl` (backlog, consumer, počet zpráv v DLQ) a Workers Logs. V logu hledej JSON zprávy `"Server crawl checkpoint failed"` (`worker/crawler.ts:816`) a `"Scan API request failed"` (`worker/index.ts:647`) — jiné `console.*` výstupy Worker nemá a záměrně neloguje URL ani tokeny.
 - Živá mapa má ve snapshotu `activity` s fází a `nextRequestAt`; `running` bez heartbeatu 20 min se v API hlásí jako `interrupted` ([01](./01-backend.md)).
 
@@ -94,5 +94,5 @@ Lokální `dev:api` a `typegen` běží s `--env-file=/dev/null`: wrangler by ji
 - **Vyčerpaný denní rozpočet** (`limitReason: daily_limit`): resetuje se s UTC dnem sám; trvalé zvýšení = `DAILY_REQUESTS` ve `worker/crawler.ts:23` a deploy.
 - **Uživatel chce víc než 100 stránek:** není v API; `SCAN_LIMITS.pagesPerSite` ve `shared/scan.ts` a deploy, UI si hodnotu čte z `/config`.
 - **Origin pozastavený po HTTP 429** (`site_throttled` v logu): vlastník ho znovu povolí v detailu webu a obnoví sken; server pauzu sám nezruší.
-- **Náklady:** Workers CPU se účtuje per invocation, `cpu_ms: 5000` je strop jednoho ticku. Na účtu má být Billing Budget Alert 5 USD (`docs/tasks/server-scan-prototype.md:69`; nastavení dashboardu, v repu neověřitelné) — upozornění provoz nezastaví, zastaví ho jen `CRAWLER_ENABLED`.
+- **Náklady:** Workers CPU se účtuje per invocation, `cpu_ms: 5000` je strop jednoho ticku. Na účtu má být Billing Budget Alert 5 USD (`[archiv serverového prototypu ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Archive-tasks-server-scan-prototype):69`; nastavení dashboardu, v repu neověřitelné) — upozornění provoz nezastaví, zastaví ho jen `CRAWLER_ENABLED`.
 - Trvalé pasti a jejich obcházení → [06 – Známé problémy](./06-known-issues.md).

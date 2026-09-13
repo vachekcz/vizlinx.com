@@ -19,11 +19,8 @@ Pravidla psaní: [CONVENTIONS.md](./CONVENTIONS.md).
 ## Další dokumenty v repu
 
 - [technical-specification.md](./technical-specification.md) — původní technický návrh s lokálním skenerem v rozšíření; umístění exekuce nahradil serverový sken (viz poznámka v jeho hlavičce), zbytek platí jako širší návrh.
-- [product-specification.md](./product-specification.md) — produktové zadání: průchod uživatele, vizualizace, kritéria přijetí; požadavek lokální exekuce byl nahrazen.
-- [naming.md](./naming.md) — výběr názvu a domény Vizlinx.com, historie brainstormingu.
 - [scan-benchmark.md](./scan-benchmark.md) — lokální benchmark HTML skeneru (`npm run benchmark:scan`) a kapacitní model Workers.
 - [decisions/browser-side-crawling.md](./decisions/browser-side-crawling.md) — rozhodnutí o skenování v prohlížeči, nahrazené 2026-09-12.
-- Historické implementační kontrakty, zatím ponechané v repu: [tasks/local-scan-prototype.md](./tasks/local-scan-prototype.md) (prototyp s rozšířením), [tasks/server-scan-prototype.md](./tasks/server-scan-prototype.md) (serverový skener, limity, provozní ověření), [tasks/scan-history.md](./tasks/scan-history.md) (historie a opakované skenování). Při rozporu s kódem platí kód a sloty výše.
 
 <!-- documentation-workflow: github-hybrid -->
 
@@ -39,8 +36,8 @@ popisují reference; historický plán není návod pro provoz.
 ## Mimo repo
 
 [Issues](https://github.com/vachekcz/vizlinx.com/issues) drží zadání, bugy a rozhodnutí.
-[Wiki](https://github.com/vachekcz/vizlinx.com/wiki) drží produktový kontext, historii
-a archivní podklady; zakládá se první stránkou v GitHubu a do té doby zůstávají
-historické podklady (`tasks/`, produktové zadání) v repu. Technická fakta se tam
-podruhé neudržují. Testovací vstupy zůstávají v repu.
-
+[Wiki](https://github.com/vachekcz/vizlinx.com/wiki) drží produktový kontext a historii: [produktové zadání](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani),
+[názvy a domény](https://github.com/vachekcz/vizlinx.com/wiki/Naming), [historii uživatelských změn](https://github.com/vachekcz/vizlinx.com/wiki/History) a archiv historických
+implementačních kontraktů podle [mapy migrace 2026-09-13](https://github.com/vachekcz/vizlinx.com/wiki/Migration-2026-09-13)
+(serverový skener, historie skenů, prototyp s rozšířením). Technická fakta se tam podruhé
+neudržují; při rozporu s kódem platí kód a sloty výše. Testovací vstupy zůstávají v repu.

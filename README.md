@@ -8,7 +8,7 @@ Interaktivní mapa odkazů mezi weby. Návštěvník bez účtu zadá domény, n
 
 ## Stav
 
-Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání webů, fronta Cloudflare Queues, průběžné ukládání do D1 a skutečné odkazy v současné mapě. Sken pokračuje i po zavření karty. Prochází statické veřejné HTML bez cookies a JavaScriptu, nejvýše **100 stránek na web**. [Aktuální kontrakt a ochranné limity](docs/tasks/server-scan-prototype.md).
+Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání webů, fronta Cloudflare Queues, průběžné ukládání do D1 a skutečné odkazy v současné mapě. Sken pokračuje i po zavření karty. Prochází statické veřejné HTML bez cookies a JavaScriptu, nejvýše **100 stránek na web**. [Aktuální kontrakt a ochranné limity](docs/01-backend.md).
 
 Úvodní `/` zůstává grafickým demem. Pět ukázkových webů, jeden neprozkoumaný externí cíl a 53 směrových vazeb tvoří fiktivní ekosystém Studia Atlas. Doména `index.example` obsahuje 20 stránek; ostatní prozkoumané weby po šesti. Tato ukázka používá pouze lokální data.
 
@@ -18,7 +18,7 @@ Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání we
 
 **Vybrané spojnice: Hedvábí (Silk).** Výchozí mapa používá stejně tenké čáry pro 1–5 vazeb a postupně rostoucí svazky pro `5+`, `10+`, `25+`, `50+` a `100+`. [Ukázka silných vazeb](https://vizlinx.com/?density=scale) obsahuje 230 unikátních dvojic stránek, nejsilnější propojení má 120 vazeb. [Samostatná studie spojnic](https://vizlinx.com/connections/lab/) a [archiv osmi návrhů](https://vizlinx.com/connections/) zůstávají dostupné; výběr experimentálních stylů se zobrazí jen při otevření konkrétního návrhu z archivu.
 
-Vizuální směr a základní ovládání byly potvrzené. Funkční prototyp z nich vychází; [aktuální rozsah a kontrakt](docs/tasks/server-scan-prototype.md) upřesňují širší [produktové zadání](docs/product-specification.md).
+Vizuální směr a základní ovládání byly potvrzené. Funkční prototyp z nich vychází; [aktuální rozsah a kontrakt](docs/01-backend.md) upřesňují širší [produktové zadání](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani).
 
 ## Spuštění
 
@@ -45,7 +45,7 @@ Zadejte 1–3 přesné veřejné originy. Po založení mapy se sken spustí aut
 
 Pod ovládáním je stále vidět aktuální činnost, počet zpracovaných stránek a při běhu načítaná URL nebo čekání na další požadavek. **Průběh skenu** otevře uložený log: na počítači spodní panel, na mobilu přes celou obrazovku. Lze filtrovat web a chyby; při posunu do historie se automatické sledování zastaví. Log uchovává nejvýše 500 nejnovějších událostí po dobu platnosti mapy a obnovuje se při otevřeném panelu. Události starších skenů se zpětně nedoplňují.
 
-**Skenovat znovu** v horní liště spustí nový průchod stejné sestavy webů se stejnými intervaly a nastavením pauz. Adresa mapy zůstane stejná, předchozí výsledky a log se uloží do historie a nové výsledky přibývají živě od začátku. **Historie skenů** vedle ovládání přepíná průchody podle data a stavu. Starší průchod je pouze ke čtení; tlačítko vrátí zobrazení k aktuálnímu skenu. Pozastavený aktuální průchod lze dokončit přes „Pokračovat ve skenování“, bez zakládání dalšího. Mapa uchovává až 10 průchodů včetně aktuálního, všechny do 30 dní od založení mapy. Vyčerpání kapacity historie nic nemaže a vyžaduje kontaktovat správce. Podrobnosti jsou v [návrhu historie skenů](docs/tasks/scan-history.md).
+**Skenovat znovu** v horní liště spustí nový průchod stejné sestavy webů se stejnými intervaly a nastavením pauz. Adresa mapy zůstane stejná, předchozí výsledky a log se uloží do historie a nové výsledky přibývají živě od začátku. **Historie skenů** vedle ovládání přepíná průchody podle data a stavu. Starší průchod je pouze ke čtení; tlačítko vrátí zobrazení k aktuálnímu skenu. Pozastavený aktuální průchod lze dokončit přes „Pokračovat ve skenování“, bez zakládání dalšího. Mapa uchovává až 10 průchodů včetně aktuálního, všechny do 30 dní od založení mapy. Vyčerpání kapacity historie nic nemaže a vyžaduje kontaktovat správce. Podrobnosti jsou v [návrhu historie skenů](docs/01-backend.md).
 
 Limit je pevně 100 stránek na origin včetně neúspěšných pokusů. Při dosažení se zobrazí výrazná hláška a výzva kontaktovat správce kvůli vyššímu limitu. Uživatelské API limit nezvýší. `ADMIN_EMAIL` ve Wrangler konfiguraci zapíná kontaktní tlačítko; prázdná hodnota ponechá textovou výzvu bez vymyšlené adresy. Denní nebo časový limit a zaplnění mapy mají vlastní důvod zastavení.
 
@@ -113,7 +113,7 @@ Podklady: [Workers Static Assets](https://developers.cloudflare.com/workers/stat
 - [Technická specifikace](docs/technical-specification.md) — původní architektonický návrh, datový model a ověření.
 - [Původní lokální skenování](docs/decisions/browser-side-crawling.md) — historické rozhodnutí nahrazené serverovým během.
 - [Úkoly a bugy](https://github.com/vachekcz/vizlinx.com/issues) — zadání a stav práce.
-- [Wiki](https://github.com/vachekcz/vizlinx.com/wiki) — produktové zadání, historie změn, názvy a domény a archiv podkladů.
+- [Wiki](https://github.com/vachekcz/vizlinx.com/wiki) — [produktové zadání](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani), [historie změn](https://github.com/vachekcz/vizlinx.com/wiki/History), názvy a domény a archiv podkladů.
 - [Pravidla práce](AGENTS.md) — konvence a dokončení úkolů.
 
 Technickou referenci a příslušné rozhodnutí měň ve stejném PR jako kód. Pro běžný vývoj, build a testy není potřeba klon wiki.

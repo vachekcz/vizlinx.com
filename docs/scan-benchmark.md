@@ -53,4 +53,4 @@ Samostatně se počítají požadavky a ukládání do D1, případná fronta, l
 
 Lokální benchmark ověřuje nástroj a vlastnosti vstupních dat. Pro skutečnou cenu a dostupnost potřebujeme samostatný omezený pilot na Cloudflare: stejné stránky stáhnout z Workers, odečíst CPU a požadavky z platformních metrik a D1 čtení/zápisy z metadat databáze. Oddělit parser od celkové režie, zahrnout neúspěšné pokusy, sledovat velikost databáze a ověřit několik současných skenů. Až tato data umožní nahradit předpoklady v tabulce naměřenými hodnotami.
 
-Padesát stránek v cenových scénářích je pouze velikost modelového skenu. Navazující [serverový prototyp](tasks/server-scan-prototype.md) používá nejvýše 3 originy a 100 stránek na origin; jeho provozní limity se řídí samostatným kontraktem. Tento lokální benchmark nadále neměří účtovaný CPU čas Cloudflare.
+Padesát stránek v cenových scénářích je pouze velikost modelového skenu. Navazující [serverový prototyp](01-backend.md) používá nejvýše 3 originy a 100 stránek na origin; jeho provozní limity se řídí samostatným kontraktem. Tento lokální benchmark nadále neměří účtovaný CPU čas Cloudflare.

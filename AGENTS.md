@@ -14,7 +14,7 @@ domény a stránky jako propojené clustery.
 - **Produkce:** https://vizlinx.com (také `www.vizlinx.com`, záložní
   `vizlinx-com.pvpvpv.workers.dev`).
 - **Business kontext:** [README.md](./README.md) a produktové zadání v
-  [docs/product-specification.md](./docs/product-specification.md).
+  [produktové zadání ve wiki](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani).
 
 ## Common commands
 
@@ -102,8 +102,9 @@ chování ověřuj v kódu, historický plán není runbook.
 - Pracovní plán patří do issue nebo wiki. Nevytvářej `docs/tasks/`, `docs/bugs/`
   ani `done/`. Staré `/finish-task` a plánovací skilly adaptuj na tento workflow;
   jejich výchozí cesty nesmějí obnovit lokální backlog.
-- Stávající `docs/tasks/*.md` jsou historické implementační kontrakty. Nové úkoly
-  do nich nepřidávej; po založení wiki se přesunou do archivu.
+- Historické implementační kontrakty jsou v archivu wiki
+  ([mapa migrace](https://github.com/vachekcz/vizlinx.com/wiki/Migration-2026-09-13)); `docs/tasks/` už neexistuje
+  a nevrací se. Nové úkoly patří do Issues.
 
 ### Dokončení
 

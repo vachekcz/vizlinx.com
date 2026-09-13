@@ -7,7 +7,7 @@ revisit_when: Pokud skenování z prohlížeče vyžaduje pro uživatele nepřij
 
 # Skenování běží v prohlížeči návštěvníka
 
-Nahrazeno 12. 9. 2026 rozhodnutím o [serverovém skenování](../tasks/server-scan-prototype.md). Následující text zachovává původní důvody.
+Nahrazeno 12. 9. 2026 rozhodnutím o [serverovém skenování](../01-backend.md). Následující text zachovává původní důvody.
 
 ## Kontext
 
@@ -28,9 +28,9 @@ Pavlovým důvodem je omezení závislosti na společné serverové IP a její b
 - Web s rozšířením pro Chrome byl 2026-09-12 přijat pro první funkční prototyp. Ruční instalace rozbaleného rozšíření slouží k ověření; veřejná distribuce zůstává další etapou.
 - Lokální aplikace je další možnost, pokud bude přijatelnější než rozšíření.
 
-Uživatel nepotřebuje účet. První prototyp používá anonymní cookie, Cloudflare D1 a omezení popsaná v [aktuálním kontraktu](../tasks/local-scan-prototype.md). Serverové uložení výsledků neznamená nepřetržitý serverový běh.
+Uživatel nepotřebuje účet. První prototyp používá anonymní cookie, Cloudflare D1 a omezení popsaná v [aktuálním kontraktu](../01-backend.md). Serverové uložení výsledků neznamená nepřetržitý serverový běh.
 
 ## Související
 
-- [Produktové zadání](../product-specification.md)
+- [Produktové zadání](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani)
 - [Technická specifikace a podklady k omezením prohlížeče](../technical-specification.md)

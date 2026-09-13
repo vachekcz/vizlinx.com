@@ -6,16 +6,16 @@ last_updated: 2026-09-12
 
 # Vizlinx.com — technická specifikace
 
-> **Aktualizace 12. 9. 2026:** Pavel schválil přesun skenování na Cloudflare Workers + Queues, bez rozšíření, s pevným limitem 100 stránek na origin. Aktuální implementační kontrakt je v [serverovém prototypu](tasks/server-scan-prototype.md). Níže uvedená lokální architektura popisuje původní etapu; její požadavky na umístění exekuce byly nahrazeny.
+> **Aktualizace 12. 9. 2026:** Pavel schválil přesun skenování na Cloudflare Workers + Queues, bez rozšíření, s pevným limitem 100 stránek na origin. Aktuální implementační kontrakt je v [serverovém prototypu](01-backend.md). Níže uvedená lokální architektura popisuje původní etapu; její požadavky na umístění exekuce byly nahrazeny.
 
 
-Návrh pro [produktové zadání](product-specification.md). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření pro Chrome bylo přijato 2026-09-12 pro první funkční prototyp. [Grafické demo](../README.md#stav) a skutečné mapy sdílejí React, TypeScript a SVG; hosting a API běží na Cloudflare Workers.
+Návrh pro [produktové zadání](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani). Potvrzené jsou lokální skenování v prohlížeči, serverové ukládání výsledků, vstup bez účtu a rychlost po doménách. Rozšíření pro Chrome bylo přijato 2026-09-12 pro první funkční prototyp. [Grafické demo](../README.md#stav) a skutečné mapy sdílejí React, TypeScript a SVG; hosting a API běží na Cloudflare Workers.
 
-**Pořadí práce:** nejprve [grafické demo s ukázkovými daty](product-specification.md#první-milník-grafické-demo), potom technické PoC a funkční implementace vycházející z doladěného rozhraní. Níže popsaná architektura je návrh pro funkční produkt; její realizace není podmínkou grafického dema.
+**Pořadí práce:** nejprve [grafické demo s ukázkovými daty](https://github.com/vachekcz/vizlinx.com/wiki/Produktove-zadani#první-milník-grafické-demo), potom technické PoC a funkční implementace vycházející z doladěného rozhraní. Níže popsaná architektura je návrh pro funkční produkt; její realizace není podmínkou grafického dema.
 
 ## Implementovaný prototyp a vztah k návrhu
 
-Zdroj pravdy pro současné API je [kontrakt prototypu](tasks/local-scan-prototype.md), typy v `shared/scan.ts` a migrace v `migrations/`. Zbývající části dokumentu zachycují širší návrh a budoucí rozšíření.
+Zdroj pravdy pro současné API je [reference backendu](01-backend.md), typy v `shared/scan.ts` a migrace v `migrations/`; původní kontrakt prototypu s rozšířením je v archivu wiki. Zbývající části dokumentu zachycují širší návrh a budoucí rozšíření.
 
 | Oblast | Současná implementace |
 | --- | --- |
