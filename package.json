@@ -14,6 +14,8 @@
     "deploy": "npm run build && npm run db:remote && wrangler deploy",
     "deploy:check": "npm run build && wrangler deploy --dry-run",
     "test": "playwright test",
+    "screenshots:tour": "playwright test -c playwright.screenshots.config.ts",
+    "screenshots:gallery": "tsx scripts/build-screenshot-gallery.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "build:extension": "node scripts/build-extension.mjs",
@@ -50,6 +52,7 @@
     "fflate": "^0.8.3",
     "miniflare": "^5.20260911.0-alpha",
     "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
     "typescript": "^7.0.2",
     "vite": "^8.3.0",
     "wrangler": "^4.131.1"

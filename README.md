@@ -12,6 +12,8 @@ Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání we
 
 **Živé demo:** [vizlinx.com](https://vizlinx.com), také [www.vizlinx.com](https://www.vizlinx.com). Záložní adresa: [vizlinx-com.pvpvpv.workers.dev](https://vizlinx-com.pvpvpv.workers.dev).
 
+**UI galerie:** [vachekcz.github.io/vizlinx.com](https://vachekcz.github.io/vizlinx.com/) — noční screenshoty všech stavů aplikace na desktopu i mobilu, generuje workflow Nightly Screenshots.
+
 **Vzhled:** Signal pro denní režim, Midnight pro noční. Přepínač měsíce/slunce v hlavičce ukládá ruční volbu v prohlížeči; bez ní vzhled sleduje nastavení systému. [Denní demo](https://vizlinx.com/?theme=signal), [noční demo s 20 stránkami](https://vizlinx.com/?theme=midnight&detail=index). [Původních pět mockupů](https://vizlinx.com/palettes/) zůstává jako archiv návrhů.
 
 **Vybrané spojnice: Hedvábí (Silk).** Výchozí mapa používá stejně tenké čáry pro 1–5 vazeb a postupně rostoucí svazky pro `5+`, `10+`, `25+`, `50+` a `100+`. [Ukázka silných vazeb](https://vizlinx.com/?density=scale) obsahuje 230 unikátních dvojic stránek, nejsilnější propojení má 120 vazeb. [Samostatná studie spojnic](https://vizlinx.com/connections/lab/) a [archiv osmi návrhů](https://vizlinx.com/connections/) zůstávají dostupné; výběr experimentálních stylů se zobrazí jen při otevření konkrétního návrhu z archivu.
@@ -52,6 +54,17 @@ Skener respektuje robots.txt pro `VizlinxBot`, čte HTML do 2 MiB a neposílá c
 HTTP 429 pozastaví další požadavky na dotčený web a zaznamená důvod do průběhu skenu. Ostatní weby pokračují. Až omezení pomine, web lze znovu povolit v jeho detailu a případně obnovit celý sken. Samotné změny intervalu nebo pauzy jednotlivého webu nespotřebovávají denní kvótu startů.
 
 Stará data rozšíření zůstávají čitelná. Spuštění staré mapy přes web ji převede na serverový běh a zneplatní původní párování. Historický návod rozšíření je v [extension/README.md](extension/README.md).
+
+### Galerie screenshotů
+
+Workflow [Nightly Screenshots](.github/workflows/nightly-screenshots.yml) každou noc projede aplikaci Playwrightem, vyfotí pojmenované stavy na desktopu i mobilu a publikuje je jako galerii na [vachekcz.github.io/vizlinx.com](https://vachekcz.github.io/vizlinx.com/). Běh se přeskočí, když se od posledního úspěšného běhu nezměnil kód. Lokálně:
+
+```sh
+npm run screenshots:tour      # build, lokální D1 a wrangler dev na portu 8798, tour z tests/tour/
+npm run screenshots:gallery   # screenshots-output/index.html
+```
+
+Tour běží nad `wrangler dev`, aby fungoval i `/scan`; žádný skutečný sken nespouští. Hlavní `npm test` adresář `tests/tour/` ignoruje.
 
 ## Ovládání dema
 
