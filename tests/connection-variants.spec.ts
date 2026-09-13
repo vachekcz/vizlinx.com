@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { expectSiteSpacing } from './graph-spacing';
 
 const variants = [
   ['strands', 'Vlákna'],
@@ -48,12 +49,11 @@ test('drags a domain independently at zoom and updates its connections', async (
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click();
   const node = page.locator('[data-drag-site="atlas"] circle');
-  const other = page.locator('[data-drag-site="journal"] circle');
+  const initialX = await node.getAttribute('cx');
   const edge = page
     .locator('[data-connection="atlas:journal"] [data-testid="fine-strand"]')
     .first();
   const originalEdge = await edge.getAttribute('d');
-  const otherX = await other.getAttribute('cx');
   const camera = await page
     .getByTestId('graph-camera')
     .getAttribute('transform');
@@ -91,7 +91,7 @@ test('drags a domain independently at zoom and updates its connections', async (
   await expect
     .poll(async () => Math.round((await node.boundingBox())!.x - before.x))
     .toBe(dx);
-  await expect(other).toHaveAttribute('cx', otherX!);
+  await expectSiteSpacing(page, false);
   await expect(page.getByTestId('graph-camera')).toHaveAttribute(
     'transform',
     camera!,
@@ -102,10 +102,8 @@ test('drags a domain independently at zoom and updates its connections', async (
     .click();
   expect(Math.round((await node.boundingBox())!.x - before.x)).toBe(dx);
   await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
-  await expect(node).toHaveAttribute(
-    'cx',
-    testInfo.project.name === 'mobile' ? '300' : '480',
-  );
+  await expect(node).toHaveAttribute('cx', initialX!);
+  await expectSiteSpacing(page);
 });
 
 test('moves an expanded domain and all its pages together with the keyboard', async ({

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expectSiteSpacing } from './graph-spacing';
 
 async function expectArchiveInFrame(page: Page) {
   const graph = (await page
@@ -18,7 +19,7 @@ async function expectArchiveInFrame(page: Page) {
   }
 }
 
-test('keeps positions and framing stable across automatic expansion and synchronizes the inspector', async ({
+test('makes room across automatic expansion and synchronizes the inspector', async ({
   page,
 }) => {
   await page.goto('/');
@@ -38,7 +39,8 @@ test('keeps positions and framing stable across automatic expansion and synchron
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click({ clickCount: 3 });
   await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(44);
-  await expect(graph).toHaveAttribute('viewBox', frame!);
+  await expect(graph).not.toHaveAttribute('viewBox', frame!);
+  await expectSiteSpacing(page, false);
   await expect(domain.locator('circle')).toHaveAttribute('cx', x!);
   await expect(page.locator('.graph-area')).not.toHaveClass(/has-dense-site/);
   await inspector.getByRole('button', { name: 'Sbalit stránky' }).click();
