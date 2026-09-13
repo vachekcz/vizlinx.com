@@ -9,6 +9,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { GraphExternalLink } from './ExternalLink';
+import ArrowHead from './ArrowHead';
 import { pageStatusLabel, siteUrl, useGraphData } from './graph-data';
 import type { Link, Page, Selection, Site } from './data';
 import ConnectionStroke from './ConnectionStroke';
@@ -718,21 +719,15 @@ export default function Graph({
             <marker
               key={site.id}
               id={markerId(site.id)}
-              viewBox="0 0 10 10"
-              refX="8"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
+              viewBox="-15 -8 17 16"
+              refX="0"
+              refY="0"
+              markerUnits="userSpaceOnUse"
+              markerWidth="17"
+              markerHeight="16"
               orient="auto-start-reverse"
             >
-              <path
-                d="M 1 1 L 8 5 L 1 9"
-                fill="none"
-                stroke={site.color}
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
+              <ArrowHead color={site.color} />
             </marker>
           ))}
         </defs>

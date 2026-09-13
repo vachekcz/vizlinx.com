@@ -1,3 +1,4 @@
+import ArrowHead from './ArrowHead';
 import type { FineConnectionStyleId } from './connectionStyles';
 
 type Point = { x: number; y: number };
@@ -100,13 +101,7 @@ export default function FineConnectionStroke({
   }
 
   const end = pointAt(from, control, to, 1 - trim / 2);
-  const arrowLength = isBundle ? 5 : 3.8;
-  const arrowHalfWidth = isBundle ? 2.7 : 2;
-  const arrowBase = {
-    x: end.x - end.normalY * arrowLength,
-    y: end.y + end.normalX * arrowLength,
-  };
-  const arrowPath = `M ${arrowBase.x + end.normalX * arrowHalfWidth} ${arrowBase.y + end.normalY * arrowHalfWidth} L ${end.x} ${end.y} L ${arrowBase.x - end.normalX * arrowHalfWidth} ${arrowBase.y - end.normalY * arrowHalfWidth}`;
+  const arrowAngle = Math.atan2(-end.normalX, end.normalY) * (180 / Math.PI);
   const shared = {
     className: 'connection-stroke',
     fill: 'none',
@@ -164,12 +159,9 @@ export default function FineConnectionStroke({
           />
         );
       })}
-      <path
-        {...shared}
-        d={arrowPath}
-        strokeWidth={0.9}
-        opacity={selected ? 1 : 0.85}
-      />
+      <g transform={`translate(${end.x} ${end.y}) rotate(${arrowAngle})`}>
+        <ArrowHead color={color} />
+      </g>
     </g>
   );
 }
