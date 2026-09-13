@@ -4,6 +4,8 @@
 
 Interaktivní mapa odkazů mezi weby. Návštěvník bez účtu zadá domény, nastaví rychlost každé z nich a spustí skenování na Cloudflare Workers, bez instalace rozšíření. Výsledky se průběžně ukládají na server. Oddálený pohled ukazuje domény jako clustery; přiblížení odhalí konkrétní zdrojové a cílové stránky.
 
+**Produkce:** [vizlinx.com](https://vizlinx.com/)
+
 ## Stav
 
 Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání webů, fronta Cloudflare Queues, průběžné ukládání do D1 a skutečné odkazy v současné mapě. Sken pokračuje i po zavření karty. Prochází statické veřejné HTML bez cookies a JavaScriptu, nejvýše **100 stránek na web**. [Aktuální kontrakt a ochranné limity](docs/tasks/server-scan-prototype.md).
@@ -105,12 +107,13 @@ GitHub Actions kontroluje PR a po změně `main` aplikuje D1 migrace a nasadí o
 
 Podklady: [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/get-started/), [vlastní domény](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/).
 
-## Dokumentace
+## Dokumentace a práce
 
-- [Produktové zadání](docs/product-specification.md) — průchod uživatele, skenování, vizualizace a kritéria přijetí.
-- [Technická specifikace](docs/technical-specification.md) — architektura, lokální skener, datový model, API a ověření.
-- [Serverové skenování](docs/tasks/server-scan-prototype.md) — aktuální kontrakt a provozní omezení.
+- [Technická dokumentace](docs/README.md) — reference po vrstvách (backend, frontend, D1, deploy, testy) a schválená rozhodnutí, verzované s kódem.
+- [Technická specifikace](docs/technical-specification.md) — původní architektonický návrh, datový model a ověření.
 - [Původní lokální skenování](docs/decisions/browser-side-crawling.md) — historické rozhodnutí nahrazené serverovým během.
-- [Názvy a domény](docs/naming.md) — výběr Vizlinx.com a historie nápadů.
+- [Úkoly a bugy](https://github.com/vachekcz/vizlinx.com/issues) — zadání a stav práce.
+- [Wiki](https://github.com/vachekcz/vizlinx.com/wiki) — produktové zadání, historie změn, názvy a domény a archiv podkladů.
+- [Pravidla práce](AGENTS.md) — konvence a dokončení úkolů.
 
-Dokumentace produktu a technická rozhodnutí se udržují v tomto repozitáři.
+Technickou referenci a příslušné rozhodnutí měň ve stejném PR jako kód. Pro běžný vývoj, build a testy není potřeba klon wiki.

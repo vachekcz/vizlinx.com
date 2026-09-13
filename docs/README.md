@@ -25,4 +25,22 @@ Pravidla psaní: [CONVENTIONS.md](./CONVENTIONS.md).
 - [decisions/browser-side-crawling.md](./decisions/browser-side-crawling.md) — rozhodnutí o skenování v prohlížeči, nahrazené 2026-09-12.
 - Historické implementační kontrakty, zatím ponechané v repu: [tasks/local-scan-prototype.md](./tasks/local-scan-prototype.md) (prototyp s rozšířením), [tasks/server-scan-prototype.md](./tasks/server-scan-prototype.md) (serverový skener, limity, provozní ověření), [tasks/scan-history.md](./tasks/scan-history.md) (historie a opakované skenování). Při rozporu s kódem platí kód a sloty výše.
 
-<!-- GITHUB-WORKFLOW-SECTION -->
+<!-- documentation-workflow: github-hybrid -->
+
+## Schválená rozhodnutí
+
+| Dokument | Stav |
+|---|---|
+| [Skenování běží v prohlížeči návštěvníka](./decisions/browser-side-crawling.md) | superseded; nahrazeno serverovým skenerem, viz [01 – Backend](./01-backend.md) |
+
+Novější schválený návrh nahrazuje starší jen v dotčeném rozsahu. Aktuální chování
+popisují reference; historický plán není návod pro provoz.
+
+## Mimo repo
+
+[Issues](https://github.com/vachekcz/vizlinx.com/issues) drží zadání, bugy a rozhodnutí.
+[Wiki](https://github.com/vachekcz/vizlinx.com/wiki) drží produktový kontext, historii
+a archivní podklady; zakládá se první stránkou v GitHubu a do té doby zůstávají
+historické podklady (`tasks/`, produktové zadání) v repu. Technická fakta se tam
+podruhé neudržují. Testovací vstupy zůstávají v repu.
+
