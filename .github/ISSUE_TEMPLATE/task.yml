@@ -1,0 +1,26 @@
+name: Úkol
+description: Konkrétní práce s ověřitelným výsledkem
+labels: [task]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Cíl a rozsah
+      description: Co má být výsledkem a proč; hranice rozsahu.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Hotovo, když
+      description: Ověřitelná kritéria; drobné kroky se společným výsledkem jako checklist.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Podklady
+      description: Reference/spec v repu, kontext ve wiki, související issues a PR.
+  - type: markdown
+    attributes:
+      value: 'Práh dokončení a postup práce: [AGENTS.md](https://github.com/vachekcz/vizlinx.com/blob/main/AGENTS.md).'

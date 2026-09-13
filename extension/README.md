@@ -1,6 +1,6 @@
 # Lokální skener pro Chrome
 
-> Historický lokální runner pro staré mapy. Aktuální web spouští skeny na Cloudflare bez rozšíření; viz [serverový prototyp](../docs/tasks/server-scan-prototype.md). Spuštění staré mapy přes web zneplatní její extension token.
+> Historický lokální runner pro staré mapy. Aktuální web spouští skeny na Cloudflare bez rozšíření; viz [serverový prototyp](../docs/01-backend.md). Spuštění staré mapy přes web zneplatní její extension token.
 
 
 Prototyp načítá statické HTML z počítače uživatele. Ukládá strukturované odkazy do mapy Vizlinx. Nespouští JavaScript cílového webu, nenačítá jeho obrázky ani další zdroje a neposílá jeho cookies. Přesměrování nenásleduje; konečný host musí uživatel přidat jako samostatný origin.

@@ -1,0 +1,25 @@
+name: Bug
+description: Pozorovaná chyba a způsob ověření
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Skutečné a očekávané chování
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reprodukce a prostředí
+      description: Postup, verze/commit, četnost a relevantní důkazy bez secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Jak poznáme opravu
+      description: Kritérium opravy, regresní scénář a případný workaround.
+  - type: markdown
+    attributes:
+      value: 'Zkontroluj i uzavřené issues: oprava může čekat v otevřeném PR. [Workflow](https://github.com/vachekcz/vizlinx.com/blob/main/AGENTS.md).'
