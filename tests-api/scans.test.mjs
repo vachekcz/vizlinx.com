@@ -1353,6 +1353,43 @@ test('public scanner configuration exposes only the contact and fixed page cap',
   });
 });
 
+test('legacy runner settings and progress never retain server queue activity', async () => {
+  const cookie = await visitor();
+  const scan = await create(cookie);
+  const { token } = await pair(cookie, scan.id);
+  const progress = () =>
+    request(`/runner/scans/${scan.id}/progress`, {
+      method: 'POST',
+      token,
+      body: { status: 'running' },
+    });
+  assert.equal((await progress()).status, 200);
+  assert.equal(
+    (
+      await request(`/scans/${scan.id}`, {
+        method: 'PATCH',
+        cookie,
+        body: { sites: [{ ...site, intervalMs: 5000 }] },
+      })
+    ).status,
+    200,
+  );
+  let snapshot = await (await request(`/scans/${scan.id}`, { cookie })).json();
+  assert.equal(snapshot.status, 'running');
+  assert.equal(snapshot.activity, undefined);
+  await db
+    .prepare('UPDATE scans SET activity_json = ? WHERE id = ?')
+    .bind(
+      JSON.stringify({ phase: 'queued', updatedAt: new Date().toISOString() }),
+      scan.id,
+    )
+    .run();
+  assert.equal((await progress()).status, 200);
+  snapshot = await (await request(`/scans/${scan.id}`, { cookie })).json();
+  assert.equal(snapshot.status, 'running');
+  assert.equal(snapshot.activity, undefined);
+});
+
 test('scan logs require the owner and expire with the map and visitor', async () => {
   const alice = await visitor();
   const bob = await visitor();

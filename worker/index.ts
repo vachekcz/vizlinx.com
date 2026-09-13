@@ -375,7 +375,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
           now,
           row.id,
           row.sites_json,
-          JSON.stringify(activity),
+          row.execution_mode === 'server' ? JSON.stringify(activity) : null,
           row.crawl_generation,
         ),
         ...scanLogStatements(
@@ -479,7 +479,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
           now,
           row.id,
           row.sites_json,
-          JSON.stringify(activity),
+          row.execution_mode === 'server' ? JSON.stringify(activity) : null,
           row.crawl_generation,
         ),
         ...scanLogStatements(
@@ -553,7 +553,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       const now = Date.now();
       const updated = await env.DB.prepare(
         `UPDATE scans SET status = CASE WHEN status = 'paused' THEN status ELSE ?1 END,
-        updated_at = ?2, heartbeat_at = ?2 WHERE id = ?3 AND runner_hash = ?4
+        updated_at = ?2, heartbeat_at = ?2, activity_json = NULL WHERE id = ?3 AND runner_hash = ?4
         AND runner_expires_at > ?2 AND created_at > ?5 RETURNING id`,
       )
         .bind(body.status, now, row.id, row.runner_hash, now - RETENTION_MS)
