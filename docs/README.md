@@ -28,6 +28,7 @@ Pravidla psaní: [CONVENTIONS.md](./CONVENTIONS.md).
 
 | Dokument | Stav |
 |---|---|
+| [Výraznější šipky v grafu](./decisions/graph-arrowheads.md) | schváleno 2026-09-13; varianta 1, plný hrot s kontrastním obrysem |
 | [Skenování běží v prohlížeči návštěvníka](./decisions/browser-side-crawling.md) | superseded; nahrazeno serverovým skenerem, viz [01 – Backend](./01-backend.md) |
 
 Novější schválený návrh nahrazuje starší jen v dotčeném rozsahu. Aktuální chování
