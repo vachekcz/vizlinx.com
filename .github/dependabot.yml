@@ -1,0 +1,71 @@
+version: 2
+updates:
+  - package-ecosystem: 'npm'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    open-pull-requests-limit: 5
+    # Keep thematic groups before the catch-all. Its explicit "*" pattern is
+    # essential: a patternless group can outrank scoped wildcard patterns.
+    groups:
+      # Tooling that must move together, majors included (no update-types on
+      # purpose): a wrangler minor may need the matching @cloudflare/* major.
+      cloudflare-tooling:
+        patterns:
+          - 'wrangler'
+          - '@cloudflare/*'
+      astro-tooling:
+        patterns:
+          - 'astro'
+          - '@astrojs/*'
+      eslint-tooling:
+        patterns:
+          - 'eslint'
+          - 'eslint-*'
+          - '@eslint/*'
+          # Both spellings on purpose: the unified `typescript-eslint` package
+          # matches NEITHER "eslint-*" (wrong prefix) NOR "@typescript-eslint/*"
+          # (not scoped), so without this line the main TS-ESLint package falls
+          # into the catch-all and its majors ship on their own.
+          - 'typescript-eslint'
+          - '@typescript-eslint/*'
+      vitest-tooling:
+        patterns:
+          - 'vitest'
+          - '@vitest/*'
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react'
+          - '@types/react-dom'
+      vite-tooling:
+        patterns:
+          - 'vite'
+          - '@vitejs/*'
+      playwright-tooling:
+        patterns:
+          - 'playwright'
+          - 'playwright-core'
+          - '@playwright/*'
+      tailwind-tooling:
+        patterns:
+          - 'tailwindcss'
+          - '@tailwindcss/*'
+      security-updates:
+        applies-to: security-updates
+        patterns: ['*']
+      # Everything else: patch + minor in one PR (no global patch ignore —
+      # patches often carry security fixes and review cheaply when grouped).
+      # Majors outside the thematic groups stay as individual PRs.
+      non-major-updates:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    groups:
+      actions:
+        patterns: ['*']
