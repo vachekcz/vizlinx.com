@@ -124,34 +124,11 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
       ? ['index']
       : [],
   );
-  const [autoExpanded, setAutoExpanded] = useState(false);
-  const [collapsedAtZoom, setCollapsedAtZoom] = useState<string[]>([]);
   const visibleExpanded = sites
-    .filter(
-      (site) =>
-        expanded.includes(site.id) ||
-        (autoExpanded && !collapsedAtZoom.includes(site.id)),
-    )
+    .filter((site) => expanded.includes(site.id))
     .map((site) => site.id);
-  useEffect(() => {
-    if (!autoExpanded) setCollapsedAtZoom([]);
-  }, [autoExpanded]);
   const changeExpanded = (ids: string[]) => {
-    const removed = visibleExpanded.filter((id) => !ids.includes(id));
-    const added = ids.filter((id) => !visibleExpanded.includes(id));
-    setExpanded((previous) => [
-      ...new Set([...previous.filter((id) => !removed.includes(id)), ...added]),
-    ]);
-    setCollapsedAtZoom((previous) =>
-      autoExpanded
-        ? [
-            ...new Set([
-              ...previous.filter((id) => !ids.includes(id)),
-              ...removed,
-            ]),
-          ]
-        : [],
-    );
+    setExpanded(ids);
     setView('map');
   };
   const [showExternal, setShowExternal] = useState(Boolean(live));
@@ -717,11 +694,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   expanded={visibleExpanded}
                   focusedExpanded={expanded}
                   onExpandedChange={changeExpanded}
-                  onAutoExpandedChange={setAutoExpanded}
-                  onFocusSite={(id) => {
-                    setExpanded([id]);
-                    setCollapsedAtZoom([]);
-                  }}
+                  onFocusSite={(id) => setExpanded([id])}
                   running={running}
                   resetKey={resetKey}
                   connectionStyle={connectionStyle}

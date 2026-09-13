@@ -448,7 +448,10 @@ test('balances crowded live domains by default and preserves manual placement as
     await page
       .getByRole('button', { name: 'Přiblížit mapu', exact: true })
       .click();
-  await expect(page.locator('.site-node.is-expanded')).toHaveCount(9);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('173 %');
+  await expect(page.locator('.site-node.is-expanded')).toHaveCount(0);
+  expect(await sitePositions(page)).toEqual(initialPositions);
+  await expect(graph).toHaveAttribute('viewBox', initialFrame!);
   await expectSiteSpacing(page, false);
   for (let step = 0; step < 3; step++)
     await page
