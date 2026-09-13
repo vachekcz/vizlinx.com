@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expectSiteSpacing } from './graph-spacing';
 
 async function domainCircles(page: Page) {
   return page.locator('[data-drag-site]').evaluateAll((domains) =>
@@ -27,7 +28,7 @@ function expectSameCenter(
   expect(actual.y).toBeCloseTo(expected.y, 5);
 }
 
-test('expands a domain in place and moves only nearby circles out of its way', async ({
+test('expands a domain in place and makes room for neighbouring domains and labels', async ({
   page,
 }, testInfo) => {
   await page.goto('/');
@@ -43,8 +44,7 @@ test('expands a domain in place and moves only nearby circles out of its way', a
   ).toHaveCount(20);
   const after = await domainCircles(page);
   expectSameCenter(after.index, before.index);
-  const distantId = testInfo.project.name === 'mobile' ? 'objects' : 'journal';
-  expectSameCenter(after[distantId], before[distantId]);
+  await expectSiteSpacing(page);
   expect(after.index.radius).toBeGreaterThan(before.index.radius);
   expect(
     Math.hypot(after.atlas.x - before.atlas.x, after.atlas.y - before.atlas.y),

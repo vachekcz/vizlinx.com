@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page as BrowserPage } from '@playwright/test';
 import type { PageResult, ScanSnapshot } from '../shared/scan';
+import { expectSiteSpacing } from './graph-spacing';
 import { scanToDataset } from '../src/scan-dataset';
 
 function snapshot(results: PageResult[] = []): ScanSnapshot {
@@ -367,4 +368,68 @@ test('limits live map detail while preserving every discovered link in table and
   expect(csv).toContain('https://other-11.cz/');
   await page.getByRole('button', { name: 'nofollow', exact: true }).click();
   await expect(page.locator('tbody tr')).toHaveCount(240);
+});
+
+test('keeps crowded live domains and long labels apart as the map grows, resets and expands', async ({
+  page,
+}, testInfo) => {
+  const domains = [
+    'psychedelicalpha.com',
+    'doubleblindmag.com',
+    'psychedelicinvest.com',
+    'pubmed.ncbi.nlm.nih.gov',
+    'www.nature.com',
+    'en.wikipedia.org',
+    'medicalxpress.com',
+    'www.ecstaticintegration.org',
+    'thepsychedelicblog.substack.com',
+    'a-very-long-domain-name-for-testing-label-space.example.com',
+  ];
+  const links = domains.map((domain) => ({
+    targetUrl: `https://${domain}/`,
+    anchor: domain,
+    rel: [],
+    region: 'content' as const,
+    occurrences: 1,
+  }));
+  let current = snapshot([result({ links: links.slice(0, 8) })]);
+  current.sites = current.sites.slice(0, 1);
+  await mockScan(page, () => current);
+  await page.clock.install();
+  await page.goto('/scan?id=adapter-test');
+  await expect(page.locator('.site-node')).toHaveCount(9);
+  await expectSiteSpacing(page);
+  const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
+  const initialFrame = await graph.getAttribute('viewBox');
+  current = { ...current, results: [result({ links })] };
+  await page.clock.fastForward(3000);
+  await expect(page.locator('.site-node')).toHaveCount(11);
+  await expectSiteSpacing(page);
+  await expect(graph).not.toHaveAttribute('viewBox', initialFrame!);
+  await page.getByRole('button', { name: 'Zobrazit celou mapu' }).click();
+  await expectSiteSpacing(page);
+  await page.getByLabel('Další odkazované weby').uncheck();
+  await expect(page.locator('.site-node')).toHaveCount(1);
+  await page.getByLabel('Další odkazované weby').check();
+  await expect(page.locator('.site-node')).toHaveCount(11);
+  await expectSiteSpacing(page);
+  const domain = page.getByRole('button', {
+    name: 'Doména doubleblindmag.com',
+    exact: true,
+  });
+  await domain.focus();
+  for (let step = 0; step < 8; step++) await domain.press('Shift+ArrowRight');
+  await expectSiteSpacing(page);
+  await domain.press('Enter');
+  await page
+    .getByRole('button', { name: 'Zobrazit známé cílové URL', exact: true })
+    .click();
+  await expect(
+    page.getByRole('button', {
+      name: 'Stránka doubleblindmag.com/',
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  await expectSiteSpacing(page);
+  await graph.screenshot({ path: testInfo.outputPath('crowded-map.png') });
 });
