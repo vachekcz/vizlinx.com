@@ -1237,13 +1237,78 @@
   position: absolute;
   left: 27px;
   top: 134px;
-  width: 223px;
+  width: 244px;
+  max-height: calc(100% - 230px);
+  overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--ux-shadow);
   padding: 18px 10px 0;
   z-index: 3;
+}
+.ux-site-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  margin: 0 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+}
+.ux-site-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+}
+.ux-site-search:focus-within {
+  border-color: var(--accent);
+}
+.ux-site-note {
+  margin: 0 8px 10px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.ux-add-site:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ux-add-site-form {
+  padding: 8px;
+}
+.ux-add-site-form > label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+.ux-add-site-form > input {
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  font-size: 12px;
+}
+.ux-add-site-form .ux-site-note {
+  margin: 8px 0 12px;
+}
+.ux-add-site-form > div {
+  display: flex;
+  gap: 5px;
+}
+.ux-add-site-form .ux-button {
+  padding: 8px 10px;
+  font-size: 10px;
 }
 .ux-floating-sites .ux-site-row > button:first-child {
   padding-inline: 2px;
@@ -2259,6 +2324,7 @@
     width: 33px;
     height: 33px;
     border-radius: 8px;
+    max-height: calc(100% - 185px);
   }
   .ux-run small {
     font-size: 9px;
@@ -2318,7 +2384,7 @@
     display: none;
   }
   .ux-floating-sites.is-open {
-    width: 230px;
+    width: min(260px, calc(100vw - 32px));
   }
   .ux-floating-sites.is-open .ux-sites-content {
     display: block;

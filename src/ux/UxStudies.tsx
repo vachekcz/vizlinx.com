@@ -80,6 +80,21 @@ const tabs: {
 ];
 const initialDomains = ['atlas.example', 'journal.example', 'objects.example'];
 
+function normalizeDomain(value: string): string {
+  const trimmed = value.trim();
+  const url = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    !url.hostname.includes('.') ||
+    url.username ||
+    url.password ||
+    url.port
+  ) {
+    throw new Error('Invalid public web address');
+  }
+  return url.hostname;
+}
+
 function createDataset(domains: string[]): GraphDataset {
   const scannedIds = demoDataset.sites
     .slice(0, domains.length)
@@ -143,7 +158,9 @@ function SiteDot({ site }: { site: Site }) {
 export default function UxStudies() {
   const variant = Number(window.location.pathname.split('/')[2]);
   const concept = concepts.find((item) => item.id === variant);
-  const [domains, setDomains] = useState(initialDomains);
+  const [domains, setDomains] = useState(() =>
+    variant === 2 ? initialDomains.slice(0, 2) : initialDomains,
+  );
   if (!concept) return <Gallery />;
   return (
     <GraphDataProvider dataset={createDataset(domains)} live={false}>
@@ -259,7 +276,14 @@ function Study({
   const [logOpen, setLogOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [sitesOpen, setSitesOpen] = useState(false);
+  const [siteQuery, setSiteQuery] = useState('');
+  const [addingSite, setAddingSite] = useState(false);
   const scanned = sites.filter((site) => site.scanned);
+  const listedSites = scanned.filter((site) =>
+    `${site.domain} ${site.name}`
+      .toLowerCase()
+      .includes(siteQuery.trim().toLowerCase()),
+  );
   const currentLinks = archived
     ? links.slice(0, Math.max(1, links.length - 6))
     : links;
@@ -438,9 +462,25 @@ function Study({
     <div className="ux-sites-content">
       <div className="ux-section-label">
         <span>SKENOVANÉ WEBY</span>
-        <span>{scanned.length}/3</span>
+        <span>
+          {variant === 2
+            ? `${scanned.length} ze 3 webů`
+            : `${scanned.length}/3`}
+        </span>
       </div>
-      {scanned.map((site) => (
+      {variant === 2 && (
+        <label className="ux-site-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label="Najít doménu"
+            placeholder="Najít doménu…"
+            value={siteQuery}
+            onChange={(event) => setSiteQuery(event.target.value)}
+          />
+        </label>
+      )}
+      {listedSites.map((site) => (
         <div
           className={`ux-site-row ${selection?.type === 'site' && selection.id === site.id ? 'is-selected' : ''}`}
           key={site.id}
@@ -455,10 +495,15 @@ function Study({
             <span>
               <strong>{site.domain}</strong>
               <small>
-                {pausedSites.includes(site.id)
-                  ? 'Pozastaveno'
-                  : `${pages.filter((page) => page.siteId === site.id).length} stránek prozkoumáno`}
+                {variant === 2
+                  ? `${new Set(currentLinks.filter((link) => link.source.siteId === site.id).map((link) => link.source.id)).size} načteno · ${pages.filter((page) => page.siteId === site.id).length} URL`
+                  : pausedSites.includes(site.id)
+                    ? 'Pozastaveno'
+                    : `${pages.filter((page) => page.siteId === site.id).length} stránek prozkoumáno`}
               </small>
+              {variant === 2 && pausedSites.includes(site.id) && (
+                <small>Pozastaveno</small>
+              )}
             </span>
           </button>
           <button
@@ -481,16 +526,42 @@ function Study({
           </button>
         </div>
       ))}
+      {variant === 2 && listedSites.length === 0 && (
+        <p className="ux-site-note" role="status">
+          Žádný web neodpovídá hledání.
+        </p>
+      )}
       <button
         className="ux-add-site"
+        disabled={variant === 2 && (archived || scanned.length >= 3)}
+        aria-expanded={variant === 2 ? addingSite : undefined}
         onClick={() => {
+          if (variant === 2) {
+            setAddingSite(!addingSite);
+            return;
+          }
           setView('new');
           setSitesOpen(false);
         }}
       >
         <Plus size={15} />
-        Nová sestava webů
+        {variant === 2 ? 'Přidat web' : 'Nová sestava webů'}
       </button>
+      {variant === 2 && scanned.length >= 3 && (
+        <p className="ux-site-note">V mapě mohou být nejvýše 3 weby.</p>
+      )}
+      {variant === 2 && addingSite && !archived && scanned.length < 3 && (
+        <AddSiteForm
+          domains={domains}
+          onCancel={() => setAddingSite(false)}
+          onAdd={(domain) => {
+            onDomainsChange([...domains, domain]);
+            setAddingSite(false);
+            setSiteQuery('');
+            setToast(`Web ${domain} přidán do současné mapy.`);
+          }}
+        />
+      )}
       <details className="ux-settings">
         <summary>
           <Settings2 size={15} />
@@ -606,6 +677,8 @@ function Study({
             setExpanded([]);
             setView('map');
             setQuery('');
+            setSiteQuery('');
+            setAddingSite(false);
             setToast(
               'Ukázková mapa vytvořena. Na zadané weby neodesíláme požadavky.',
             );
@@ -749,10 +822,11 @@ function Study({
               >
                 <button
                   className="ux-mobile-sites-toggle"
+                  aria-expanded={sitesOpen}
                   onClick={() => setSitesOpen(!sitesOpen)}
                 >
                   <Globe2 size={16} />
-                  {scanned.length} skenované weby
+                  Skenované weby · {scanned.length} ze 3
                   <ChevronDown size={14} />
                 </button>
                 {siteList}
@@ -1475,6 +1549,69 @@ function RunHistory({
   );
 }
 
+function AddSiteForm({
+  domains,
+  onAdd,
+  onCancel,
+}: {
+  domains: string[];
+  onAdd: (domain: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (domains.length >= 3) return;
+    try {
+      const domain = normalizeDomain(value);
+      if (domains.includes(domain)) {
+        setError('Tento web už v mapě je. Zadej jiný.');
+        return;
+      }
+      onAdd(domain);
+    } catch {
+      setError('Zadej veřejnou adresu webu, například tvuj-web.cz.');
+    }
+  };
+  return (
+    <form className="ux-add-site-form" onSubmit={submit}>
+      <label htmlFor="ux-added-domain">Adresa webu</label>
+      <input
+        id="ux-added-domain"
+        autoFocus
+        autoCapitalize="none"
+        spellCheck={false}
+        required
+        value={value}
+        placeholder="tvuj-web.cz"
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? 'ux-added-domain-error' : undefined}
+        onChange={(event) => {
+          setValue(event.target.value);
+          setError('');
+        }}
+      />
+      <p className="ux-site-note">
+        Přidá se do této mapy. Dosavadní výsledky zůstanou zachované.
+      </p>
+      {error && (
+        <p id="ux-added-domain-error" className="ux-form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div>
+        <button className="ux-button ux-primary" type="submit">
+          Přidat do mapy
+        </button>
+        <button className="ux-button" type="button" onClick={onCancel}>
+          Zrušit
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function NewMap({
   variant,
   domains,
@@ -1494,20 +1631,7 @@ function NewMap({
       const normalized = values
         .map((value) => value.trim())
         .filter(Boolean)
-        .map((value) => {
-          const url = new URL(
-            value.includes('://') ? value : `https://${value}`,
-          );
-          if (
-            !['http:', 'https:'].includes(url.protocol) ||
-            !url.hostname.includes('.') ||
-            url.username ||
-            url.password ||
-            url.port
-          )
-            throw new Error('invalid');
-          return url.hostname;
-        });
+        .map(normalizeDomain);
       if (
         !normalized.length ||
         new Set(normalized).size !== normalized.length
