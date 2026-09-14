@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Activity,
@@ -300,6 +300,8 @@ function Study({
   const [sitesOpen, setSitesOpen] = useState(false);
   const [siteQuery, setSiteQuery] = useState('');
   const [addingSite, setAddingSite] = useState(false);
+  const sitesPanelRef = useRef<HTMLElement>(null);
+  const floatingDetailRef = useRef<HTMLDivElement>(null);
   const scanned = sites.filter((site) => site.scanned);
   const listedSites = scanned.filter((site) =>
     `${site.domain} ${site.name}`
@@ -365,6 +367,42 @@ function Study({
     const timer = window.setTimeout(() => setToast(''), 3500);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useLayoutEffect(() => {
+    const panel = sitesPanelRef.current;
+    const detail = floatingDetailRef.current;
+    if (!panel || !detail) return;
+    const row = panel.querySelector('.ux-scan-row.is-selected');
+    const updateAnchor = () => {
+      const bounds = row?.getBoundingClientRect();
+      const panelBounds = panel.getBoundingClientRect();
+      const center = bounds ? bounds.top + bounds.height / 2 : 0;
+      detail.dataset.anchored = String(
+        Boolean(
+          bounds?.height &&
+          center > panelBounds.top &&
+          center < panelBounds.bottom,
+        ),
+      );
+      detail.style.setProperty(
+        '--ux-detail-anchor-y',
+        `${center - detail.getBoundingClientRect().top}px`,
+      );
+    };
+    updateAnchor();
+    const observer = new ResizeObserver(updateAnchor);
+    observer.observe(panel);
+    const content = panel.querySelector('.ux-sites-content');
+    if (content) observer.observe(content);
+    if (row) observer.observe(row);
+    panel.addEventListener('scroll', updateAnchor);
+    window.addEventListener('resize', updateAnchor);
+    return () => {
+      observer.disconnect();
+      panel.removeEventListener('scroll', updateAnchor);
+      window.removeEventListener('resize', updateAnchor);
+    };
+  }, [selection, view, siteQuery]);
 
   const select = (next: Selection) => {
     setSelection(next);
@@ -926,12 +964,16 @@ function Study({
                 {status}
               </div>
               <aside
+                ref={sitesPanelRef}
                 className={`ux-floating-sites ${sitesOpen ? 'is-open' : ''}`}
               >
                 <button
                   className="ux-mobile-sites-toggle"
                   aria-expanded={sitesOpen}
-                  onClick={() => setSitesOpen(!sitesOpen)}
+                  onClick={() => {
+                    setSitesOpen(!sitesOpen);
+                    setSelection(null);
+                  }}
                 >
                   <Globe2 size={16} />
                   Skenované weby · {scanned.length} ze 3
@@ -954,7 +996,9 @@ function Study({
                 </button>
               </div>
               {view === 'map' && detail && (
-                <div className="ux-floating-detail">{detail}</div>
+                <div className="ux-floating-detail" ref={floatingDetailRef}>
+                  {detail}
+                </div>
               )}
               {view !== 'map' && (
                 <section

@@ -1180,6 +1180,8 @@
   white-space: nowrap;
 }
 .ux-immersive {
+  --ux-sites-left: 27px;
+  --ux-sites-width: 244px;
   height: calc(100dvh - 105px);
   min-height: 650px;
   position: relative;
@@ -1191,10 +1193,9 @@
   position: absolute;
   inset: 95px 27px 91px 260px;
   display: flex;
-  transition: right 0.2s;
 }
 .ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
-  right: 330px;
+  left: 590px;
 }
 .ux-immersive .graph-area {
   background: transparent;
@@ -1235,9 +1236,9 @@
 }
 .ux-floating-sites {
   position: absolute;
-  left: 27px;
+  left: var(--ux-sites-left);
   top: 134px;
-  width: 244px;
+  width: var(--ux-sites-width);
   max-height: calc(100% - 230px);
   overflow-y: auto;
   background: var(--surface);
@@ -1341,6 +1342,10 @@
 .ux-scan-row > .ux-site-dot {
   align-self: flex-start;
 }
+.ux-scan-row > .ux-site-action {
+  align-self: flex-start;
+  margin-top: 4px;
+}
 .ux-scan-site-info {
   min-width: 0;
   flex: 1;
@@ -1382,6 +1387,17 @@
   min-width: 24px;
   flex: 0 0 24px;
   padding: 4px;
+  border: 1px solid transparent;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.ux-scan-site-heading .external-link:hover,
+.ux-scan-site-heading .external-link:focus-visible {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 .ux-scan-site-heading .external-link svg {
   width: 12px;
@@ -1405,20 +1421,34 @@
 }
 .ux-floating-detail {
   position: absolute;
-  top: 143px;
-  right: 27px;
+  top: 134px;
+  left: calc(var(--ux-sites-left) + var(--ux-sites-width) + 14px);
   bottom: 110px;
   width: 288px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: var(--ux-shadow);
-  overflow: hidden;
+  z-index: 4;
+}
+.ux-floating-detail[data-anchored='true']::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: var(--ux-detail-anchor-y);
+  width: 14px;
+  height: 14px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transform: translateY(-50%) rotate(45deg);
+  pointer-events: none;
 }
 .ux-floating-detail .ux-detail {
   width: 100%;
   height: 100%;
   border: none;
+  border-radius: inherit;
 }
 .ux-map-dock {
   position: absolute;
@@ -2286,15 +2316,15 @@
   .ux-immersive-canvas {
     left: 215px;
   }
-  .ux-floating-sites {
-    width: 193px;
-    left: 17px;
+  .ux-immersive {
+    --ux-sites-width: 193px;
+    --ux-sites-left: 17px;
   }
   .ux-floating-sites .ux-site-dot {
     display: none;
   }
   .ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
-    right: 27px;
+    left: 215px;
   }
   .ux-concepts {
     gap: 12px;
@@ -2676,14 +2706,26 @@
     display: none;
   }
   .ux-floating-detail {
-    top: auto;
+    top: 150px;
     bottom: 145px;
-    right: 12px;
-    left: 12px;
+    right: 16px;
+    left: 16px;
     width: auto;
-    max-height: 435px;
-    height: 60%;
-    z-index: 4;
+  }
+  .ux-floating-detail::before,
+  .ux-floating-detail[data-anchored='true']::before {
+    content: '';
+    position: absolute;
+    top: -8px;
+    left: 28px;
+    width: 14px;
+    height: 14px;
+    background: var(--surface);
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+    transform: rotate(45deg);
+    pointer-events: none;
   }
   .ux-bottom-sheet {
     top: 105px;
