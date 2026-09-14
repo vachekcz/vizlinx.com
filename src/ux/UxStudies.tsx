@@ -646,8 +646,20 @@ function Study({
       Další odkazované weby
     </label>
   );
+  const detailHighlight =
+    variant === 2 && view === 'map' && selection?.type === 'connection'
+      ? { target: selection, style: 'pulse' as const, replayKey: 0 }
+      : undefined;
+  const graphHighlight = hoverStudy.highlight ?? detailHighlight;
   const graph = (
-    <div className="ux-canvas">
+    <div
+      className="ux-canvas"
+      data-detail-connection={
+        detailHighlight && !hoverStudy.highlight
+          ? detailHighlight.target.id
+          : undefined
+      }
+    >
       <Graph
         sites={visibleSites}
         links={visibleLinks}
@@ -660,7 +672,7 @@ function Study({
         running={state === 'running' && !archived}
         resetKey={resetKey}
         connectionStyle="silk"
-        highlight={view === 'map' ? hoverStudy.highlight : undefined}
+        highlight={view === 'map' ? graphHighlight : undefined}
       />
     </div>
   );

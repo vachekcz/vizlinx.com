@@ -175,10 +175,124 @@ test('supports keyboard preview and reduced motion without losing navigation', a
   await expect(
     page.getByRole('button', { name: 'Zpět na atlas.example', exact: true }),
   ).toBeFocused();
-  await expect(page.locator('[data-highlight-connection]')).toHaveCount(0);
+  await expect(
+    page.locator('[data-highlight-connection="atlas:journal"]'),
+  ).toHaveCount(1);
+  await expect(page.locator('.graph-highlight-travel')).toBeHidden();
+  await expect(page.locator('.graph-highlight-path')).toHaveCSS(
+    'animation-name',
+    'none',
+  );
   await page.keyboard.press('Enter');
   await expect(outgoing).toBeFocused();
   await expect(
     page.locator('[data-highlight-connection="atlas:journal"]'),
   ).toHaveCount(1);
 });
+
+for (const query of ['', '?hover=pulse']) {
+  test(`keeps the open connection pulsing until leaving its detail (${query || 'default'})`, async ({
+    page,
+  }, testInfo) => {
+    await page.goto(`/ux/2${query}`);
+    if (testInfo.project.name === 'mobile') {
+      await page.getByRole('button', { name: /Skenované weby ·/ }).click();
+    }
+    await page
+      .getByRole('button', { name: 'atlas.example', exact: true })
+      .click();
+    const graph = page.locator('.graph');
+    const viewBox = await graph.getAttribute('viewBox');
+    const camera = await page
+      .getByTestId('graph-camera')
+      .getAttribute('transform');
+    const detail = page.getByRole('complementary', { name: 'Detail výběru' });
+    const neutral = page.getByRole('heading', {
+      name: 'Studio Atlas',
+      exact: true,
+    });
+    const persistent = page.locator('.ux-canvas[data-detail-connection]');
+    await detail
+      .getByRole('button', {
+        name: '5 odkazů ven: z atlas.example na journal.example',
+        exact: true,
+      })
+      .click();
+    await neutral.hover();
+    await expect(persistent).toHaveAttribute(
+      'data-detail-connection',
+      'atlas:journal',
+    );
+    await expect(graph.locator('[data-highlight-connection]')).toHaveAttribute(
+      'data-highlight-connection',
+      'atlas:journal',
+    );
+    const travel = graph.locator('.graph-highlight-travel');
+    await expect(travel).toHaveCSS('animation-iteration-count', 'infinite');
+    await expect
+      .poll(() =>
+        travel.evaluate(
+          (element) =>
+            element.getAnimations()[0]?.effect?.getComputedTiming()
+              .currentIteration ?? 0,
+        ),
+      )
+      .toBeGreaterThan(0);
+    await expect(graph).toHaveAttribute('viewBox', viewBox!);
+    await expect(page.getByTestId('graph-camera')).toHaveAttribute(
+      'transform',
+      camera!,
+    );
+    await expect(page.locator('.ux-scan-row.is-selected')).toContainText(
+      'atlas.example',
+    );
+    if (query && testInfo.project.name === 'desktop') {
+      await page
+        .getByRole('button', { name: 'journal.example', exact: true })
+        .hover();
+      await expect(persistent).toHaveCount(0);
+      await expect(graph.locator('[data-highlight-site]')).toHaveAttribute(
+        'data-highlight-site',
+        'journal',
+      );
+      await neutral.hover();
+      await expect(persistent).toHaveAttribute(
+        'data-detail-connection',
+        'atlas:journal',
+      );
+    }
+    await detail.locator('.ux-link-card').first().click();
+    await expect(persistent).toHaveCount(0);
+    await expect(travel).toHaveCount(0);
+    await detail.getByRole('button', { name: 'Zpět na seznam odkazů' }).click();
+    await expect(persistent).toHaveAttribute(
+      'data-detail-connection',
+      'atlas:journal',
+    );
+    await detail.getByRole('button', { name: 'Zpět na atlas.example' }).click();
+    await neutral.hover();
+    await expect(persistent).toHaveCount(0);
+    await detail
+      .getByRole('button', { name: 'Prozkoumat 5 stránek', exact: true })
+      .click();
+    await detail
+      .getByRole('button', {
+        name: '3 odkazy sem: z journal.example na atlas.example',
+        exact: true,
+      })
+      .click();
+    await neutral.hover();
+    await expect(persistent).toHaveAttribute(
+      'data-detail-connection',
+      'journal:atlas',
+    );
+    await expect(graph.locator('[data-highlight-connection]')).toHaveAttribute(
+      'data-highlight-connection',
+      'journal:atlas',
+    );
+    await expect(travel).toHaveCount(3);
+    await detail.getByRole('button', { name: 'Zavřít detail' }).click();
+    await expect(persistent).toHaveCount(0);
+    await expect(travel).toHaveCount(0);
+  });
+}
