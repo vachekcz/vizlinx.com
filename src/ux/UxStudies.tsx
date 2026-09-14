@@ -80,6 +80,12 @@ const tabs: {
 ];
 const initialDomains = ['atlas.example', 'journal.example', 'objects.example'];
 
+function formatPageCount(count: number): string {
+  const label =
+    count === 1 ? 'stránka' : count >= 2 && count <= 4 ? 'stránky' : 'stránek';
+  return `${count} ${label}`;
+}
+
 function normalizeDomain(value: string): string {
   const trimmed = value.trim();
   const url = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
@@ -496,7 +502,7 @@ function Study({
               <strong>{site.domain}</strong>
               <small>
                 {variant === 2
-                  ? `${new Set(currentLinks.filter((link) => link.source.siteId === site.id).map((link) => link.source.id)).size} načteno · ${pages.filter((page) => page.siteId === site.id).length} URL`
+                  ? `Celkem: ${formatPageCount(new Set(currentLinks.filter((link) => link.source.siteId === site.id).map((link) => link.source.id)).size)} · ${pages.filter((page) => page.siteId === site.id).length} URL`
                   : pausedSites.includes(site.id)
                     ? 'Pozastaveno'
                     : `${pages.filter((page) => page.siteId === site.id).length} stránek prozkoumáno`}
