@@ -64,7 +64,7 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 | Soubor | Pokrývá |
 |---|---|
 | `demo.spec.ts` | demo `/`, archivy `/palettes/` a `/connections/`, 20-stránkový detail, ovládání, klávesnice, CSV |
-| `ux-studies.spec.ts` | návrh `/ux/2`: návraty web → propojení → odkaz, zachování kontextu webu, scrollu a fokusu, nová cesta při přepnutí webu/zavření panelu |
+| `ux-studies.spec.ts` | návrh `/ux/2`: návraty web → propojení → odkaz, zachování kontextu webu, scrollu a fokusu, nová cesta při přepnutí webu/zavření panelu, kopírování celých URL včetně chyby schránky, zachování konkrétního odkazu a návratové cesty po rozbalení obou webů v mapě |
 | `ux-hover.spec.ts` | tři varianty hoveru: web, přesný směr propojení, opakování pulsu koulí a průběhu po celou dobu hoveru, neměnnost výběru/rozložení, rozbalené stránky, přepínání variant, mobilní přehrání, klávesnice a reduced motion; opakovaný puls otevřeného směrového detailu, přednost hoveru a vypnutí/obnovení při navigaci |
 | `ux-page-hover.spec.ts` | hover/fokus stránky v rozbalené kouli `/ux/2`: přesné příchozí/odchozí vazby, opakování animace po dobu náhledu, neměnnost výběru a geometrie, obnovení původního výběru, samostatný odkaz ven, kliknutí/Enter, ignorování dotykového hoveru a reduced motion |
 | `review-graph.spec.ts`, `expansion-position.spec.ts` | rozložení mapy, stabilita pozic při rozbalení, žádné překryvy (helper `graph-spacing.ts`) |

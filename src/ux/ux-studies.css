@@ -962,6 +962,34 @@
   color: var(--muted);
   font-size: 11px;
 }
+.ux-url-endpoint strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.ux-url-page {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 3px;
+}
+.ux-url-page code {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 24px;
+}
+.ux-url-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+.ux-url-endpoint > .ux-url-copy-error {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0;
+}
 .ux-url-arrow {
   color: var(--accent);
   margin: 10px 0 -10px 12px;
@@ -1456,7 +1484,9 @@
   z-index: 1;
 }
 .ux-scan-site-heading .external-link,
-.ux-detail-domain .external-link {
+.ux-detail-domain .external-link,
+.ux-url-actions .external-link,
+.ux-url-actions .ux-copy-url {
   width: 24px;
   height: 24px;
   min-width: 24px;
@@ -1471,13 +1501,16 @@
 .ux-scan-site-heading .external-link:hover,
 .ux-scan-site-heading .external-link:focus-visible,
 .ux-detail-domain .external-link:hover,
-.ux-detail-domain .external-link:focus-visible {
+.ux-detail-domain .external-link:focus-visible,
+.ux-url-actions > :hover,
+.ux-url-actions > :focus-visible {
   background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 2px 5px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 .ux-scan-site-heading .external-link svg,
-.ux-detail-domain .external-link svg {
+.ux-detail-domain .external-link svg,
+.ux-url-actions .external-link svg {
   width: 12px;
   height: 12px;
   color: inherit;

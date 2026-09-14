@@ -13,6 +13,7 @@ import {
   ChevronRight,
   CircleHelp,
   Clock3,
+  Copy,
   FileText,
   Globe2,
   History,
@@ -1513,6 +1514,81 @@ function Stat({
   );
 }
 
+function LinkEndpoint({
+  label,
+  domain,
+  path,
+  url,
+  contextual,
+}: {
+  label: string;
+  domain: string;
+  path: string;
+  url: string;
+  contextual: boolean;
+}) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>(
+    'idle',
+  );
+  useEffect(() => {
+    if (copyState !== 'copied') return;
+    const timer = window.setTimeout(() => setCopyState('idle'), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+  const copyUrl = async () => {
+    setCopyState('idle');
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopyState('copied');
+    } catch {
+      setCopyState('error');
+    }
+  };
+  return (
+    <div className={`ux-url-step${contextual ? ' ux-url-endpoint' : ''}`}>
+      <span>{label}</span>
+      <strong>{domain}</strong>
+      {contextual ? (
+        <>
+          <div className="ux-url-page">
+            <code>{path}</code>
+            <span className="ux-url-actions">
+              <ExternalLink url={url} />
+              <button
+                type="button"
+                className="ux-icon ux-copy-url"
+                aria-label={`Kopírovat URL ${url}`}
+                title={copyState === 'copied' ? 'Zkopírováno' : 'Kopírovat URL'}
+                onClick={copyUrl}
+              >
+                {copyState === 'copied' ? (
+                  <Check size={12} aria-hidden="true" />
+                ) : (
+                  <Copy size={12} aria-hidden="true" />
+                )}
+              </button>
+            </span>
+          </div>
+          <span
+            role="status"
+            className={
+              copyState === 'error' ? 'ux-url-copy-error' : 'ux-sr-only'
+            }
+          >
+            {copyState === 'copied'
+              ? 'URL zkopírována'
+              : copyState === 'error'
+                ? 'URL se nepodařilo zkopírovat. Zkus to znovu.'
+                : ''}
+          </span>
+        </>
+      ) : (
+        <code>{path}</code>
+      )}
+    </div>
+  );
+}
+
 function Detail({
   selection,
   links,
@@ -1740,25 +1816,25 @@ function Detail({
       ) : link ? (
         <>
           <h2>Odkud a kam</h2>
-          <div className="ux-url-step">
-            <span>ZDROJ</span>
-            <strong className={contextual ? 'ux-detail-domain' : undefined}>
-              <span>{getSite(link.source.siteId).domain}</span>
-              {contextual && <ExternalLink url={pageUrl(link.source)} />}
-            </strong>
-            <code>{link.source.path}</code>
-          </div>
+          <LinkEndpoint
+            key={`source:${pageUrl(link.source)}`}
+            label="ZDROJ"
+            domain={getSite(link.source.siteId).domain}
+            path={link.source.path}
+            url={pageUrl(link.source)}
+            contextual={contextual}
+          />
           <div className="ux-url-arrow">
             <ArrowRight size={19} />
           </div>
-          <div className="ux-url-step">
-            <span>CÍL</span>
-            <strong className={contextual ? 'ux-detail-domain' : undefined}>
-              <span>{getSite(link.target.siteId).domain}</span>
-              {contextual && <ExternalLink url={pageUrl(link.target)} />}
-            </strong>
-            <code>{link.target.path}</code>
-          </div>
+          <LinkEndpoint
+            key={`target:${pageUrl(link.target)}`}
+            label="CÍL"
+            domain={getSite(link.target.siteId).domain}
+            path={link.target.path}
+            url={pageUrl(link.target)}
+            contextual={contextual}
+          />
           <dl className="ux-metadata">
             <div>
               <dt>Text odkazu</dt>
@@ -1781,6 +1857,16 @@ function Detail({
             className="ux-button ux-soft ux-full"
             data-detail-target="show-pages"
             onClick={() => {
+              if (contextual) {
+                onExpand([
+                  ...new Set([
+                    ...expanded,
+                    link.source.siteId,
+                    link.target.siteId,
+                  ]),
+                ]);
+                return;
+              }
               onSelect({
                 type: 'connection',
                 id: `${link.source.siteId}:${link.target.siteId}`,
@@ -1789,7 +1875,9 @@ function Detail({
             }}
           >
             <Network size={15} />
-            Zobrazit stránky v mapě
+            {contextual
+              ? 'Ukázat tento odkaz v mapě'
+              : 'Zobrazit stránky v mapě'}
           </button>
         </>
       ) : (
