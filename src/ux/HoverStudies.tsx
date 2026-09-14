@@ -9,7 +9,7 @@ const variants = [
     id: 'pulse',
     label: '1 · Puls',
     description:
-      'Jeden puls kolem webu; světelný úsek po spojnici ve směru odkazu.',
+      'Opakovaný puls kolem webu a světelný úsek ve směru odkazu po celou dobu náhledu.',
   },
   {
     id: 'quiet',

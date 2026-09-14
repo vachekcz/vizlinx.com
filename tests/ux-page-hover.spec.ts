@@ -55,6 +55,10 @@ for (const query of ['', '?hover=pulse']) {
     await expect(graph.locator('.graph-highlight-travel')).toHaveCount(5);
     const travel = graph.locator('.graph-highlight-travel').first();
     await expect(travel).toHaveCSS('animation-iteration-count', 'infinite');
+    await expect(graph.locator('.graph-highlight-pulse').first()).toHaveCSS(
+      'animation-iteration-count',
+      'infinite',
+    );
     await expect
       .poll(() =>
         travel.evaluate(

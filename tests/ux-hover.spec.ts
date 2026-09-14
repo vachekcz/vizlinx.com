@@ -31,6 +31,19 @@ for (const mode of ['pulse', 'quiet', 'focus']) {
       'transform',
       camera!,
     );
+    if (mode === 'pulse') {
+      const pulse = graph.locator('.graph-highlight-pulse');
+      await expect(pulse).toHaveCSS('animation-iteration-count', 'infinite');
+      await expect
+        .poll(() =>
+          pulse.evaluate(
+            (element) =>
+              element.getAnimations()[0]?.effect?.getComputedTiming()
+                .currentIteration ?? 0,
+          ),
+        )
+        .toBeGreaterThan(0);
+    }
     if (mode === 'focus') {
       await expect
         .poll(() =>
@@ -74,11 +87,34 @@ for (const mode of ['pulse', 'quiet', 'focus']) {
     await expect(graph.locator('.graph-highlight-travel')).toHaveCount(
       mode === 'pulse' ? 1 : 0,
     );
+    if (mode === 'pulse') {
+      const travel = graph.locator('.graph-highlight-travel');
+      await expect(travel).toHaveCSS('animation-iteration-count', 'infinite');
+      await expect(graph.locator('.graph-highlight-pulse').first()).toHaveCSS(
+        'animation-iteration-count',
+        'infinite',
+      );
+      await expect
+        .poll(() =>
+          travel.evaluate(
+            (element) =>
+              element.getAnimations()[0]?.effect?.getComputedTiming()
+                .currentIteration ?? 0,
+          ),
+        )
+        .toBeGreaterThan(0);
+    }
     await incoming.hover();
     await expect(graph.locator('[data-highlight-connection]')).toHaveAttribute(
       'data-highlight-connection',
       'journal:atlas',
     );
+    if (mode === 'pulse') {
+      await expect(graph.locator('.graph-highlight-travel')).toHaveCSS(
+        'animation-iteration-count',
+        'infinite',
+      );
+    }
     await page
       .getByRole('heading', { name: 'Studio Atlas', exact: true })
       .hover();

@@ -72,10 +72,10 @@
   opacity: 0.2;
 }
 .ux .graph-highlight-pulse {
-  animation: ux-hover-pulse 950ms ease-out both;
+  animation: ux-hover-pulse 950ms ease-out infinite both;
 }
 .ux .graph-highlight-travel {
-  animation: ux-hover-travel 1150ms ease-in-out both;
+  animation: ux-hover-travel 1150ms ease-in-out infinite both;
   filter: drop-shadow(0 0 3px currentColor);
 }
 .ux
@@ -109,12 +109,8 @@
 .ux .page-node[data-highlight-page][aria-pressed='false'] > rect {
   fill: var(--raised);
 }
-.ux .ux-canvas[data-highlight-target='page'] .graph-highlight-travel {
-  animation-iteration-count: infinite;
-}
 .ux .ux-canvas[data-detail-connection] .graph-highlight-travel {
   animation-duration: 2200ms;
-  animation-iteration-count: infinite;
 }
 .ux .ux-canvas[data-detail-connection] .graph-highlight-path {
   animation: ux-detail-connection-pulse 2200ms ease-in-out infinite;
