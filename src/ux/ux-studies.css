@@ -1324,6 +1324,43 @@
 .ux-floating-sites .ux-site-row strong {
   font-size: 10px;
 }
+.ux-scan-row {
+  align-items: center;
+  gap: 7px;
+  padding: 8px 2px;
+}
+.ux-scan-site-info {
+  min-width: 0;
+  flex: 1;
+}
+.ux-scan-site-heading {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.ux-scan-site-title {
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+.ux-scan-site-title strong {
+  white-space: nowrap;
+}
+.ux-scan-site-heading .external-link {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  flex: 0 0 24px;
+  padding: 4px;
+}
+.ux-scan-site-heading .external-link svg {
+  width: 12px;
+  height: 12px;
+}
+.ux-site-action {
+  width: 27px;
+  height: 32px;
+}
 .ux-floating-options {
   position: absolute;
   top: 89px;

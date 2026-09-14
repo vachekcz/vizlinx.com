@@ -23,6 +23,7 @@ import {
   Pause,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
@@ -30,6 +31,7 @@ import {
   X,
 } from 'lucide-react';
 import Graph from '../Graph';
+import ExternalLink from '../ExternalLink';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
 import type { GraphDataset, Link, Selection, Site } from '../data';
 import { useTheme } from '../themes';
@@ -269,6 +271,7 @@ function Study({
   const [showExternal, setShowExternal] = useState(true);
   const [state, setState] = useState<ScanState>('completed');
   const [pausedSites, setPausedSites] = useState<string[]>([]);
+  const [activeSites, setActiveSites] = useState<string[]>([]);
   const [intervals, setIntervals] = useState<Record<string, number>>({
     atlas: 3,
     journal: 3,
@@ -337,10 +340,40 @@ function Study({
   const start = () => {
     setArchived(false);
     setState('running');
+    if (variant === 2) {
+      setActiveSites(scanned.map((site) => site.id));
+      setPausedSites([]);
+    }
     setRun((previous) => previous + 1);
     setToast(
       'Ukázka nového skenu spuštěna. Můžeš ji pozastavit nebo otevřít průběh.',
     );
+  };
+  const siteState = (id: string): ScanState => {
+    if (archived || !activeSites.includes(id)) return 'completed';
+    return state === 'paused' || pausedSites.includes(id)
+      ? 'paused'
+      : 'running';
+  };
+  const toggleSiteScan = (site: Site) => {
+    if (archived) return;
+    const currentState = siteState(site.id);
+    if (currentState === 'completed') {
+      setActiveSites((previous) => [...previous, site.id]);
+      setPausedSites((previous) => previous.filter((id) => id !== site.id));
+      if (state === 'completed') setRun((previous) => previous + 1);
+      setState('running');
+      setToast(`Ukázkové skenování webu ${site.domain} spuštěno znovu.`);
+      return;
+    }
+    if (currentState === 'paused') {
+      setPausedSites((previous) => previous.filter((id) => id !== site.id));
+      setState('running');
+      return;
+    }
+    const nextPaused = [...pausedSites, site.id];
+    setPausedSites(nextPaused);
+    if (activeSites.every((id) => nextPaused.includes(id))) setState('paused');
   };
   const exportCsv = () => {
     const rows = [
@@ -382,7 +415,12 @@ function Study({
       onClick={
         state === 'completed'
           ? start
-          : () => setState(state === 'running' ? 'paused' : 'running')
+          : () => {
+              if (variant === 2) {
+                setPausedSites(state === 'running' ? activeSites : []);
+              }
+              setState(state === 'running' ? 'paused' : 'running');
+            }
       }
     >
       {state === 'running' ? <Pause size={15} /> : <Play size={15} />}
@@ -486,52 +524,70 @@ function Study({
           />
         </label>
       )}
-      {listedSites.map((site) => (
-        <div
-          className={`ux-site-row ${selection?.type === 'site' && selection.id === site.id ? 'is-selected' : ''}`}
-          key={site.id}
-        >
-          <button
-            onClick={() => {
+      {listedSites.map((site) =>
+        variant === 2 ? (
+          <ScannedSiteRow
+            key={site.id}
+            site={site}
+            state={siteState(site.id)}
+            selected={selection?.type === 'site' && selection.id === site.id}
+            disabled={archived}
+            loadedPages={
+              new Set(
+                currentLinks
+                  .filter((link) => link.source.siteId === site.id)
+                  .map((link) => link.source.id),
+              ).size
+            }
+            knownUrls={pages.filter((page) => page.siteId === site.id).length}
+            onSelect={() => {
               select({ type: 'site', id: site.id });
               setView('map');
             }}
+            onAction={() => toggleSiteScan(site)}
+          />
+        ) : (
+          <div
+            className={`ux-site-row ${selection?.type === 'site' && selection.id === site.id ? 'is-selected' : ''}`}
+            key={site.id}
           >
-            <SiteDot site={site} />
-            <span>
-              <strong>{site.domain}</strong>
-              <small>
-                {variant === 2
-                  ? `Celkem: ${formatPageCount(new Set(currentLinks.filter((link) => link.source.siteId === site.id).map((link) => link.source.id)).size)} · ${pages.filter((page) => page.siteId === site.id).length} URL`
-                  : pausedSites.includes(site.id)
+            <button
+              onClick={() => {
+                select({ type: 'site', id: site.id });
+                setView('map');
+              }}
+            >
+              <SiteDot site={site} />
+              <span>
+                <strong>{site.domain}</strong>
+                <small>
+                  {pausedSites.includes(site.id)
                     ? 'Pozastaveno'
                     : `${pages.filter((page) => page.siteId === site.id).length} stránek prozkoumáno`}
-              </small>
-              {variant === 2 && pausedSites.includes(site.id) && (
-                <small>Pozastaveno</small>
+                </small>
+              </span>
+            </button>
+            <button
+              className="ux-icon ux-site-pause"
+              disabled={archived}
+              aria-label={`${pausedSites.includes(site.id) ? 'Povolit' : 'Pozastavit'} ${site.domain}`}
+              onClick={() =>
+                setPausedSites((previous) =>
+                  previous.includes(site.id)
+                    ? previous.filter((id) => id !== site.id)
+                    : [...previous, site.id],
+                )
+              }
+            >
+              {pausedSites.includes(site.id) ? (
+                <Play size={13} />
+              ) : (
+                <Pause size={13} />
               )}
-            </span>
-          </button>
-          <button
-            className="ux-icon ux-site-pause"
-            disabled={archived}
-            aria-label={`${pausedSites.includes(site.id) ? 'Povolit' : 'Pozastavit'} ${site.domain}`}
-            onClick={() =>
-              setPausedSites((previous) =>
-                previous.includes(site.id)
-                  ? previous.filter((id) => id !== site.id)
-                  : [...previous, site.id],
-              )
-            }
-          >
-            {pausedSites.includes(site.id) ? (
-              <Play size={13} />
-            ) : (
-              <Pause size={13} />
-            )}
-          </button>
-        </div>
-      ))}
+            </button>
+          </div>
+        ),
+      )}
       {variant === 2 && listedSites.length === 0 && (
         <p className="ux-site-note" role="status">
           Žádný web neodpovídá hledání.
@@ -678,6 +734,12 @@ function Study({
             onDomainsChange(next);
             setArchived(false);
             setState('running');
+            if (variant === 2) {
+              setActiveSites(
+                demoDataset.sites.slice(0, next.length).map((site) => site.id),
+              );
+              setPausedSites([]);
+            }
             setRun(1);
             setSelection(null);
             setExpanded([]);
@@ -1103,6 +1165,10 @@ function Study({
           onClose={() => setLogOpen(false)}
           onComplete={() => {
             setState('completed');
+            if (variant === 2) {
+              setActiveSites([]);
+              setPausedSites([]);
+            }
             setToast('Ukázkový sken dokončen. Výsledky jsou připravené.');
           }}
         />
@@ -1552,6 +1618,69 @@ function RunHistory({
         </p>
       </div>
     </section>
+  );
+}
+
+function ScannedSiteRow({
+  site,
+  state,
+  selected,
+  disabled,
+  loadedPages,
+  knownUrls,
+  onSelect,
+  onAction,
+}: {
+  site: Site;
+  state: ScanState;
+  selected: boolean;
+  disabled: boolean;
+  loadedPages: number;
+  knownUrls: number;
+  onSelect: () => void;
+  onAction: () => void;
+}) {
+  const action =
+    state === 'completed'
+      ? 'Skenovat znovu'
+      : state === 'paused'
+        ? 'Pokračovat'
+        : 'Pozastavit';
+  const ActionIcon =
+    state === 'completed' ? RefreshCw : state === 'paused' ? Play : Pause;
+  return (
+    <div className={`ux-site-row ux-scan-row ${selected ? 'is-selected' : ''}`}>
+      <SiteDot site={site} />
+      <div className="ux-scan-site-info">
+        <div className="ux-scan-site-heading">
+          <button
+            className="ux-scan-site-title"
+            onClick={onSelect}
+            title={site.domain}
+          >
+            <strong>{site.domain}</strong>
+          </button>
+          <ExternalLink url={site.origin ?? `https://${site.domain}`} />
+        </div>
+        <small>
+          Celkem: {formatPageCount(loadedPages)} · {knownUrls} URL
+        </small>
+        {state !== 'completed' && (
+          <small>
+            {state === 'paused' ? 'Pozastaveno' : 'Skenování probíhá'}
+          </small>
+        )}
+      </div>
+      <button
+        className="ux-icon ux-site-action"
+        disabled={disabled}
+        onClick={onAction}
+        aria-label={`${action} ${site.domain}`}
+        title={`${action} ${site.domain}`}
+      >
+        <ActionIcon size={14} aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
