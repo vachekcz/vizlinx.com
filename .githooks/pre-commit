@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pre-commit gate: the staged files must already be prettier-formatted.
+# Plain prettier on purpose — the project has no lint-staged and a formatter
+# guard is not worth a new dependency. Heavier checks belong in pre-push.
+
+# Escape hatch — same effect as `git commit --no-verify`, but explicit:
+#   HOOK_SKIP=1 git commit ...
+if [ "${HOOK_SKIP:-}" = "1" ]; then
+  echo "⚠ HOOK_SKIP=1 — skipping pre-commit checks."
+  exit 0
+fi
+
+# Merge and rebase commits carry changes from existing history, not new
+# authoring on this branch, so the authoring guard does not apply.
+GIT_DIR=$(git rev-parse --git-dir)
+if [ -f "$GIT_DIR/MERGE_HEAD" ] || [ -d "$GIT_DIR/rebase-merge" ] || [ -d "$GIT_DIR/rebase-apply" ]; then
+  exit 0
+fi
+
+if [ ! -d "node_modules" ]; then
+  echo "❌ node_modules is missing — run 'npm ci' and commit again."
+  exit 1
+fi
+
+# Added, copied, modified or renamed only: a deleted path cannot be formatted.
+# NUL-delimited into an array: a path with a space or a glob character must not
+# be split or expanded, or prettier would reformat whatever the shell matched.
+STAGED=()
+while IFS= read -r -d '' file; do
+  STAGED+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+if [ ${#STAGED[@]} -eq 0 ]; then
+  exit 0
+fi
+
+# --ignore-unknown skips files prettier has no parser for; .prettierignore
+# still applies, so ignored paths (docs/, README.md, dist/) drop out here.
+if ! npx prettier --check --ignore-unknown -- "${STAGED[@]}" >/dev/null 2>&1; then
+  npx prettier --write --ignore-unknown -- "${STAGED[@]}"
+  echo ""
+  echo "❌ Commit stopped: prettier reformatted staged files."
+  echo "   Review 'git status', stage the changes and commit again."
+  exit 1
+fi

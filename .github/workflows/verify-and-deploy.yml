@@ -1,6 +1,11 @@
 name: Verify and deploy
 
 on:
+  # NO paths-ignore on pull_request — on purpose, and do not add one. It stops
+  # the workflow from STARTING, so "CI Passed" is never queued and a branch
+  # protection rule requiring it would wait forever ("Expected — Waiting for
+  # status to be reported"). Docs-only pull requests are skipped one level
+  # down, by the `changes` job below.
   pull_request:
   push:
     branches: [main]
@@ -9,18 +14,73 @@ on:
 permissions:
   contents: read
 
+# Force bash everywhere so a failure inside a pipe is not masked by the pipe's
+# own exit code (bash runs with pipefail on Actions).
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: vizlinx-${{ github.ref }}
-  cancel-in-progress: false
+  # Never cancel a push or a manual run — those deploy, and a cancelled deploy
+  # can leave the Worker half-updated. A superseded pull request run is safe to
+  # cancel.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
+  # Lets a docs-only pull request skip the expensive verify leg while the
+  # workflow still starts and the gate still reports. The filter is a
+  # DENY-list, not an allow-list of code paths: a missing entry here runs CI
+  # when it need not (cheap), whereas a missing entry in an allow-list would
+  # silently skip CI on a real code change (expensive). The workflow file
+  # itself is deliberately not excluded — a change to CI must run CI.
+  changes:
+    name: Detect changes
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # predicate-quantifier: every is REQUIRED for the '!' patterns to
+          # bite. Under the default (`some`) a file matching ANY pattern counts
+          # as changed, so '**' alone matches everything and the exclusions
+          # below are inert.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!.editorconfig'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/pull_request_template.md'
+
+  verify:
+    needs: changes
+    # `changes` is skipped on push and workflow_dispatch, and a skipped
+    # dependency would otherwise skip this job too — hence !cancelled().
+    if: >-
+      !cancelled() && (github.event_name != 'pull_request' ||
+      needs.changes.outputs.code == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Check jobs never push back — don't leave the token in .git/config.
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          # .nvmrc is the single source of truth for the Node version, shared
+          # with local development and the nightly gallery workflow.
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run format:check
@@ -48,15 +108,52 @@ jobs:
           if-no-files-found: error
           include-hidden-files: false
 
+  # Single aggregation gate: require ONLY "CI Passed" in branch protection, so
+  # the rule survives job renames and additions.
+  ci-passed:
+    name: CI Passed
+    if: always() && github.event_name == 'pull_request'
+    needs: [changes, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check results of required jobs
+        # Allow-list, not deny-list: a job that fails at startup (runner could
+        # not fetch an action, provisioning error) does NOT surface in the
+        # `needs` context as `failure`, so `contains(needs.*.result, 'failure')`
+        # would let it through. Require an explicit `success`.
+        # `skipped` is legitimate ONLY on a docs-only pull request (`changes`
+        # reports code=false); on a pull request with code every job must be
+        # `success`, otherwise a startup failure masked as a skip would pass.
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          DOCS_ONLY: ${{ needs.changes.outputs.code == 'false' }}
+        run: |
+          for result in $RESULTS; do
+            if [[ "$result" == "success" ]]; then continue; fi
+            if [[ "$result" == "skipped" && "$DOCS_ONLY" == "true" ]]; then continue; fi
+            echo "::error::A required CI job did not succeed (result: $result, docs-only: $DOCS_ONLY)."
+            exit 1
+          done
+
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Explicit result check instead of a bare `needs`: behind a chain that
+    # contains a skipped job a bare dependency skips the deploy silently
+    # (actions/runner#491), which reads as a clean run while nothing shipped.
+    if: >-
+      !cancelled() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' && needs.verify.result == 'success'
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The deploy pushes to Cloudflare, never back to git.
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - uses: actions/download-artifact@v8
