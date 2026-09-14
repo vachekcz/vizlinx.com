@@ -494,6 +494,9 @@ function Study({
           <tab.icon size={16} />
           {tab.label}
           {tab.id === 'results' && <span>{visibleLinks.length}</span>}
+          {tab.id === 'history' && variant === 2 && (
+            <span>{Math.min(run, 10)}</span>
+          )}
         </button>
       ))}
     </nav>

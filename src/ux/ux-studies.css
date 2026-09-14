@@ -1325,9 +1325,18 @@
   font-size: 10px;
 }
 .ux-scan-row {
+  position: relative;
   align-items: center;
   gap: 7px;
   padding: 8px 2px;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.ux-scan-row:hover,
+.ux-scan-row:focus-within {
+  background: var(--raised);
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
 }
 .ux-scan-row > .ux-site-dot {
   align-self: flex-start;
@@ -1348,6 +1357,24 @@
 }
 .ux-scan-site-title strong {
   white-space: nowrap;
+}
+.ux-scan-site-title::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+}
+.ux-scan-site-title:focus-visible {
+  outline: none;
+}
+.ux-scan-site-title:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ux-scan-site-heading .external-link,
+.ux-scan-row > .ux-site-action {
+  position: relative;
+  z-index: 1;
 }
 .ux-scan-site-heading .external-link {
   width: 24px;
@@ -1395,7 +1422,7 @@
 }
 .ux-map-dock {
   position: absolute;
-  bottom: 26px;
+  bottom: 38px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -1422,9 +1449,9 @@
   display: none;
 }
 .ux-dock-scan {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 5px;
 }
 .ux-dock-scan-actions {
   display: flex;
@@ -1454,6 +1481,10 @@
   background: color-mix(in srgb, var(--site-journal) 12%, var(--surface));
 }
 .ux-dock-scan-summary {
+  position: absolute;
+  top: calc(100% + 14px);
+  left: 0;
+  right: 0;
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
@@ -2594,7 +2625,7 @@
     right: 16px;
   }
   .ux-map-dock {
-    bottom: 17px;
+    bottom: 35px;
     display: grid;
     grid-template-columns: 1fr;
     padding: 6px;
@@ -2631,7 +2662,7 @@
     width: 14px;
   }
   .ux-map-dock .ux-tabs button > span {
-    display: none;
+    display: inline-flex;
   }
   .ux-map-dock .ux-primary {
     font-size: 9px;
