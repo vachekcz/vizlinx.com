@@ -1329,6 +1329,9 @@
   gap: 7px;
   padding: 8px 2px;
 }
+.ux-scan-row > .ux-site-dot {
+  align-self: flex-start;
+}
 .ux-scan-site-info {
   min-width: 0;
   flex: 1;
