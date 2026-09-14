@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { FormEvent, ReactNode, Ref } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -73,6 +73,11 @@ const concepts = [
 ] as const;
 type View = 'map' | 'results' | 'history' | 'new';
 type ScanState = 'running' | 'paused' | 'completed';
+type DetailStep = {
+  selection: Selection;
+  scrollTop: number;
+  focusTarget: string | null;
+};
 type StudyScanIssue = {
   siteId: string;
   url: string;
@@ -94,6 +99,10 @@ function formatPageCount(count: number): string {
   const label =
     count === 1 ? 'stránka' : count >= 2 && count <= 4 ? 'stránky' : 'stránek';
   return `${count} ${label}`;
+}
+
+function linkCountLabel(count: number): string {
+  return count === 1 ? 'odkaz' : count >= 2 && count <= 4 ? 'odkazy' : 'odkazů';
 }
 
 function runLinkCount(currentRun: number, selectedRun: number, total: number) {
@@ -302,6 +311,25 @@ function Study({
   const [addingSite, setAddingSite] = useState(false);
   const sitesPanelRef = useRef<HTMLElement>(null);
   const floatingDetailRef = useRef<HTMLDivElement>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
+  const [detailHistory, setDetailHistory] = useState<DetailStep[]>([]);
+  const detailRestoreRef = useRef<Omit<DetailStep, 'selection'> | null>(null);
+  const rootSelection =
+    variant === 2 && selection
+      ? (detailHistory[0]?.selection ?? selection)
+      : selection;
+  const selectedSiteId =
+    rootSelection?.type === 'site' ? rootSelection.id : null;
+  const previousDetail = detailHistory.at(-1);
+  const detailBackLabel = previousDetail
+    ? previousDetail.selection.type === 'site'
+      ? `Zpět na ${sites.find((site) => site.id === previousDetail.selection.id)?.domain}`
+      : previousDetail.selection.type === 'page'
+        ? 'Zpět na detail stránky'
+        : previousDetail.selection.type === 'link'
+          ? 'Zpět na detail odkazu'
+          : 'Zpět na seznam odkazů'
+    : undefined;
   const scanned = sites.filter((site) => site.scanned);
   const listedSites = scanned.filter((site) =>
     `${site.domain} ${site.name}`
@@ -369,6 +397,18 @@ function Study({
   }, [toast]);
 
   useLayoutEffect(() => {
+    const panel = detailPanelRef.current;
+    const restore = detailRestoreRef.current;
+    if (!panel || !restore) return;
+    const target = Array.from(
+      panel.querySelectorAll<HTMLElement>('[data-detail-target]'),
+    ).find((element) => element.dataset.detailTarget === restore.focusTarget);
+    target?.focus({ preventScroll: true });
+    panel.scrollTop = restore.scrollTop;
+    detailRestoreRef.current = null;
+  }, [selection, view]);
+
+  useLayoutEffect(() => {
     const panel = sitesPanelRef.current;
     const detail = floatingDetailRef.current;
     if (!panel || !detail) return;
@@ -405,8 +445,52 @@ function Study({
   }, [selection, view, siteQuery]);
 
   const select = (next: Selection) => {
+    setDetailHistory([]);
+    detailRestoreRef.current = { scrollTop: 0, focusTarget: null };
     setSelection(next);
     setSitesOpen(false);
+  };
+  const closeDetail = () => {
+    setSelection(null);
+    setDetailHistory([]);
+    detailRestoreRef.current = null;
+  };
+  const navigateDetail = (next: Selection) => {
+    if (variant !== 2 || !selection) {
+      select(next);
+      return;
+    }
+    const ancestor = detailHistory.findIndex(
+      (step) =>
+        step.selection.type === next.type && step.selection.id === next.id,
+    );
+    if (ancestor >= 0) {
+      detailRestoreRef.current = detailHistory[ancestor];
+      setDetailHistory(detailHistory.slice(0, ancestor));
+    } else {
+      const active = document.activeElement;
+      setDetailHistory([
+        ...detailHistory,
+        {
+          selection,
+          scrollTop: detailPanelRef.current?.scrollTop ?? 0,
+          focusTarget:
+            active instanceof HTMLElement &&
+            detailPanelRef.current?.contains(active)
+              ? (active.dataset.detailTarget ?? null)
+              : null,
+        },
+      ]);
+      detailRestoreRef.current = { scrollTop: 0, focusTarget: 'back' };
+    }
+    setSelection(next);
+    setSitesOpen(false);
+  };
+  const backDetail = () => {
+    if (!previousDetail) return;
+    detailRestoreRef.current = previousDetail;
+    setDetailHistory(detailHistory.slice(0, -1));
+    setSelection(previousDetail.selection);
   };
   const expand = (ids: string[]) => {
     setExpanded(ids);
@@ -526,7 +610,7 @@ function Study({
           aria-current={view === tab.id ? 'page' : undefined}
           onClick={() => {
             setView(tab.id);
-            setSelection(null);
+            closeDetail();
           }}
         >
           <tab.icon size={16} />
@@ -546,7 +630,7 @@ function Study({
         checked={showExternal}
         onChange={(event) => {
           setShowExternal(event.target.checked);
-          setSelection(null);
+          closeDetail();
         }}
       />
       <span />
@@ -576,8 +660,12 @@ function Study({
       links={currentLinks}
       expanded={expanded}
       onExpand={expand}
-      onSelect={select}
-      onClose={() => setSelection(null)}
+      onSelect={navigateDetail}
+      onClose={closeDetail}
+      contextual={variant === 2}
+      panelRef={variant === 2 ? detailPanelRef : undefined}
+      backLabel={variant === 2 ? detailBackLabel : undefined}
+      onBack={backDetail}
     />
   );
   const siteList = (
@@ -608,7 +696,7 @@ function Study({
             key={site.id}
             site={site}
             state={siteState(site.id)}
-            selected={selection?.type === 'site' && selection.id === site.id}
+            selected={selectedSiteId === site.id}
             disabled={archived}
             loadedPages={
               new Set(
@@ -819,7 +907,7 @@ function Study({
               setPausedSites([]);
             }
             setRun(1);
-            setSelection(null);
+            closeDetail();
             setExpanded([]);
             setView('map');
             setQuery('');
@@ -885,7 +973,7 @@ function Study({
                   <ArchiveNotice
                     onReturn={() => {
                       setArchivedRun(null);
-                      setSelection(null);
+                      closeDetail();
                     }}
                   />
                 )}
@@ -924,7 +1012,7 @@ function Study({
                           onOpen={(old) => {
                             setArchivedRun(old === run ? null : old);
                             setView('map');
-                            setSelection(null);
+                            closeDetail();
                           }}
                         />
                       )}
@@ -972,7 +1060,7 @@ function Study({
                   aria-expanded={sitesOpen}
                   onClick={() => {
                     setSitesOpen(!sitesOpen);
-                    setSelection(null);
+                    closeDetail();
                   }}
                 >
                   <Globe2 size={16} />
@@ -988,7 +1076,7 @@ function Study({
                   onClick={() => {
                     setResetKey((previous) => previous + 1);
                     setExpanded([]);
-                    setSelection(null);
+                    closeDetail();
                   }}
                   aria-label="Obnovit rozložení mapy"
                 >
@@ -1037,7 +1125,7 @@ function Study({
                       onOpen={(old) => {
                         setArchivedRun(old === run ? null : old);
                         setView('map');
-                        setSelection(null);
+                        closeDetail();
                       }}
                     />
                   )}
@@ -1260,7 +1348,7 @@ function Study({
                       onOpen={(old) => {
                         setArchivedRun(old === run ? null : old);
                         setView('map');
-                        setSelection(null);
+                        closeDetail();
                       }}
                     />
                   )}
@@ -1356,6 +1444,10 @@ function Detail({
   onExpand,
   onSelect,
   onClose,
+  contextual = false,
+  panelRef,
+  backLabel,
+  onBack,
 }: {
   selection: Selection;
   links: Link[];
@@ -1363,6 +1455,10 @@ function Detail({
   onExpand: (ids: string[]) => void;
   onSelect: (selection: Selection) => void;
   onClose: () => void;
+  contextual?: boolean;
+  panelRef?: Ref<HTMLElement>;
+  backLabel?: string;
+  onBack?: () => void;
 }) {
   const { getSite, getPage, pageUrl, aggregateConnections, pages } =
     useGraphData();
@@ -1390,17 +1486,28 @@ function Detail({
       ? aggregateConnections(selectedLinks)[0]
       : null;
   return (
-    <aside className="ux-detail" aria-label="Detail výběru">
+    <aside className="ux-detail" aria-label="Detail výběru" ref={panelRef}>
       <div className="ux-detail-top">
-        <span>
-          {site
-            ? 'DETAIL WEBU'
-            : link
-              ? 'DETAIL ODKAZU'
-              : page
-                ? 'DETAIL STRÁNKY'
-                : 'DETAIL PROPOJENÍ'}
-        </span>
+        {backLabel ? (
+          <button
+            className="ux-detail-back"
+            onClick={onBack}
+            data-detail-target="back"
+          >
+            <ArrowLeft size={14} aria-hidden="true" />
+            {backLabel}
+          </button>
+        ) : (
+          <span>
+            {site
+              ? 'DETAIL WEBU'
+              : link
+                ? 'DETAIL ODKAZU'
+                : page
+                  ? 'DETAIL STRÁNKY'
+                  : 'DETAIL PROPOJENÍ'}
+          </span>
+        )}
         <button
           className="ux-icon"
           onClick={onClose}
@@ -1409,6 +1516,17 @@ function Detail({
           <X size={17} />
         </button>
       </div>
+      {backLabel && (
+        <div className="ux-detail-level">
+          {site
+            ? 'DETAIL WEBU'
+            : link
+              ? 'DETAIL ODKAZU'
+              : page
+                ? 'DETAIL STRÁNKY'
+                : 'ODKAZY MEZI WEBY'}
+        </div>
+      )}
       {site ? (
         <>
           <SiteDot site={site} />
@@ -1452,6 +1570,7 @@ function Detail({
             <button
               className="ux-related-row"
               key={item.id}
+              data-detail-target={`connection:${item.id}`}
               onClick={() => onSelect({ type: 'connection', id: item.id })}
             >
               <span>
@@ -1461,10 +1580,14 @@ function Detail({
                     : item.source.domain}
                 </strong>
                 <small>
-                  {item.source.id === site.id ? 'Odchozí' : 'Příchozí'}
+                  {contextual
+                    ? `${item.links.length} ${linkCountLabel(item.links.length)} ${item.source.id === site.id ? 'z' : 'na'} ${site.domain}`
+                    : item.source.id === site.id
+                      ? 'Odchozí'
+                      : 'Příchozí'}
                 </small>
               </span>
-              <b>{item.links.length}</b>
+              {!contextual && <b>{item.links.length}</b>}
               <ChevronRight size={14} />
             </button>
           ))}
@@ -1505,6 +1628,7 @@ function Detail({
           </dl>
           <button
             className="ux-button ux-soft ux-full"
+            data-detail-target="show-pages"
             onClick={() => {
               onSelect({
                 type: 'connection',
@@ -1519,31 +1643,51 @@ function Detail({
         </>
       ) : (
         <>
-          <h2>
-            {page
-              ? page.title
-              : connection
-                ? connection.source.domain
-                : 'Propojení'}
-          </h2>
-          <p className="ux-detail-direction">
-            {page
-              ? pageUrl(page)
-              : connection && (
-                  <>
-                    <ArrowRight size={15} />
-                    {connection.target.domain}
-                  </>
-                )}
-          </p>
+          {contextual && connection ? (
+            <h2
+              className="ux-connection-heading"
+              aria-label={`Odkazy z ${connection.source.domain} na ${connection.target.domain}`}
+            >
+              <span>{connection.source.domain}</span>
+              <span>
+                <ArrowRight size={17} aria-hidden="true" />
+                {connection.target.domain}
+              </span>
+            </h2>
+          ) : (
+            <>
+              <h2>
+                {page
+                  ? page.title
+                  : connection
+                    ? connection.source.domain
+                    : 'Propojení'}
+              </h2>
+              <p className="ux-detail-direction">
+                {page
+                  ? pageUrl(page)
+                  : connection && (
+                      <>
+                        <ArrowRight size={15} />
+                        {connection.target.domain}
+                      </>
+                    )}
+              </p>
+            </>
+          )}
           <div className="ux-detail-total">
             <strong>{selectedLinks.length}</strong>
-            <span>konkrétních vazeb</span>
+            <span>
+              {contextual
+                ? linkCountLabel(selectedLinks.length)
+                : 'konkrétních vazeb'}
+            </span>
           </div>
           {selectedLinks.map((item) => (
             <button
               className="ux-link-card"
               key={item.id}
+              data-detail-target={`link:${item.id}`}
               onClick={() => onSelect({ type: 'link', id: item.id })}
             >
               <span>

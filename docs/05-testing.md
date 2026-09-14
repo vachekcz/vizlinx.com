@@ -64,6 +64,7 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 | Soubor | Pokrývá |
 |---|---|
 | `demo.spec.ts` | demo `/`, archivy `/palettes/` a `/connections/`, 20-stránkový detail, ovládání, klávesnice, CSV |
+| `ux-studies.spec.ts` | návrh `/ux/2`: návraty web → propojení → odkaz, zachování kontextu webu, scrollu a fokusu, nová cesta při přepnutí webu/zavření panelu |
 | `review-graph.spec.ts`, `expansion-position.spec.ts` | rozložení mapy, stabilita pozic při rozbalení, žádné překryvy (helper `graph-spacing.ts`) |
 | `review-data.spec.ts` | export CSV odpovídá inspektoru a filtrům |
 | `connection-variants.spec.ts`, `fine-connections.spec.ts` | styly spojnic a `/connections/lab` |
