@@ -2,7 +2,7 @@
 
 > React SPA v `src/` (demo `/`, skener `/scan`, studie `/connections/lab`): build, struktura, routing a stav, theming, a rozšíření pro Chrome jako artefakt buildu. API a pravidla skeneru viz [01](./01-backend.md), hosting assetů viz [04](./04-deployment.md).
 
-**Revidováno:** 2026-09-13 · **Platí pro:** main
+**Revidováno:** 2026-09-14
 
 ## Obsah
 
@@ -69,6 +69,8 @@ Typy API bere frontend přímo ze `shared/scan.ts` (`src/ScanWorkspace.tsx:22`) 
 ## Routing a stav
 
 - **Routing:** bez knihovny. `src/main.tsx:14` porovnává `window.location.pathname` bez koncového lomítka: `/connections/lab` → `ConnectionLab`, `/scan` → `ScanWorkspace`, cokoli jiného → demo `App`. Server vrací `index.html` pro každou neznámou cestu (SPA fallback), proto fungují přímé odkazy.
+- **UX studie:** `/ux` je galerie tří interaktivních návrhů, `/ux/1` pracovní plocha, `/ux/2` mapa s plovoucím ovládáním a `/ux/3` analytický přehled. `src/ux/UxStudies.tsx` se načítá přes `React.lazy` jen pod `/ux`; styly jsou omezené třídou `.ux`. Současné `/` a `/scan` zůstávají stejné. Návrhy sdílejí `Graph`, `GraphDataProvider`, původní data a tokeny Signal/Midnight. Náhledy galerie jsou v `public/ux-previews/`.
+- **Rozsah studií:** mapa a detail, formulář nové mapy, místní přepínání pauzy/intervalů, log, tabulka s hledáním a filtrem `nofollow`, CSV a ukázka aktuálního/archivního průchodu. Vše běží bez API; zadané adresy pouze přejmenují ukázkové weby. Reload obnoví výchozí data, jen volba tématu používá původní úložiště prohlížeče. Historie ani skenování nejsou napojené na Worker. CSV je označené `data_source=ux_mockup`. Studie jsou podklad pro výběr směru, nikoli schválený redesign nebo nový produkční kontrakt.
 - **Query parametry dema `/`** (čtou se z `URLSearchParams` při načtení):
 
   | Parametr | Hodnoty | Efekt | Kde |
