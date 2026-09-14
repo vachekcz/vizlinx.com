@@ -855,6 +855,32 @@
 .ux-related-row > svg {
   color: var(--muted);
 }
+.ux-related-site {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+.ux-related-site > h4 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.ux-related-site .ux-related-direction {
+  min-height: 49px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.ux-related-direction .ux-related-direction-icon {
+  color: var(--accent);
+}
+.ux-related-site .ux-related-direction:hover,
+.ux-related-site .ux-related-direction:focus-visible {
+  background: var(--raised);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
 .ux-detail-note {
   display: flex;
   gap: 7px;

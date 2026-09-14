@@ -3,6 +3,7 @@ import type { FormEvent, HTMLAttributes, ReactNode, Ref } from 'react';
 import {
   Activity,
   AlertTriangle,
+  ArrowDownLeft,
   ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
@@ -38,7 +39,7 @@ import HoverStudies, { useHoverStudies } from './HoverStudies';
 import type { PreviewEvents } from './HoverStudies';
 import ExternalLink from '../ExternalLink';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
-import type { GraphDataset, Link, Selection, Site } from '../data';
+import type { Connection, GraphDataset, Link, Selection, Site } from '../data';
 import { useTheme } from '../themes';
 import './ux-studies.css';
 
@@ -1549,6 +1550,23 @@ function Detail({
     selection.type === 'connection'
       ? aggregateConnections(selectedLinks)[0]
       : null;
+  const relatedSites = new Map<
+    string,
+    { site: Site; connections: Connection[] }
+  >();
+  if (site && contextual) {
+    for (const item of aggregateConnections(selectedLinks)) {
+      const outgoing = item.source.id === site.id;
+      const relatedSite = outgoing ? item.target : item.source;
+      const group = relatedSites.get(relatedSite.id) ?? {
+        site: relatedSite,
+        connections: [],
+      };
+      if (outgoing) group.connections.unshift(item);
+      else group.connections.push(item);
+      relatedSites.set(relatedSite.id, group);
+    }
+  }
   return (
     <aside className="ux-detail" aria-label="Detail výběru" ref={panelRef}>
       <div className="ux-detail-top">
@@ -1630,32 +1648,75 @@ function Detail({
               : `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`}
           </button>
           <h3>Propojené weby</h3>
-          {aggregateConnections(selectedLinks).map((item) => (
-            <button
-              className={`ux-related-row ${previewTarget?.type === 'connection' && previewTarget.id === item.id ? 'is-previewed' : ''}`}
-              {...previewEvents?.({ type: 'connection', id: item.id })}
-              key={item.id}
-              data-detail-target={`connection:${item.id}`}
-              onClick={() => onSelect({ type: 'connection', id: item.id })}
-            >
-              <span>
-                <strong>
-                  {item.source.id === site.id
-                    ? item.target.domain
-                    : item.source.domain}
-                </strong>
-                <small>
-                  {contextual
-                    ? `${item.links.length} ${linkCountLabel(item.links.length)} ${item.source.id === site.id ? 'z' : 'na'} ${site.domain}`
-                    : item.source.id === site.id
-                      ? 'Odchozí'
-                      : 'Příchozí'}
-                </small>
-              </span>
-              {!contextual && <b>{item.links.length}</b>}
-              <ChevronRight size={14} />
-            </button>
-          ))}
+          {contextual
+            ? Array.from(relatedSites.values()).map((group) => (
+                <div
+                  className="ux-related-site"
+                  role="group"
+                  aria-labelledby={`ux-related-site-${group.site.id}`}
+                  key={group.site.id}
+                >
+                  <h4 id={`ux-related-site-${group.site.id}`}>
+                    {group.site.domain}
+                  </h4>
+                  {group.connections.map((item) => {
+                    const outgoing = item.source.id === site.id;
+                    const DirectionIcon = outgoing
+                      ? ArrowUpRight
+                      : ArrowDownLeft;
+                    const count = `${item.links.length} ${linkCountLabel(item.links.length)}`;
+                    const direction = `${outgoing ? 'z' : 'na'} ${site.domain}`;
+                    return (
+                      <button
+                        className={`ux-related-row ux-related-direction ${previewTarget?.type === 'connection' && previewTarget.id === item.id ? 'is-previewed' : ''}`}
+                        {...previewEvents?.({
+                          type: 'connection',
+                          id: item.id,
+                        })}
+                        key={item.id}
+                        data-detail-target={`connection:${item.id}`}
+                        aria-label={`${group.site.domain} ${count} ${direction}`}
+                        onClick={() =>
+                          onSelect({ type: 'connection', id: item.id })
+                        }
+                      >
+                        <DirectionIcon
+                          className="ux-related-direction-icon"
+                          size={16}
+                          aria-hidden="true"
+                        />
+                        <span>
+                          <strong>{count}</strong>
+                          <small>{direction}</small>
+                        </span>
+                        <ChevronRight size={14} aria-hidden="true" />
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            : aggregateConnections(selectedLinks).map((item) => (
+                <button
+                  className={`ux-related-row ${previewTarget?.type === 'connection' && previewTarget.id === item.id ? 'is-previewed' : ''}`}
+                  {...previewEvents?.({ type: 'connection', id: item.id })}
+                  key={item.id}
+                  data-detail-target={`connection:${item.id}`}
+                  onClick={() => onSelect({ type: 'connection', id: item.id })}
+                >
+                  <span>
+                    <strong>
+                      {item.source.id === site.id
+                        ? item.target.domain
+                        : item.source.domain}
+                    </strong>
+                    <small>
+                      {item.source.id === site.id ? 'Odchozí' : 'Příchozí'}
+                    </small>
+                  </span>
+                  <b>{item.links.length}</b>
+                  <ChevronRight size={14} />
+                </button>
+              ))}
         </>
       ) : link ? (
         <>

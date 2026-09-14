@@ -12,6 +12,23 @@ test('returns through map details with the original site, scroll and focus', asy
     .click();
   const detail = page.getByRole('complementary', { name: 'Detail výběru' });
   const selectedSite = page.locator('.ux-scan-row.is-selected');
+  const journal = detail.getByRole('group', {
+    name: 'journal.example',
+    exact: true,
+  });
+  await expect(
+    journal.getByRole('heading', { name: 'journal.example', exact: true }),
+  ).toHaveCount(1);
+  await expect(journal.getByRole('button')).toHaveCount(2);
+  await expect(
+    detail
+      .getByRole('group', { name: 'objects.example', exact: true })
+      .getByRole('button'),
+  ).toHaveCount(1);
+  await journal.getByRole('heading').click();
+  await expect(
+    detail.getByRole('heading', { name: 'atlas.example', exact: true }),
+  ).toBeVisible();
   const outgoing = detail.getByRole('button', {
     name: 'journal.example 5 odkazů z atlas.example',
     exact: true,
