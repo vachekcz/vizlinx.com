@@ -78,6 +78,18 @@
   animation: ux-hover-travel 1150ms ease-in-out both;
   filter: drop-shadow(0 0 3px currentColor);
 }
+.ux .ux-canvas[data-highlight-target='connection'] {
+  --ux-site-pulse-opacity: 0.375;
+}
+.ux
+  .ux-canvas[data-highlight-target='connection']
+  [data-highlight-site]
+  .cluster-fill {
+  stroke-opacity: 0.35;
+}
+.ux .ux-canvas[data-highlight-target='connection'] .graph-highlight-halo {
+  opacity: 0.085;
+}
 .ux .ux-canvas[data-detail-connection] .graph-highlight-travel {
   animation-duration: 2200ms;
   animation-iteration-count: infinite;
@@ -97,7 +109,7 @@
 @keyframes ux-hover-pulse {
   from {
     transform: scale(1);
-    opacity: 0.75;
+    opacity: var(--ux-site-pulse-opacity, 0.75);
   }
   to {
     transform: scale(1.18);

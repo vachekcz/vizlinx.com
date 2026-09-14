@@ -654,6 +654,7 @@ function Study({
   const graph = (
     <div
       className="ux-canvas"
+      data-highlight-target={graphHighlight?.target.type}
       data-detail-connection={
         detailHighlight && !hoverStudy.highlight
           ? detailHighlight.target.id
