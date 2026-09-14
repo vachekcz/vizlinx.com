@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   Activity,
+  AlertTriangle,
   ArrowDownToLine,
   ArrowLeft,
   ArrowRight,
@@ -17,6 +18,7 @@ import {
   LayoutDashboard,
   Link2,
   List,
+  LoaderCircle,
   Maximize2,
   Moon,
   Network,
@@ -71,6 +73,12 @@ const concepts = [
 ] as const;
 type View = 'map' | 'results' | 'history' | 'new';
 type ScanState = 'running' | 'paused' | 'completed';
+type StudyScanIssue = {
+  siteId: string;
+  url: string;
+  message: string;
+  level: 'error' | 'warning';
+};
 const tabs: {
   id: Exclude<View, 'new'>;
   label: string;
@@ -86,6 +94,10 @@ function formatPageCount(count: number): string {
   const label =
     count === 1 ? 'stránka' : count >= 2 && count <= 4 ? 'stránky' : 'stránek';
   return `${count} ${label}`;
+}
+
+function runLinkCount(currentRun: number, selectedRun: number, total: number) {
+  return Math.max(1, total - (currentRun - selectedRun) * 3);
 }
 
 function normalizeDomain(value: string): string {
@@ -280,8 +292,9 @@ function Study({
   const [query, setQuery] = useState('');
   const [nofollow, setNofollow] = useState(false);
   const [resetKey, setResetKey] = useState(0);
-  const [archived, setArchived] = useState(false);
-  const [run, setRun] = useState(3);
+  const [archivedRun, setArchivedRun] = useState<number | null>(null);
+  const archived = archivedRun !== null;
+  const [run, setRun] = useState(variant === 2 ? 6 : 3);
   const [logOpen, setLogOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [sitesOpen, setSitesOpen] = useState(false);
@@ -294,8 +307,32 @@ function Study({
       .includes(siteQuery.trim().toLowerCase()),
   );
   const currentLinks = archived
-    ? links.slice(0, Math.max(1, links.length - 6))
+    ? links.slice(0, runLinkCount(run, archivedRun, links.length))
     : links;
+  const loadedPageIds = new Set(currentLinks.map((link) => link.source.id));
+  const scanIssues: StudyScanIssue[] =
+    variant === 2
+      ? pages
+          .filter(
+            (page) =>
+              scanned.some((site) => site.id === page.siteId) &&
+              !loadedPageIds.has(page.id),
+          )
+          .slice(0, 3)
+          .map((page, index) => ({
+            siteId: page.siteId,
+            url: pageUrl(page),
+            message: [
+              'HTTP 404 · stránka nenalezena',
+              'Chyba sítě · vypršel čas načítání',
+              'Vynecháno · zakázáno robots.txt',
+            ][index],
+            level: index === 2 ? 'warning' : 'error',
+          }))
+      : [];
+  const errorCount = scanIssues.filter(
+    (issue) => issue.level === 'error',
+  ).length;
   const visibleSites = sites.filter((site) => site.scanned || showExternal);
   const visibleIds = new Set(visibleSites.map((site) => site.id));
   const visibleLinks = currentLinks.filter(
@@ -316,7 +353,7 @@ function Study({
     scanned.some((site) => site.id === page.siteId),
   ).length;
   const scanLabel = archived
-    ? `Archiv · sken #${run - 1}`
+    ? `Archiv · sken #${archivedRun}`
     : state === 'completed'
       ? 'Sken dokončen'
       : state === 'paused'
@@ -338,7 +375,7 @@ function Study({
     setView('map');
   };
   const start = () => {
-    setArchived(false);
+    setArchivedRun(null);
     setState('running');
     if (variant === 2) {
       setActiveSites(scanned.map((site) => site.id));
@@ -732,7 +769,7 @@ function Study({
           onCancel={() => setView('map')}
           onStart={(next) => {
             onDomainsChange(next);
-            setArchived(false);
+            setArchivedRun(null);
             setState('running');
             if (variant === 2) {
               setActiveSites(
@@ -806,7 +843,7 @@ function Study({
                 {archived && (
                   <ArchiveNotice
                     onReturn={() => {
-                      setArchived(false);
+                      setArchivedRun(null);
                       setSelection(null);
                     }}
                   />
@@ -844,7 +881,7 @@ function Study({
                           state={state}
                           count={links.length}
                           onOpen={(old) => {
-                            setArchived(old);
+                            setArchivedRun(old === run ? null : old);
                             setView('map');
                             setSelection(null);
                           }}
@@ -917,12 +954,14 @@ function Study({
                 <div className="ux-floating-detail">{detail}</div>
               )}
               {view !== 'map' && (
-                <section className="ux-bottom-sheet">
+                <section
+                  className={`ux-bottom-sheet ${view === 'history' ? 'ux-history-sheet' : ''}`}
+                >
                   <div className="ux-sheet-heading">
                     <span>
                       {view === 'results'
                         ? 'Každý odkaz, přehledně.'
-                        : 'Příběh tvé mapy v čase.'}
+                        : 'Historie skenů'}
                     </span>
                     <button
                       className="ux-icon"
@@ -944,11 +983,12 @@ function Study({
                     />
                   ) : (
                     <RunHistory
+                      compact
                       run={run}
                       state={state}
                       count={links.length}
                       onOpen={(old) => {
-                        setArchived(old);
+                        setArchivedRun(old === run ? null : old);
                         setView('map');
                         setSelection(null);
                       }}
@@ -959,25 +999,60 @@ function Study({
               )}
               {archived && (
                 <div className="ux-floating-archive">
-                  <ArchiveNotice onReturn={() => setArchived(false)} />
+                  <ArchiveNotice onReturn={() => setArchivedRun(null)} />
                 </div>
               )}
               <div className="ux-map-dock">
                 {navigation}
                 <span className="ux-dock-divider" />
-                <button
-                  className="ux-icon"
-                  aria-label="Průběh skenu"
-                  onClick={() => setLogOpen(true)}
-                >
-                  <Activity size={18} />
-                </button>
-                {primaryAction}
+                <div className="ux-dock-scan">
+                  <div className="ux-dock-scan-actions">
+                    <button
+                      className="ux-progress-button"
+                      aria-label="Průběh skenu"
+                      aria-describedby="ux-scan-error-count"
+                      onClick={() => setLogOpen(true)}
+                    >
+                      {state === 'running' && !archived ? (
+                        <LoaderCircle
+                          className="ux-scan-spinner"
+                          size={17}
+                          aria-hidden="true"
+                        />
+                      ) : state === 'paused' && !archived ? (
+                        <Pause size={17} aria-hidden="true" />
+                      ) : (
+                        <Activity size={17} aria-hidden="true" />
+                      )}
+                      Průběh skenu
+                      <span
+                        id="ux-scan-error-count"
+                        className={`ux-error-count ${errorCount ? 'has-errors' : ''}`}
+                      >
+                        <span className="ux-sr-only">Počet chyb: </span>
+                        {errorCount}
+                      </span>
+                    </button>
+                    {primaryAction}
+                  </div>
+                  <div className="ux-dock-scan-summary">
+                    <span>Načteno {loadedPageIds.size}</span>
+                    <span>·</span>
+                    <span>Neúspěšné / vynechané: {scanIssues.length}</span>
+                  </div>
+                </div>
               </div>
-              <div className="ux-canvas-note">
-                <ShieldCheck size={12} />
-                Tvoje mapa. Jen v tomto prohlížeči.
-              </div>
+              <details className="ux-canvas-note">
+                <summary>
+                  <ShieldCheck size={12} />
+                  Přístup k mapě je vázaný na tento prohlížeč.
+                  <CircleHelp size={12} />
+                </summary>
+                <p>
+                  Výsledky se ukládají na serveru na 30 dní od založení mapy.
+                  Smazáním dat prohlížeče můžeš ztratit přístup.
+                </p>
+              </details>
             </main>
           )}
 
@@ -1050,7 +1125,7 @@ function Study({
                 </button>
               </div>
               {archived && (
-                <ArchiveNotice onReturn={() => setArchived(false)} />
+                <ArchiveNotice onReturn={() => setArchivedRun(null)} />
               )}
               {view === 'map' ? (
                 <div className="ux-report-grid">
@@ -1136,7 +1211,7 @@ function Study({
                       state={state}
                       count={links.length}
                       onOpen={(old) => {
-                        setArchived(old);
+                        setArchivedRun(old === run ? null : old);
                         setView('map');
                         setSelection(null);
                       }}
@@ -1160,8 +1235,9 @@ function Study({
       {logOpen && (
         <LogDialog
           sites={scanned}
-          state={state}
-          count={pageCount}
+          state={archived ? 'completed' : state}
+          count={variant === 2 ? loadedPageIds.size : pageCount}
+          issues={scanIssues}
           onClose={() => setLogOpen(false)}
           onComplete={() => {
             setState('completed');
@@ -1564,40 +1640,63 @@ function Results({
 }
 
 function RunHistory({
+  compact = false,
   run,
   state,
   count,
   onOpen,
 }: {
+  compact?: boolean;
   run: number;
   state: ScanState;
   count: number;
-  onOpen: (archived: boolean) => void;
+  onOpen: (run: number) => void;
 }) {
+  const offsets = Array.from(
+    { length: Math.min(run, compact ? 10 : 2) },
+    (_, index) => index,
+  );
+  const dateFormat = new Intl.DateTimeFormat('cs-CZ', {
+    day: 'numeric',
+    month: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Prague',
+  });
   return (
-    <section className="ux-history">
-      <div className="ux-kicker">HISTORIE MAPY</div>
-      <h2>Každý průchod zůstává po ruce.</h2>
-      <p>Otevři starší výsledky nebo se vrať k aktuálnímu skenu.</p>
-      {[false, true]
-        .filter((old) => !old || run > 1)
-        .map((old) => (
+    <section className={`ux-history ${compact ? 'ux-history-compact' : ''}`}>
+      {compact ? (
+        <div className="ux-history-caption">
+          {offsets.length} průchodů · vyber výsledky k prohlédnutí
+        </div>
+      ) : (
+        <>
+          <div className="ux-kicker">HISTORIE MAPY</div>
+          <h2>Každý průchod zůstává po ruce.</h2>
+          <p>Otevři starší výsledky nebo se vrať k aktuálnímu skenu.</p>
+        </>
+      )}
+      <div className="ux-run-list">
+        {offsets.map((offset) => (
           <button
             className="ux-run"
-            key={String(old)}
-            onClick={() => onOpen(old)}
+            key={run - offset}
+            onClick={() => onOpen(run - offset)}
           >
             <span className="ux-run-icon">
-              {old ? <History size={22} /> : <Check size={22} />}
+              {offset > 0 ? <History size={22} /> : <Check size={22} />}
             </span>
             <span>
               <strong>
-                Sken #{old ? run - 1 : run}{' '}
-                <span>{old ? 'Archiv' : 'Aktuální'}</span>
+                Sken #{run - offset}{' '}
+                <span>{offset > 0 ? 'Archiv' : 'Aktuální'}</span>
               </strong>
               <small>
-                {old ? '13. září 2026 · 16:20' : '14. září 2026 · 10:42'} ·{' '}
-                {old
+                {dateFormat.format(
+                  new Date(Date.UTC(2026, 8, 14, 8, 42) - offset * 86400000),
+                )}{' '}
+                ·{' '}
+                {offset > 0
                   ? 'Pouze ke čtení'
                   : state === 'completed'
                     ? 'Dokončeno'
@@ -1606,10 +1705,11 @@ function RunHistory({
                       : 'Pozastaveno'}
               </small>
             </span>
-            <b>{old ? Math.max(1, count - 6) : count} vazeb</b>
+            <b>{runLinkCount(run, run - offset, count)} vazeb</b>
             <ChevronRight size={20} />
           </button>
         ))}
+      </div>
       <div className="ux-history-note">
         <Clock3 size={19} />
         <p>
@@ -1897,12 +1997,14 @@ function LogDialog({
   sites,
   state,
   count,
+  issues = [],
   onClose,
   onComplete,
 }: {
   sites: Site[];
   state: ScanState;
   count: number;
+  issues?: StudyScanIssue[];
   onClose: () => void;
   onComplete: () => void;
 }) {
@@ -1914,23 +2016,32 @@ function LogDialog({
     element?.showModal();
     return () => element?.close();
   }, []);
-  const rows = sites
-    .flatMap((site, index) => [
+  const rows = [
+    ...sites.flatMap((site, index) => [
       {
-        site,
+        siteId: site.id,
         time: `10:42:${String(8 + index * 3).padStart(2, '0')}`,
         message: `Načteno https://${site.domain}/partners`,
-        error: false,
+        level: 'info',
       },
       {
-        site,
+        siteId: site.id,
         time: `10:42:${String(7 + index * 3).padStart(2, '0')}`,
         message: `robots.txt povoluje procházení ${site.domain}`,
-        error: false,
+        level: 'info',
       },
-    ])
+    ]),
+    ...issues.map((issue, index) => ({
+      siteId: issue.siteId,
+      time: `10:42:${30 + index}`,
+      message: `${issue.message} · ${issue.url}`,
+      level: issue.level,
+    })),
+  ]
     .filter(
-      (row) => !errorsOnly && (siteId === 'all' || row.site.id === siteId),
+      (row) =>
+        (!errorsOnly || row.level === 'error') &&
+        (siteId === 'all' || row.siteId === siteId),
     )
     .sort((a, b) => b.time.localeCompare(a.time));
   return (
@@ -1964,6 +2075,12 @@ function LogDialog({
             <X size={21} />
           </button>
         </header>
+        {issues.length > 0 && (
+          <p className="ux-log-summary">
+            Chyby: {issues.filter((issue) => issue.level === 'error').length} ·
+            Neúspěšné / vynechané stránky: {issues.length}
+          </p>
+        )}
         <div className="ux-log-tools">
           <select
             aria-label="Filtrovat log podle webu"
@@ -1989,11 +2106,26 @@ function LogDialog({
         <div className="ux-log-rows">
           {rows.length ? (
             rows.map((row) => (
-              <div key={`${row.site.id}-${row.time}`}>
+              <div
+                key={`${row.siteId}-${row.time}`}
+                className={`is-${row.level}`}
+              >
                 <time>{row.time}</time>
-                <Check size={16} />
+                {row.level === 'error' ? (
+                  <X size={16} />
+                ) : row.level === 'warning' ? (
+                  <AlertTriangle size={16} />
+                ) : (
+                  <Check size={16} />
+                )}
                 <span>{row.message}</span>
-                <small>OK</small>
+                <small>
+                  {row.level === 'error'
+                    ? 'Chyba'
+                    : row.level === 'warning'
+                      ? 'Vynecháno'
+                      : 'OK'}
+                </small>
               </div>
             ))
           ) : (
