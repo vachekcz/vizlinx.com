@@ -502,6 +502,7 @@ function Study({
     setSelection(previousDetail.selection);
   };
   const expand = (ids: string[]) => {
+    hoverStudy.clear();
     setExpanded(ids);
     setView('map');
   };
@@ -674,6 +675,7 @@ function Study({
         resetKey={resetKey}
         connectionStyle="silk"
         highlight={view === 'map' ? graphHighlight : undefined}
+        previewEvents={variant === 2 ? hoverStudy.previewEvents : undefined}
       />
     </div>
   );

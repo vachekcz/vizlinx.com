@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, PointerEvent } from 'react';
+import type { DOMAttributes, KeyboardEvent, PointerEvent } from 'react';
 import {
   Expand,
   Layers2,
@@ -21,7 +21,7 @@ import type { ConnectionStyleId } from './connectionStyles';
 
 export type GraphHighlightTarget = Extract<
   Selection,
-  { type: 'site' | 'connection' }
+  { type: 'site' | 'connection' | 'page' }
 >;
 export type GraphHighlightStyle = 'pulse' | 'quiet' | 'focus';
 type GraphHighlight = {
@@ -43,6 +43,7 @@ type Props = {
   resetKey: number;
   connectionStyle: ConnectionStyleId;
   highlight?: GraphHighlight;
+  previewEvents?: (target: GraphHighlightTarget) => DOMAttributes<Element>;
 };
 
 type Point = { x: number; y: number };
@@ -351,6 +352,7 @@ export default function Graph({
   resetKey,
   connectionStyle,
   highlight,
+  previewEvents,
 }: Props) {
   const {
     pages: allPages,
@@ -358,18 +360,43 @@ export default function Graph({
     pageUrl,
     live,
   } = useGraphData();
-  const previewConnection =
-    highlight?.target.type === 'connection'
-      ? aggregateConnections(links).find(
-          (item) => item.id === highlight.target.id,
+  const previewPage =
+    highlight?.target.type === 'page'
+      ? allPages.find(
+          (page) =>
+            page.id === highlight.target.id && expanded.includes(page.siteId),
         )
       : undefined;
+  const previewLinks =
+    previewPage || highlight?.target.type === 'connection'
+      ? links.filter((link) =>
+          previewPage
+            ? link.source.id === previewPage.id ||
+              link.target.id === previewPage.id
+            : highlight?.target.type === 'connection' &&
+              `${link.source.siteId}:${link.target.siteId}` ===
+                highlight.target.id,
+        )
+      : [];
+  const previewLinkIds = new Set(previewLinks.map((link) => link.id));
+  const previewConnectionIds = new Set(
+    previewLinks.map((link) => `${link.source.siteId}:${link.target.siteId}`),
+  );
   const previewSiteIds =
     highlight?.target.type === 'site'
       ? [highlight.target.id]
-      : previewConnection
-        ? [previewConnection.source.id, previewConnection.target.id]
-        : [];
+      : [
+          ...new Set([
+            ...(previewPage ? [previewPage.siteId] : []),
+            ...previewLinks.flatMap((link) => [
+              link.source.siteId,
+              link.target.siteId,
+            ]),
+          ]),
+        ];
+  const highlightKey = highlight
+    ? `${highlight.target.type}:${highlight.target.id}:${highlight.style}:${highlight.replayKey}`
+    : undefined;
   const dimPreview = highlight?.style === 'focus' && previewSiteIds.length > 0;
   const pageCounts = new Map<string, number>();
   const pages = live
@@ -878,7 +905,7 @@ export default function Graph({
                   strokeDasharray={site.scanned ? undefined : '5 5'}
                 />
                 {previewed && highlight && (
-                  <g key={`${highlight.style}:${highlight.replayKey}`}>
+                  <g key={highlightKey}>
                     <circle
                       className="graph-highlight-halo"
                       cx={site.x}
@@ -926,7 +953,7 @@ export default function Graph({
             const selected =
               selection?.type === 'connection' &&
               selection.id === connection.id;
-            const previewed = previewConnection?.id === connection.id;
+            const previewed = previewConnectionIds.has(connection.id);
             const related =
               selection?.type === 'site' &&
               (selection.id === source.id || selection.id === target.id);
@@ -996,7 +1023,7 @@ export default function Graph({
               <g
                 key={connection.id}
                 data-connection={connection.id}
-                className={`connection ${selected || related ? 'is-related' : ''} ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
+                className={`connection ${selected || related ? 'is-related' : ''} ${(dimPreview || previewPage) && !previewed ? 'graph-preview-muted' : ''}`}
                 data-highlight-connection={
                   previewed ? connection.id : undefined
                 }
@@ -1033,6 +1060,10 @@ export default function Graph({
                         (selection?.type === 'page' &&
                           (selection.id === link.source.id ||
                             selection.id === link.target.id));
+                      const linkPreviewed = previewLinkIds.has(link.id);
+                      const emphasized = previewPage
+                        ? linkPreviewed
+                        : active || linkPreviewed;
                       return (
                         <g
                           key={link.id}
@@ -1049,10 +1080,13 @@ export default function Graph({
                             )
                           }
                           className="page-edge"
+                          data-highlight-link={
+                            linkPreviewed ? link.id : undefined
+                          }
                         >
-                          {previewed && highlight && (
+                          {linkPreviewed && highlight && (
                             <HighlightPath
-                              key={`${highlight.style}:${highlight.replayKey}`}
+                              key={highlightKey}
                               path={path}
                               color={source.color}
                               style={highlight.style}
@@ -1061,11 +1095,12 @@ export default function Graph({
                           <path
                             d={path}
                             stroke={source.color}
-                            strokeWidth={active || previewed ? 2.8 : 1.1}
+                            strokeWidth={emphasized ? 2.8 : 1.1}
                             opacity={
-                              active || previewed
+                              emphasized
                                 ? 1
-                                : selection?.type === 'page' ||
+                                : previewPage ||
+                                    selection?.type === 'page' ||
                                     selection?.type === 'link'
                                   ? 0.06
                                   : denseSite
@@ -1101,7 +1136,7 @@ export default function Graph({
                   >
                     {previewed && highlight && (
                       <HighlightPath
-                        key={`${highlight.style}:${highlight.replayKey}`}
+                        key={highlightKey}
                         path={curve}
                         color={source.color}
                         style={highlight.style}
@@ -1328,12 +1363,16 @@ export default function Graph({
                     return (
                       <g key={page.id}>
                         <g
+                          {...previewEvents?.({ type: 'page', id: page.id })}
                           data-interactive="true"
                           role="button"
                           tabIndex={0}
                           aria-label={`Stránka ${site.domain}${page.path}`}
                           aria-pressed={active}
                           className="page-node"
+                          data-highlight-page={
+                            previewPage?.id === page.id ? page.id : undefined
+                          }
                           data-page-status={page.status}
                           onClick={action}
                           onKeyDown={(event) => activate(event, action)}

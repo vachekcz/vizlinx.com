@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { HTMLAttributes } from 'react';
+import type { DOMAttributes } from 'react';
 import { Globe2, Link2, Play } from 'lucide-react';
 import type { GraphHighlightStyle, GraphHighlightTarget } from '../Graph';
 import './hover-studies.css';
@@ -27,7 +27,7 @@ const variants = [
 
 export type PreviewEvents = (
   target: GraphHighlightTarget,
-) => HTMLAttributes<HTMLElement>;
+) => DOMAttributes<Element>;
 
 export function useHoverStudies(enabled: boolean) {
   const [mode, setMode] = useState<GraphHighlightStyle | null>(() => {
@@ -46,6 +46,7 @@ export function useHoverStudies(enabled: boolean) {
   );
   const [replayKey, setReplayKey] = useState(0);
   const target = pointerTarget ?? focusTarget ?? demoTarget;
+  const highlightStyle = mode ?? (target?.type === 'page' ? 'pulse' : null);
 
   useEffect(() => {
     if (!demoTarget) return;
@@ -70,7 +71,7 @@ export function useHoverStudies(enabled: boolean) {
     window.history.replaceState(null, '', url);
   };
   const previewEvents: PreviewEvents = (next) =>
-    mode
+    enabled && (mode || next.type === 'page')
       ? {
           onPointerMove: (event) => {
             if (event.pointerType === 'touch') return;
@@ -105,9 +106,12 @@ export function useHoverStudies(enabled: boolean) {
     changeMode,
     clear,
     previewEvents,
-    target: mode ? target : null,
+    target: highlightStyle ? target : null,
     playing: Boolean(mode && demoTarget),
-    highlight: mode && target ? { target, style: mode, replayKey } : undefined,
+    highlight:
+      highlightStyle && target
+        ? { target, style: highlightStyle, replayKey }
+        : undefined,
     play: (next: GraphHighlightTarget) => {
       setPointerTarget(null);
       setFocusTarget(null);

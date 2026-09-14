@@ -78,17 +78,36 @@
   animation: ux-hover-travel 1150ms ease-in-out both;
   filter: drop-shadow(0 0 3px currentColor);
 }
-.ux .ux-canvas[data-highlight-target='connection'] {
+.ux
+  .ux-canvas:is(
+    [data-highlight-target='connection'],
+    [data-highlight-target='page']
+  ) {
   --ux-site-pulse-opacity: 0.1875;
 }
 .ux
-  .ux-canvas[data-highlight-target='connection']
+  .ux-canvas:is(
+    [data-highlight-target='connection'],
+    [data-highlight-target='page']
+  )
   [data-highlight-site]
   .cluster-fill {
   stroke-opacity: 0.175;
 }
-.ux .ux-canvas[data-highlight-target='connection'] .graph-highlight-halo {
+.ux
+  .ux-canvas:is(
+    [data-highlight-target='connection'],
+    [data-highlight-target='page']
+  )
+  .graph-highlight-halo {
   opacity: 0.0425;
+}
+.ux .page-node[data-highlight-page] > rect {
+  stroke-width: 2;
+  stroke-opacity: 1;
+}
+.ux .page-node[data-highlight-page][aria-pressed='false'] > rect {
+  fill: var(--raised);
 }
 .ux .ux-canvas[data-detail-connection] .graph-highlight-travel {
   animation-duration: 2200ms;
