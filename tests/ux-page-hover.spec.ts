@@ -53,6 +53,17 @@ for (const query of ['', '?hover=pulse']) {
       'journal-atlas-0',
     ]);
     await expect(graph.locator('.graph-highlight-travel')).toHaveCount(5);
+    const travel = graph.locator('.graph-highlight-travel').first();
+    await expect(travel).toHaveCSS('animation-iteration-count', 'infinite');
+    await expect
+      .poll(() =>
+        travel.evaluate(
+          (element) =>
+            element.getAnimations()[0]?.effect?.getComputedTiming()
+              .currentIteration ?? 0,
+        ),
+      )
+      .toBeGreaterThan(0);
     for (const path of await graph
       .locator('.page-edge:not([data-highlight-link]) > path[marker-end]')
       .all()) {
