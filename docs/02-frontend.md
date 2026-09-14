@@ -2,7 +2,7 @@
 
 > React SPA v `src/` (demo `/`, skener `/scan`, studie `/connections/lab`): build, struktura, routing a stav, theming, a rozšíření pro Chrome jako artefakt buildu. API a pravidla skeneru viz [01](./01-backend.md), hosting assetů viz [04](./04-deployment.md).
 
-**Revidováno:** 2026-09-13 · **Platí pro:** main
+**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -83,6 +83,18 @@ Typy API bere frontend přímo ze `shared/scan.ts` (`src/ScanWorkspace.tsx:22`) 
 - **API klient:** funkce `api()` v `src/ScanWorkspace.tsx:55` — `fetch(API_PREFIX + path, { credentials: 'same-origin' })` s JSON a mapováním HTTP kódů na české hlášky. Nový endpoint patří sem, ne do dalšího `fetch`.
 - **Pravidlo:** grafová vrstva (`Graph`, `Inspector`, `App`) nezná API — dostává hotový `GraphDataset`; síťová logika žije jen v `ScanWorkspace` a `ScanLogPanel`.
 - **Rozbalování domén:** rozbalení a sbalení řídí explicitní akce uživatele (dvojklik na bublinu nebo tlačítko pro stránky). Zoom kolečkem, trackpadem ani tlačítky nemění rozbalené domény; ručně otevřené stránky zůstávají otevřené i při oddálení. Platí pro demo i živou mapu. Reset pohledu domény sbalí; sdílená ukázka `?detail=index` se dál otevírá rozbalená.
+
+### Částečně prozkoumané externí weby
+
+`scanToDataset` přenáší `PageResult.crawlMode` na stránku grafu a externím webům dopočítává `Site.preview`. `Site.scanned` nadále označuje zařazení originu do běžného skenu, nikoli úspěšné prozkoumání celého webu. Automatická kontrola cílových URL tak nezabírá místo v limitu tří vybraných webů.
+
+- **Rozsah kontroly:** `knownTargets` jsou unikátní cílové URL přímých odkazů z vybraných webů na daný externí origin. `checkedTargets` počítá jen úspěšně načtené cíle; při přesměrování sleduje uložený řetězec stejného originu až k výsledku. Jednotlivé kroky přesměrování nezvětšují počet přímých cílů. Dosud nezpracovaný cíl přesměrování není chyba; cyklus se nerozvíjí donekonečna. `failedTargets` odlišuje cíle s neúspěšným výsledkem. `attemptedPages` a `inspectedPages` počítají skutečné preview výsledky a jejich úspěšnou podmnožinu.
+- **Stavy a tvrzení:** úspěšná kontrola alespoň jedné stránky znamená „Částečně prozkoumáno“, pouze neúspěšně ověřené cíle „Nepodařilo se ověřit“, rozpracované přesměrování „Zatím neověřeno“, web bez výsledku „Neprozkoumáno“. Detail uvádí „Zkontrolováno X z Y známých cílových URL z vybraných webů“. Ani X = Y neznamená celý web. Nenalezený zpětný odkaz se vztahuje jen ke zkontrolovaným stránkám; chyby mají vlastní sdělení a detail výsledku.
+- **Zpětné vazby:** `backlinkCount` počítá unikátní dvojice zdrojové a cílové stránky směřující zpět na některý z vybraných webů, který na tento externí web odkazoval. Cílem může být libovolná stránka původního originu. Stejné směrové hrany, metadata a detail URL používá mapa i pro ostatní uložené odkazy z kontrolovaných stránek. Weby objevené teprve z jejich odkazů mohou zůstat jen známými cíli bez kontroly.
+- **Viditelnost:** web s preview výsledkem zůstává viditelný i při vypnutí dalších neprozkoumaných externích webů. Označení částečné kontroly je v seznamu webů, bublině i inspektoru; aktivita a log rozlišují `crawlMode: 'preview'` od běžného skenu.
+- **„Prozkoumat web“:** inspektor předá origin do `ScanWorkspace`, který zavolá `/sites` a poté `/start`. Zůstane stejná mapa, dosavadní výsledky i ruční poloha bubliny. Origin začne zabírat jedno ze tří míst pro běžný sken; jeho dřívější výsledky dál nesou původní `crawlMode` a započítávají se do limitu 100 stránek. Při plném scope je akce zakázaná s vysvětlením. Archivní průchod je pouze ke čtení. Pokud přidání uspěje, ale start selže, přidaný web a výsledky zůstanou zachované a UI nabídne pokračování.
+
+Přesnou identitu originu určuje sdílený URL kontrakt: `http`/`https` a `www`/bez `www` zůstávají odlišnými weby. Limity automatických kontrol (10 URL na origin, 100 za průchod), síťová pravidla a chování po povýšení drží [backendová reference](./01-backend.md#automatická-kontrola-externích-cílových-stránek).
 
 ---
 

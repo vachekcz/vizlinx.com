@@ -242,6 +242,236 @@ describe('scan history', () => {
     return response.json();
   }
 
+  async function drainCrawls() {
+    for (let count = 0; queued.length && count < 1000; count++) {
+      const { body } = queued.shift();
+      await db
+        .prepare('UPDATE crawl_origin_gates SET next_allowed_at = 0')
+        .run();
+      const response = await mf.dispatchFetch(`${base}/test-consume`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(await response.json(), ['ack']);
+    }
+    assert.equal(
+      queued.length,
+      0,
+      'The crawler must finish within its bounded frontier',
+    );
+  }
+
+  test('API promotion reuses landing evidence, expands saved links and archives preview metadata on a fresh rescan', async () => {
+    const second = {
+      ...site,
+      origin: 'https://partner.org',
+      seedUrl: 'https://partner.org/',
+    };
+    const landing = `${second.origin}/product`;
+    const third = 'https://third.org/landing';
+    const fetched = [];
+    fixtureResponse = (request) => {
+      const url = new URL(request.url);
+      fetched.push(url.href);
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      const links =
+        url.href === site.seedUrl
+          ? [landing]
+          : url.href === landing
+            ? ['/inside', site.seedUrl, third]
+            : url.href === third
+              ? ['https://fourth.org/must-not-fetch']
+              : [];
+      assert.ok(
+        [site.origin, second.origin, 'https://third.org'].includes(url.origin),
+        `Unexpected recursive preview fetch: ${url.href}`,
+      );
+      return new Response(
+        `<title>Landing fixture</title>${links.map((link) => `<a href="${link}">Link</a>`).join('')}`,
+        { headers: { 'Content-Type': 'text/html' } },
+      );
+    };
+    const cookie = await visitor();
+    const scan = await create(cookie);
+    assert.equal(
+      (
+        await request(`/scans/${scan.id}/start`, {
+          method: 'POST',
+          cookie,
+          body: { runId: scan.runId },
+        })
+      ).status,
+      200,
+    );
+    await drainCrawls();
+    const initial = await snapshot(cookie, scan.id);
+    assert.equal(initial.results.length, 2);
+    const preview = initial.results.find((page) => page.sourceUrl === landing);
+    assert.equal(preview.crawlMode, 'preview');
+    assert.equal(fetched.includes(`${second.origin}/inside`), false);
+    assert.equal(fetched.includes(third), false);
+    const requestCount = fetched.length;
+    const added = await request(`/scans/${scan.id}/sites`, {
+      method: 'POST',
+      cookie,
+      body: { runId: scan.runId, site: second },
+    });
+    assert.equal(added.status, 201, await added.clone().text());
+    const promoted = await added.json();
+    assert.equal(promoted.runId, initial.runId);
+    assert.equal(promoted.sites.length, 2);
+    assert.deepEqual(promoted.results, initial.results);
+    assert.equal(
+      fetched.length,
+      requestCount,
+      'Adding the site waits for the explicit start action',
+    );
+    assert.equal(
+      (
+        await request(`/scans/${scan.id}/start`, {
+          method: 'POST',
+          cookie,
+          body: { runId: scan.runId },
+        })
+      ).status,
+      200,
+    );
+    await drainCrawls();
+    const expanded = await snapshot(cookie, scan.id);
+    assert.equal(expanded.status, 'completed');
+    assert.equal(expanded.results.length, 5);
+    assert.deepEqual(
+      expanded.results.find((page) => page.sourceUrl === landing),
+      preview,
+    );
+    assert.equal(
+      expanded.results.find(
+        (page) => page.sourceUrl === `${second.origin}/inside`,
+      ).crawlMode,
+      undefined,
+    );
+    assert.equal(
+      expanded.results.find((page) => page.sourceUrl === third).crawlMode,
+      'preview',
+    );
+    assert.equal(fetched.filter((url) => url === landing).length, 1);
+    assert.equal(fetched.filter((url) => url === site.seedUrl).length, 1);
+    const current = await restart(cookie, expanded);
+    assert.equal(current.results.length, 0);
+    assert.deepEqual(
+      (await snapshot(cookie, scan.id, expanded.runId)).results,
+      expanded.results,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare(
+            'SELECT COUNT(*) AS count FROM crawl_frontier WHERE scan_id = ? AND is_preview = 1',
+          )
+          .bind(scan.id)
+          .first()
+      ).count,
+      0,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM crawl_robots WHERE scan_id = ? AND (state <> 'pending' OR policy_json IS NOT NULL OR preview_throttled <> 0)",
+          )
+          .bind(scan.id)
+          .first()
+      ).count,
+      0,
+    );
+    await drainCrawls();
+    const refreshed = await snapshot(cookie, scan.id);
+    assert.equal(
+      refreshed.results.find((page) => page.sourceUrl === landing).crawlMode,
+      undefined,
+    );
+    assert.equal(
+      refreshed.results.find((page) => page.sourceUrl === third).crawlMode,
+      'preview',
+    );
+    assert.deepEqual(
+      (await snapshot(cookie, scan.id, expanded.runId)).results,
+      expanded.results,
+    );
+  });
+
+  test('rescan resets preview throttling while keeping the earlier failed landing result immutable', async () => {
+    const landing = 'https://throttled.org/a-throttle';
+    const pending = 'https://throttled.org/z-pending';
+    let throttled = true;
+    const fetched = [];
+    fixtureResponse = (request) => {
+      const url = new URL(request.url);
+      fetched.push(url.href);
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      if (url.href === site.seedUrl)
+        return new Response(
+          `<a href="${landing}">Throttled</a><a href="${pending}">Pending</a>`,
+          { headers: { 'Content-Type': 'text/html' } },
+        );
+      if (url.href === landing && throttled)
+        return new Response('', { status: 429 });
+      assert.ok([landing, pending].includes(url.href));
+      return new Response('<title>Recovered landing</title>', {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    };
+    const cookie = await visitor();
+    const scan = await create(cookie);
+    assert.equal(
+      (
+        await request(`/scans/${scan.id}/start`, {
+          method: 'POST',
+          cookie,
+          body: { runId: scan.runId },
+        })
+      ).status,
+      200,
+    );
+    await drainCrawls();
+    const original = await snapshot(cookie, scan.id);
+    assert.equal(original.status, 'completed');
+    assert.equal(
+      original.results.find((page) => page.sourceUrl === landing).httpStatus,
+      429,
+    );
+    assert.equal(fetched.includes(pending), false);
+    throttled = false;
+    await restart(cookie, original);
+    assert.equal(
+      (
+        await db
+          .prepare(
+            'SELECT COUNT(*) AS count FROM crawl_robots WHERE scan_id = ? AND preview_throttled = 1',
+          )
+          .bind(scan.id)
+          .first()
+      ).count,
+      0,
+    );
+    await drainCrawls();
+    const current = await snapshot(cookie, scan.id);
+    assert.equal(
+      current.results.filter(
+        (page) => page.crawlMode === 'preview' && page.status === 'ok',
+      ).length,
+      2,
+    );
+    assert.equal(fetched.filter((url) => url === landing).length, 2);
+    assert.deepEqual(
+      (await snapshot(cookie, scan.id, original.runId)).results,
+      original.results,
+    );
+  });
+
   test('history migration preserves existing maps and the API supplies legacy run identity', async () => {
     assert.equal(migrationSnapshot.id, 'legacy-map');
     assert.equal(migrationSnapshot.run_number, 1);

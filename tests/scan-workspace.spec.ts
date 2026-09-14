@@ -421,6 +421,327 @@ const savedResult: PageResult = {
   truncated: false,
 };
 
+const previewResult: PageResult = {
+  ...savedResult,
+  sourceUrl: 'https://second.org/',
+  title: 'Inspected landing page',
+  crawlMode: 'preview',
+  links: [
+    { ...savedResult.links[0], targetUrl: 'https://example.com/contact' },
+    { ...savedResult.links[0], targetUrl: 'https://third.org/known-only' },
+  ],
+};
+
+test('shows partial landing-page coverage and keeps backlinks visible when unknown sites are hidden', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000081', {
+    status: 'completed',
+    results: [
+      {
+        ...savedResult,
+        links: [
+          ...savedResult.links,
+          { ...savedResult.links[0], targetUrl: 'https://second.org/blocked' },
+          {
+            ...savedResult.links[0],
+            targetUrl: 'https://second.org/not-checked',
+          },
+        ],
+      },
+      previewResult,
+      {
+        ...previewResult,
+        sourceUrl: 'https://second.org/blocked',
+        status: 'robots_denied',
+        links: [],
+      },
+    ],
+    pageCount: 3,
+  });
+  await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména second.org', exact: true })
+    .press('Enter');
+  const inspector = page.getByRole('complementary', { name: 'Detail výběru' });
+  await expect(inspector.locator('.status-chip')).toHaveText(
+    'Částečně prozkoumáno',
+  );
+  await expect(inspector.getByTestId('site-preview')).toContainText(
+    'Zkontrolováno 1 z 3 známých cílových URL',
+  );
+  await expect(inspector.getByTestId('site-preview')).toContainText(
+    'Nepodařilo se ověřit 1 cílových URL',
+  );
+  await expect(inspector.getByTestId('site-preview')).toContainText(
+    'Nalezené odkazy zpět na odkazující vybrané weby: 1.',
+  );
+  await expect(
+    page.getByRole('button', { name: /^Propojení second.org → example.com/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Doména third.org', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('Další odkazované weby').uncheck();
+  await expect(
+    page.getByRole('button', { name: 'Doména third.org', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Doména second.org', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /^Propojení second.org → example.com/ }),
+  ).toBeVisible();
+  await expect(page.getByTestId('link-count')).toHaveText('4');
+  await inspector
+    .getByRole('button', { name: 'Zobrazit známé cílové URL', exact: true })
+    .click();
+  await page
+    .getByRole('button', { name: 'Stránka second.org/', exact: true })
+    .press('Enter');
+  await expect(inspector).toContainText(
+    'Úspěšně načtená stránka · kontrola cílové URL',
+  );
+});
+
+test('keeps inspected targets outside the ten unknown-site map cap', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000082', {
+    status: 'completed',
+    results: [
+      {
+        ...savedResult,
+        links: [
+          ...Array.from({ length: 12 }, (_, index) => ({
+            ...savedResult.links[0],
+            targetUrl: `https://unknown-${index}.org/`,
+          })),
+          ...savedResult.links,
+        ],
+      },
+      previewResult,
+    ],
+    pageCount: 2,
+  });
+  await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  await expect(page.locator('.site-node')).toHaveCount(12);
+  await expect(
+    page.getByRole('button', { name: 'Doména second.org', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /^Propojení second.org → example.com/ }),
+  ).toBeVisible();
+  await page.getByLabel('Další odkazované weby').uncheck();
+  await expect(page.locator('.site-node')).toHaveCount(2);
+});
+
+test('labels preview activity and lets the saved log filter external preview origins', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000086', {
+    status: 'running',
+    results: [savedResult],
+    pageCount: 1,
+    activity: {
+      phase: 'fetching_page',
+      crawlMode: 'preview',
+      origin: 'https://second.org',
+      url: 'https://second.org/',
+      updatedAt: savedResult.observedAt,
+    },
+  });
+  await mockApi(page, [scan]);
+  await page.route(`**${API_PREFIX}/scans/${scan.id}/log`, (route) =>
+    route.fulfill({
+      json: {
+        truncated: false,
+        events: [
+          {
+            id: 1,
+            type: 'page_finished',
+            level: 'info',
+            at: savedResult.observedAt,
+            origin: site.origin,
+            url: site.seedUrl,
+            status: 'ok',
+          },
+          {
+            id: 2,
+            type: 'page_finished',
+            level: 'info',
+            at: savedResult.observedAt,
+            origin: 'https://second.org',
+            url: previewResult.sourceUrl,
+            status: 'ok',
+            crawlMode: 'preview',
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto(`/scan?id=${scan.id}`);
+  await expect(page.getByTestId('scan-activity')).toContainText(
+    'Kontroluji cílovou stránku odkazu',
+  );
+  await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
+  const panel = page.getByRole('dialog', { name: 'Průběh skenu' });
+  await expect(panel).toContainText('Kontrola cílové URL · Načteno');
+  await panel
+    .getByRole('combobox', { name: 'Web', exact: true })
+    .selectOption('https://second.org');
+  await expect(panel.getByText(site.seedUrl, { exact: true })).toHaveCount(0);
+  await expect(
+    panel
+      .getByRole('region', { name: 'Záznamy skenu' })
+      .getByText(previewResult.sourceUrl, { exact: true }),
+  ).toBeVisible();
+});
+
+test('promotes an inspected target and starts its normal scan while retaining results and placement', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000083', {
+    status: 'completed',
+    results: [savedResult, previewResult],
+    pageCount: 2,
+  });
+  const api = await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  const domain = page.getByRole('button', {
+    name: 'Doména second.org',
+    exact: true,
+  });
+  await domain.press('Enter');
+  const position = await domain.locator('circle').first().getAttribute('cx');
+  await page
+    .getByRole('button', { name: 'Prozkoumat web', exact: true })
+    .click();
+  await expect(page.locator('.scan-notice')).toContainText(
+    'Běžný sken webu běží.',
+  );
+  expect(api.startRequests).toEqual([scan.id]);
+  expect(api.additions).toEqual([
+    {
+      site: {
+        origin: 'https://second.org',
+        seedUrl: 'https://second.org/',
+        intervalMs: 3000,
+        maxPages: 100,
+        paused: false,
+      },
+    },
+  ]);
+  expect(api.maps.get(scan.id)?.results).toEqual(scan.results);
+  await expect(page.getByTestId('link-count')).toHaveText('3');
+  await expect(domain).toHaveAttribute('aria-pressed', 'true');
+  await expect(domain.locator('circle').first()).toHaveAttribute(
+    'cx',
+    position!,
+  );
+  await expect(
+    page.getByRole('button', { name: 'Prozkoumat web', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('slider', { name: /Interval skenu/ }),
+  ).toHaveValue('3');
+});
+
+test('preserves unknown target data through failed promotion and a failed scan start', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000084', {
+    status: 'completed',
+    results: [savedResult],
+    pageCount: 1,
+  });
+  const api = await mockApi(page, [scan]);
+  api.addFailure = 503;
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména second.org', exact: true })
+    .press('Enter');
+  await expect(page.locator('.inspector .status-chip')).toHaveText(
+    'Neprozkoumáno',
+  );
+  const explore = page.getByRole('button', {
+    name: 'Prozkoumat web',
+    exact: true,
+  });
+  await explore.click();
+  await expect(page.getByRole('alert')).toContainText(
+    'Server je dočasně nedostupný',
+  );
+  await expect(explore).toBeEnabled();
+  expect(api.maps.get(scan.id)?.sites).toHaveLength(1);
+  expect(api.startRequests).toHaveLength(0);
+  api.addFailure = 0;
+  api.startFailure = 429;
+  await explore.click();
+  await expect(page.getByRole('alert')).toContainText(
+    'Web je přidaný a výsledky zůstaly uložené. Spuštění skenu se nepodařilo',
+  );
+  expect(api.maps.get(scan.id)?.sites).toHaveLength(2);
+  expect(api.maps.get(scan.id)?.results).toEqual(scan.results);
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  api.startFailure = 0;
+  await page
+    .getByRole('button', { name: 'Pokračovat ve skenování', exact: true })
+    .click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(api.startRequests).toHaveLength(2);
+  expect(api.additions).toHaveLength(2);
+});
+
+for (const archived of [false, true]) {
+  test(`disables preview promotion for ${archived ? 'archived runs' : 'three full sites'}`, async ({
+    page,
+  }) => {
+    const scan = snapshot('00000000-0000-4000-8000-000000000085', {
+      status: 'completed',
+      archived,
+      sites: archived
+        ? [site]
+        : [
+            site,
+            ...['fourth.org', 'fifth.org'].map((domain) => ({
+              ...site,
+              origin: `https://${domain}`,
+              seedUrl: `https://${domain}/`,
+            })),
+          ],
+      results: [
+        savedResult,
+        { ...previewResult, status: 'robots_denied', links: [] },
+      ],
+      pageCount: 2,
+    });
+    const api = await mockApi(page, [scan]);
+    await page.goto(`/scan?id=${scan.id}`);
+    await page
+      .getByRole('button', { name: 'Doména second.org', exact: true })
+      .press('Enter');
+    await expect(page.locator('.inspector .status-chip')).toHaveText(
+      'Nepodařilo se ověřit',
+    );
+    await expect(page.getByTestId('site-preview')).not.toContainText(
+      'odkaz zpět na odkazující vybrané weby nenašli',
+    );
+    await expect(
+      page.getByRole('button', { name: 'Prozkoumat web', exact: true }),
+    ).toBeDisabled();
+    await expect(page.getByTestId('site-preview')).toContainText(
+      archived
+        ? 'Historický průchod je pouze ke čtení'
+        : 'Běžný sken může zahrnovat nejvýše 3 weby',
+    );
+    expect(api.additions).toHaveLength(0);
+    expect(api.startRequests).toHaveLength(0);
+  });
+}
+
 test('adds a web to a completed map without resetting selection or position and resumes result polling', async ({
   page,
 }) => {
