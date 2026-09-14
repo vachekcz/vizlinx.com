@@ -19,6 +19,17 @@ import {
 } from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
 
+export type GraphHighlightTarget = Extract<
+  Selection,
+  { type: 'site' | 'connection' }
+>;
+export type GraphHighlightStyle = 'pulse' | 'quiet' | 'focus';
+type GraphHighlight = {
+  target: GraphHighlightTarget;
+  style: GraphHighlightStyle;
+  replayKey: number;
+};
+
 type Props = {
   sites: Site[];
   links: Link[];
@@ -31,10 +42,46 @@ type Props = {
   running: boolean;
   resetKey: number;
   connectionStyle: ConnectionStyleId;
+  highlight?: GraphHighlight;
 };
 
 type Point = { x: number; y: number };
 const PAGE_CARD = { x: -15, y: -14, width: 138, height: 29 };
+
+function HighlightPath({
+  path,
+  color,
+  style,
+}: {
+  path: string;
+  color: string;
+  style: GraphHighlightStyle;
+}) {
+  return (
+    <g
+      className="graph-highlight-path"
+      pointerEvents="none"
+      aria-hidden="true"
+      fill="none"
+      stroke={color}
+      color={color}
+    >
+      <path d={path} strokeWidth={10} opacity={0.16} />
+      <path d={path} strokeWidth={2.2} opacity={0.8} />
+      {style === 'pulse' && (
+        <path
+          className="graph-highlight-travel"
+          d={path}
+          pathLength={100}
+          strokeWidth={4}
+          strokeLinecap="round"
+          strokeDasharray="12 100"
+          strokeDashoffset={12}
+        />
+      )}
+    </g>
+  );
+}
 
 function pageLinkPath(
   from: Point,
@@ -303,6 +350,7 @@ export default function Graph({
   running,
   resetKey,
   connectionStyle,
+  highlight,
 }: Props) {
   const {
     pages: allPages,
@@ -310,6 +358,19 @@ export default function Graph({
     pageUrl,
     live,
   } = useGraphData();
+  const previewConnection =
+    highlight?.target.type === 'connection'
+      ? aggregateConnections(links).find(
+          (item) => item.id === highlight.target.id,
+        )
+      : undefined;
+  const previewSiteIds =
+    highlight?.target.type === 'site'
+      ? [highlight.target.id]
+      : previewConnection
+        ? [previewConnection.source.id, previewConnection.target.id]
+        : [];
+  const dimPreview = highlight?.style === 'focus' && previewSiteIds.length > 0;
   const pageCounts = new Map<string, number>();
   const pages = live
     ? allPages.filter((page) => {
@@ -735,6 +796,7 @@ export default function Graph({
       <svg
         ref={svgRef}
         className={`graph ${dragging ? 'is-dragging' : ''}`}
+        data-highlight-style={highlight?.style}
         viewBox={dragFrame ?? `${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
         aria-label="Interaktivní mapa odkazů mezi weby"
         onClickCapture={(event) => {
@@ -778,13 +840,20 @@ export default function Graph({
         >
           {sites.map((site) => {
             const open = isExpanded(site.id);
+            const previewed = previewSiteIds.includes(site.id);
             const selected =
               selection?.type === 'site' && selection.id === site.id;
             const radius = open
               ? pageLayout(site, compact).radius
               : site.radius;
             return (
-              <g key={site.id} aria-hidden="true" pointerEvents="none">
+              <g
+                key={site.id}
+                aria-hidden="true"
+                pointerEvents="none"
+                data-highlight-site={previewed ? site.id : undefined}
+                className={`graph-cluster ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
+              >
                 <circle
                   cx={site.x}
                   cy={site.y}
@@ -804,10 +873,36 @@ export default function Graph({
                   fill={site.tint}
                   fillOpacity={open ? 0.87 : 0.95}
                   stroke={site.color}
-                  strokeOpacity={selected ? 0.75 : 0.23}
-                  strokeWidth={selected ? 1.6 : 1}
+                  strokeOpacity={previewed ? 1 : selected ? 0.75 : 0.23}
+                  strokeWidth={previewed ? 3.2 : selected ? 1.6 : 1}
                   strokeDasharray={site.scanned ? undefined : '5 5'}
                 />
+                {previewed && highlight && (
+                  <g key={`${highlight.style}:${highlight.replayKey}`}>
+                    <circle
+                      className="graph-highlight-halo"
+                      cx={site.x}
+                      cy={site.y}
+                      r={radius + 4}
+                      fill="none"
+                      stroke={site.color}
+                      strokeWidth={7}
+                      opacity={0.17}
+                    />
+                    {highlight.style === 'pulse' && (
+                      <circle
+                        className="graph-highlight-pulse"
+                        cx={site.x}
+                        cy={site.y}
+                        r={radius + 3}
+                        fill="none"
+                        stroke={site.color}
+                        strokeWidth={2}
+                        style={{ transformOrigin: `${site.x}px ${site.y}px` }}
+                      />
+                    )}
+                  </g>
+                )}
               </g>
             );
           })}
@@ -831,6 +926,7 @@ export default function Graph({
             const selected =
               selection?.type === 'connection' &&
               selection.id === connection.id;
+            const previewed = previewConnection?.id === connection.id;
             const related =
               selection?.type === 'site' &&
               (selection.id === source.id || selection.id === target.id);
@@ -900,7 +996,10 @@ export default function Graph({
               <g
                 key={connection.id}
                 data-connection={connection.id}
-                className={`connection ${selected || related ? 'is-related' : ''}`}
+                className={`connection ${selected || related ? 'is-related' : ''} ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
+                data-highlight-connection={
+                  previewed ? connection.id : undefined
+                }
               >
                 {showPages ? (
                   connection.links
@@ -951,12 +1050,20 @@ export default function Graph({
                           }
                           className="page-edge"
                         >
+                          {previewed && highlight && (
+                            <HighlightPath
+                              key={`${highlight.style}:${highlight.replayKey}`}
+                              path={path}
+                              color={source.color}
+                              style={highlight.style}
+                            />
+                          )}
                           <path
                             d={path}
                             stroke={source.color}
-                            strokeWidth={active ? 2.8 : 1.1}
+                            strokeWidth={active || previewed ? 2.8 : 1.1}
                             opacity={
-                              active
+                              active || previewed
                                 ? 1
                                 : selection?.type === 'page' ||
                                     selection?.type === 'link'
@@ -992,6 +1099,14 @@ export default function Graph({
                       )
                     }
                   >
+                    {previewed && highlight && (
+                      <HighlightPath
+                        key={`${highlight.style}:${highlight.replayKey}`}
+                        path={curve}
+                        color={source.color}
+                        style={highlight.style}
+                      />
+                    )}
                     <ConnectionStroke
                       variant={connectionStyle}
                       from={from}
@@ -999,7 +1114,7 @@ export default function Graph({
                       control={control}
                       color={source.color}
                       count={connection.links.length}
-                      selected={selected || related}
+                      selected={selected || related || previewed}
                       markerId={markerId(source.id)}
                     />
                     {running && (
@@ -1027,7 +1142,11 @@ export default function Graph({
                       height="20"
                       rx="7"
                       fill="var(--surface, #fcfdf9)"
-                      stroke={selected ? source.color : 'var(--line, #e1e6dc)'}
+                      stroke={
+                        selected || previewed
+                          ? source.color
+                          : 'var(--line, #e1e6dc)'
+                      }
                     />
                     <text
                       x={label.x}
@@ -1045,6 +1164,7 @@ export default function Graph({
           })}
           {sites.map((site) => {
             const open = isExpanded(site.id);
+            const previewed = previewSiteIds.includes(site.id);
             const selected =
               selection?.type === 'site' && selection.id === site.id;
             const sitePages = pages.filter((page) => page.siteId === site.id);
@@ -1065,7 +1185,7 @@ export default function Graph({
             return (
               <g
                 key={site.id}
-                className={`site-node ${selected ? 'is-selected' : ''} ${open ? 'is-expanded' : ''}`}
+                className={`site-node ${selected ? 'is-selected' : ''} ${open ? 'is-expanded' : ''} ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
               >
                 {!open &&
                   sitePages.slice(0, 24).map((page, index) => {

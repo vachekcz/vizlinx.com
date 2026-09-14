@@ -1,0 +1,171 @@
+.ux.has-hover-studies {
+  --ux-hover-bar-height: 88px;
+}
+.ux .ux-hover-study-toggle {
+  color: var(--accent);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.ux-hover-studies {
+  height: var(--ux-hover-bar-height);
+  padding: 12px 27px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-content: center;
+  gap: 7px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--raised);
+}
+.ux-hover-study-choice,
+.ux-hover-study-choice > div,
+.ux-hover-study-play {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.ux-hover-study-choice > span {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-right: 10px;
+}
+.ux .ux-hover-studies button {
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ux .ux-hover-studies button:hover {
+  border-color: var(--accent);
+}
+.ux .ux-hover-studies button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent, white);
+  border-color: var(--accent);
+}
+.ux-hover-studies > p {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  margin: 0;
+}
+.ux-hover-studies > p > span {
+  margin-left: 8px;
+  opacity: 0.8;
+}
+.ux .ux-scan-row.is-previewed,
+.ux .ux-related-row.is-previewed {
+  background: var(--raised);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.ux .ux-related-row.is-previewed > svg {
+  color: var(--accent);
+}
+.ux .graph-cluster,
+.ux .site-node,
+.ux .connection {
+  transition: opacity 160ms ease;
+}
+.ux .graph-preview-muted {
+  opacity: 0.2;
+}
+.ux .graph-highlight-pulse {
+  animation: ux-hover-pulse 950ms ease-out both;
+}
+.ux .graph-highlight-travel {
+  animation: ux-hover-travel 1150ms ease-in-out both;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+@keyframes ux-hover-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.75;
+  }
+  to {
+    transform: scale(1.18);
+    opacity: 0;
+  }
+}
+@keyframes ux-hover-travel {
+  0% {
+    stroke-dashoffset: 12;
+    opacity: 0;
+  }
+  8%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: -100;
+    opacity: 0;
+  }
+}
+@media (max-width: 900px) {
+  .ux.has-hover-studies {
+    --ux-hover-bar-height: 106px;
+  }
+  .ux-hover-studies {
+    gap: 8px;
+    padding-inline: 17px;
+  }
+  .ux-hover-study-choice {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .ux-hover-study-play {
+    align-self: end;
+  }
+  .ux-hover-studies > p > span {
+    display: none;
+  }
+}
+@media (max-width: 680px) {
+  .ux.has-hover-studies {
+    --ux-hover-bar-height: 155px;
+  }
+  .ux-hover-studies {
+    grid-template-columns: 1fr;
+    padding: 10px 16px;
+  }
+  .ux-hover-study-choice > div,
+  .ux-hover-study-play {
+    width: 100%;
+  }
+  .ux .ux-hover-studies button {
+    flex: 1;
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+  .ux-hover-studies > p {
+    font-size: 9px;
+  }
+  .ux .ux-hover-study-toggle {
+    font-size: 9px;
+  }
+  .ux.has-hover-studies .ux-variant-switch {
+    display: none;
+  }
+  .ux.is-playing-hover-demo .ux-floating-detail {
+    visibility: hidden;
+  }
+  .ux.is-playing-hover-demo .ux-floating-sites .ux-sites-content {
+    display: none;
+  }
+  .ux.is-playing-hover-demo .ux-floating-sites {
+    width: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ux .graph-highlight-pulse,
+  .ux .graph-highlight-travel {
+    display: none;
+  }
+}
+@media (max-width: 360px) {
+  .ux.ux-variant-2 .ux-variant-switch a {
+    padding-inline: 5px;
+  }
+}

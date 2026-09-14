@@ -1222,7 +1222,7 @@
 .ux-immersive {
   --ux-sites-left: 27px;
   --ux-sites-width: 244px;
-  height: calc(100dvh - 105px);
+  height: calc(100dvh - 105px - var(--ux-hover-bar-height, 0px));
   min-height: 650px;
   position: relative;
   overflow: hidden;
@@ -2627,7 +2627,7 @@
     margin-left: 25px;
   }
   .ux-immersive {
-    height: calc(100dvh - 99px);
+    height: calc(100dvh - 99px - var(--ux-hover-bar-height, 0px));
     min-height: 660px;
   }
   .ux-floating-heading {

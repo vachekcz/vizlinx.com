@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode, Ref } from 'react';
+import type { FormEvent, HTMLAttributes, ReactNode, Ref } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -33,6 +33,9 @@ import {
   X,
 } from 'lucide-react';
 import Graph from '../Graph';
+import type { GraphHighlightTarget } from '../Graph';
+import HoverStudies, { useHoverStudies } from './HoverStudies';
+import type { PreviewEvents } from './HoverStudies';
 import ExternalLink from '../ExternalLink';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
 import type { GraphDataset, Link, Selection, Site } from '../data';
@@ -282,6 +285,7 @@ function Study({
   onDomainsChange: (domains: string[]) => void;
 }) {
   const { sites, links, pages, pageUrl, aggregateConnections } = useGraphData();
+  const hoverStudy = useHoverStudies(variant === 2);
   const [view, setView] = useState<View>('map');
   const [selection, setSelection] = useState<Selection | null>(
     variant === 1 && window.innerWidth > 680
@@ -445,17 +449,20 @@ function Study({
   }, [selection, view, siteQuery]);
 
   const select = (next: Selection) => {
+    hoverStudy.clear();
     setDetailHistory([]);
     detailRestoreRef.current = { scrollTop: 0, focusTarget: null };
     setSelection(next);
     setSitesOpen(false);
   };
   const closeDetail = () => {
+    hoverStudy.clear();
     setSelection(null);
     setDetailHistory([]);
     detailRestoreRef.current = null;
   };
   const navigateDetail = (next: Selection) => {
+    hoverStudy.clear();
     if (variant !== 2 || !selection) {
       select(next);
       return;
@@ -487,6 +494,7 @@ function Study({
     setSitesOpen(false);
   };
   const backDetail = () => {
+    hoverStudy.clear();
     if (!previousDetail) return;
     detailRestoreRef.current = previousDetail;
     setDetailHistory(detailHistory.slice(0, -1));
@@ -651,6 +659,7 @@ function Study({
         running={state === 'running' && !archived}
         resetKey={resetKey}
         connectionStyle="silk"
+        highlight={view === 'map' ? hoverStudy.highlight : undefined}
       />
     </div>
   );
@@ -666,6 +675,8 @@ function Study({
       panelRef={variant === 2 ? detailPanelRef : undefined}
       backLabel={variant === 2 ? detailBackLabel : undefined}
       onBack={backDetail}
+      previewEvents={hoverStudy.previewEvents}
+      previewTarget={hoverStudy.target}
     />
   );
   const siteList = (
@@ -697,6 +708,14 @@ function Study({
             site={site}
             state={siteState(site.id)}
             selected={selectedSiteId === site.id}
+            previewed={
+              hoverStudy.target?.type === 'site' &&
+              hoverStudy.target.id === site.id
+            }
+            previewProps={hoverStudy.previewEvents({
+              type: 'site',
+              id: site.id,
+            })}
             disabled={archived}
             loadedPages={
               new Set(
@@ -853,7 +872,9 @@ function Study({
   );
 
   return (
-    <div className={`ux ux-study ux-variant-${variant}`}>
+    <div
+      className={`ux ux-study ux-variant-${variant} ${hoverStudy.mode ? 'has-hover-studies' : ''} ${hoverStudy.playing ? 'is-playing-hover-demo' : ''}`}
+    >
       <div className="ux-study-bar">
         <a href="/ux">
           <ArrowLeft size={13} />
@@ -871,8 +892,47 @@ function Study({
             </a>
           ))}
         </div>
-        <span className="ux-study-label">UX studie · ukázková data</span>
+        {variant === 2 ? (
+          <button
+            className="ux-hover-study-toggle"
+            onClick={() =>
+              hoverStudy.changeMode(hoverStudy.mode ? null : 'pulse')
+            }
+          >
+            {hoverStudy.mode ? 'Zavřít porovnání' : 'Varianty hoveru'}
+          </button>
+        ) : (
+          <span className="ux-study-label">UX studie · ukázková data</span>
+        )}
       </div>
+      {hoverStudy.mode && (
+        <HoverStudies
+          mode={hoverStudy.mode}
+          onChange={hoverStudy.changeMode}
+          onPlaySite={() => {
+            setView('map');
+            const site =
+              sites.find((item) => item.id === selectedSiteId) ?? scanned[0];
+            if (site) hoverStudy.play({ type: 'site', id: site.id });
+          }}
+          onPlayConnection={() => {
+            setView('map');
+            const connection =
+              connections.find(
+                (item) =>
+                  selection?.type === 'connection' && item.id === selection.id,
+              ) ??
+              connections.find(
+                (item) =>
+                  item.source.id === selectedSiteId ||
+                  item.target.id === selectedSiteId,
+              ) ??
+              connections[0];
+            if (connection)
+              hoverStudy.play({ type: 'connection', id: connection.id });
+          }}
+        />
+      )}
       <header className="ux-topbar">
         <Brand />
         <div className="ux-project-crumb">
@@ -1448,6 +1508,8 @@ function Detail({
   panelRef,
   backLabel,
   onBack,
+  previewEvents,
+  previewTarget,
 }: {
   selection: Selection;
   links: Link[];
@@ -1459,6 +1521,8 @@ function Detail({
   panelRef?: Ref<HTMLElement>;
   backLabel?: string;
   onBack?: () => void;
+  previewEvents?: PreviewEvents;
+  previewTarget?: GraphHighlightTarget | null;
 }) {
   const { getSite, getPage, pageUrl, aggregateConnections, pages } =
     useGraphData();
@@ -1568,7 +1632,8 @@ function Detail({
           <h3>Propojené weby</h3>
           {aggregateConnections(selectedLinks).map((item) => (
             <button
-              className="ux-related-row"
+              className={`ux-related-row ${previewTarget?.type === 'connection' && previewTarget.id === item.id ? 'is-previewed' : ''}`}
+              {...previewEvents?.({ type: 'connection', id: item.id })}
               key={item.id}
               data-detail-target={`connection:${item.id}`}
               onClick={() => onSelect({ type: 'connection', id: item.id })}
@@ -1916,6 +1981,8 @@ function ScannedSiteRow({
   site,
   state,
   selected,
+  previewed,
+  previewProps,
   disabled,
   loadedPages,
   knownUrls,
@@ -1925,6 +1992,8 @@ function ScannedSiteRow({
   site: Site;
   state: ScanState;
   selected: boolean;
+  previewed: boolean;
+  previewProps: HTMLAttributes<HTMLElement>;
   disabled: boolean;
   loadedPages: number;
   knownUrls: number;
@@ -1940,7 +2009,10 @@ function ScannedSiteRow({
   const ActionIcon =
     state === 'completed' ? RefreshCw : state === 'paused' ? Play : Pause;
   return (
-    <div className={`ux-site-row ux-scan-row ${selected ? 'is-selected' : ''}`}>
+    <div
+      className={`ux-site-row ux-scan-row ${selected ? 'is-selected' : ''} ${previewed ? 'is-previewed' : ''}`}
+      {...previewProps}
+    >
       <SiteDot site={site} />
       <div className="ux-scan-site-info">
         <div className="ux-scan-site-heading">
