@@ -30,7 +30,10 @@
     "dev:api": "wrangler dev --port 8797 --env-file=/dev/null",
     "db:local": "wrangler d1 migrations apply DB --local",
     "db:remote": "wrangler d1 migrations apply DB --remote",
-    "typegen": "wrangler types --env-file=/dev/null"
+    "typegen": "wrangler types --env-file=/dev/null",
+    "hooks:install": "bash scripts/setup-hooks.sh",
+    "hooks:doctor": "bash scripts/check-hooks.sh",
+    "postinstall": "if [ -f scripts/setup-hooks.sh ]; then bash scripts/setup-hooks.sh; fi"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
