@@ -34,9 +34,26 @@ before(async () => {
             if (input.failQueue) throw new Error('Simulated delivery failure: private diagnostic');
             await env.QUEUE_SPY.fetch('https://queue.invalid/', { method: 'POST', body: JSON.stringify({ body, options }) });
           } };
-          const bound = { ...env, CRAWL_QUEUE: queue, CRAWLER_ENABLED: input.enabled === false ? 'false' : 'true' };
+          let maxSqlStringBytes = 0;
+          const database = input.enforceSqlStringLimit ? {
+            batch: (...args) => env.DB.batch(...args),
+            prepare(sql) {
+              const statement = env.DB.prepare(sql);
+              if (!sql.includes('json_each')) return statement;
+              return { bind(...parameters) {
+                for (const value of parameters) {
+                  if (typeof value !== 'string') continue;
+                  const bytes = new TextEncoder().encode(value).byteLength;
+                  maxSqlStringBytes = Math.max(maxSqlStringBytes, bytes);
+                  if (bytes > 2_000_000) throw new Error('SQL string parameter exceeds the D1 byte limit.');
+                }
+                return statement.bind(...parameters);
+              } };
+            },
+          } : env.DB;
+          const bound = { ...env, DB: database, CRAWL_QUEUE: queue, CRAWLER_ENABLED: input.enabled === false ? 'false' : 'true' };
           if (input.action === 'start') {
-            try { await startServerScan(bound, input.id, input.generation); return Response.json({ ok: true }); }
+            try { await startServerScan(bound, input.id, input.generation); return Response.json({ ok: true, maxSqlStringBytes }); }
             catch (error) { return Response.json({ error: error.message }, { status: error.status ?? 500 }); }
           }
           const outcomes = [];
@@ -208,8 +225,10 @@ test('a large site stops at exactly 100 pages and a restart or duplicate cannot 
 
 test('small sites complete, public exact-origin links are followed, and external redirects are never followed', async () => {
   respond = (request) => {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
     if (path === '/robots.txt') return new Response('', { status: 404 });
+    if (url.origin === 'https://outside.org') return html();
     if (path === '/')
       return html([
         '/a',
@@ -230,14 +249,21 @@ test('small sites complete, public exact-origin links are followed, and external
   await drain();
   assert.equal((await scan(id)).status, 'completed');
   assert.equal((await scan(id)).limit_reason, null);
-  assert.equal((await pages(id)).length, 3);
+  assert.equal((await pages(id)).length, 4);
   assert.equal(
     (await pages(id)).find((page) => page.sourceUrl.endsWith('/redirect'))
       .status,
     'redirect_unresolved',
   );
   assert.ok(
-    requests.every((request) => new URL(request.url).origin === origin),
+    requests.every((request) =>
+      [origin, 'https://outside.org'].includes(new URL(request.url).origin),
+    ),
+  );
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === 'https://outside.org/')
+      .crawlMode,
+    'preview',
   );
   assert.ok(
     requests.every((request) =>
@@ -621,22 +647,31 @@ test('a stale start generation and the disabled crawler cannot create new work',
   assert.equal(requests.length, 0);
 });
 
-test('a newly approved origin follows previously observed deep links without re-fetching the original site', async () => {
+test('a newly approved origin preserves preview results and follows their saved internal links without re-fetching', async () => {
   const second = {
     ...site,
     origin: 'https://second.org',
     seedUrl: 'https://second.org/',
   };
-  respond = (request) =>
-    new URL(request.url).pathname === '/robots.txt'
-      ? new Response('', { status: 404 })
-      : new URL(request.url).origin === origin
-        ? html(['https://second.org/deep'])
-        : html();
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin) return html(['https://second.org/deep']);
+    return url.pathname === '/deep' ? html(['/internal']) : html();
+  };
   const id = await create();
   await start(id);
   await drain();
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 4);
+  const preview = (await pages(id)).find(
+    (page) => page.sourceUrl === 'https://second.org/deep',
+  );
+  assert.equal(preview.crawlMode, 'preview');
+  assert.equal(
+    requests.some((request) => request.url.endsWith('/internal')),
+    false,
+  );
   await db
     .prepare(
       "UPDATE scans SET sites_json = ?, status = 'paused', crawl_generation = crawl_generation + 1, crawl_enqueued_tick = -1 WHERE id = ?",
@@ -645,13 +680,28 @@ test('a newly approved origin follows previously observed deep links without re-
     .run();
   await start(id);
   await drain();
-  assert.equal((await pages(id)).length, 3);
+  assert.equal((await pages(id)).length, 4);
   assert.equal(
     requests.filter((request) => new URL(request.url).origin === origin).length,
     2,
   );
   assert.ok(
     requests.some((request) => request.url === 'https://second.org/deep'),
+  );
+  assert.equal(
+    requests.filter((request) => request.url === 'https://second.org/deep')
+      .length,
+    1,
+  );
+  assert.deepEqual(
+    (await pages(id)).find((page) => page.sourceUrl === preview.sourceUrl),
+    preview,
+  );
+  assert.equal(
+    (await pages(id)).find(
+      (page) => page.sourceUrl === 'https://second.org/internal',
+    ).crawlMode,
+    undefined,
   );
 });
 
@@ -882,3 +932,607 @@ test('a failed initial queue delivery records a safe error and remains resumable
   assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'completed');
   assert.equal((await events(id)).at(-1).type, 'scan_completed');
 });
+
+test('landing previews save backlinks and other evidence without following any page links, including after restart', async () => {
+  const landing = 'https://partner.org/product';
+  const back = `${origin}/unvisited-contact`;
+  const third = 'https://third.org/next';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl) return html([landing, `${landing}#details`]);
+    if (url.href === landing) return html([back, '/internal', third]);
+    assert.fail(
+      `Preview links must not trigger a recursive fetch: ${url.href}`,
+    );
+  };
+  const id = await create();
+  await start(id);
+  const firstTick = { ...pending[0].body };
+  await drain();
+  const results = await pages(id);
+  assert.equal(results.length, 2);
+  assert.equal(
+    results.find((page) => page.sourceUrl === site.seedUrl).crawlMode,
+    undefined,
+  );
+  const preview = results.find((page) => page.sourceUrl === landing);
+  assert.equal(preview.crawlMode, 'preview');
+  assert.deepEqual(
+    preview.links.map((link) => link.targetUrl).sort(),
+    [back, 'https://partner.org/internal', third].sort(),
+  );
+  assert.deepEqual(preview.discoveredUrls, ['https://partner.org/internal']);
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal(JSON.parse((await scan(id)).sites_json).length, 1);
+  const count = requests.length;
+  await call({ action: 'tick', body: firstTick });
+  await start(id);
+  await drain();
+  assert.equal(requests.length, count);
+  assert.deepEqual(await pages(id), results);
+});
+
+test('landing preview URLs are deduplicated and capped at ten per origin across pause and resume', async () => {
+  const targets = Array.from(
+    { length: 15 },
+    (_, index) => `https://partner.org/page-${index}`,
+  );
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin)
+      return html([
+        '/second',
+        ...targets,
+        ...targets.map((target) => `${target}#duplicate`),
+      ]);
+    return html();
+  };
+  const id = await create();
+  await start(id);
+  for (
+    let ticks = 0;
+    ticks < 30 &&
+    (await pages(id)).filter((page) => page.crawlMode === 'preview').length < 3;
+    ticks++
+  )
+    await next();
+  assert.equal(
+    (await pages(id)).filter((page) => page.crawlMode === 'preview').length,
+    3,
+  );
+  await db
+    .prepare(
+      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_enqueued_tick = -1, crawl_lease_token = NULL, crawl_lease_until = NULL WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  await drain();
+  await start(id);
+  await drain();
+  const results = await pages(id);
+  assert.equal(
+    results.filter((page) => page.crawlMode === 'preview').length,
+    10,
+  );
+  assert.equal(results.filter((page) => !page.crawlMode).length, 2);
+  const previewRequests = requests.filter(
+    (request) =>
+      new URL(request.url).origin === 'https://partner.org' &&
+      !request.url.endsWith('/robots.txt'),
+  );
+  assert.equal(previewRequests.length, 10);
+  assert.equal(new Set(previewRequests.map((request) => request.url)).size, 10);
+  assert.equal((await scan(id)).status, 'completed');
+  const count = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    count,
+    'Resume must not admit the next ten URLs from the same origin',
+  );
+});
+
+test('restoring a large saved map bounds preview URL parameters below D1 string limits while preserving one-hop caps', async () => {
+  const id = await create();
+  const targets = [];
+  const saved = Array.from({ length: 12 }, (_, page) => {
+    const links = Array.from({ length: 60 }, (_, link) => {
+      const targetUrl = `https://partner-${page}.org/${link}-${'x'.repeat(3000)}`;
+      targets.push(targetUrl);
+      return {
+        targetUrl,
+        anchor: 'External',
+        rel: [],
+        region: 'content',
+        occurrences: 1,
+      };
+    });
+    return {
+      sourceUrl: page === 0 ? site.seedUrl : `${origin}/saved-${page}`,
+      title: 'Previously scanned page',
+      observedAt: new Date().toISOString(),
+      status: 'ok',
+      httpStatus: 200,
+      links,
+      discoveredUrls: [],
+      truncated: false,
+    };
+  });
+  const aggregate = JSON.stringify(
+    targets.map((url) => ({ url, origin: new URL(url).origin })),
+  );
+  assert.ok(
+    Buffer.byteLength(aggregate) > 2_000_000,
+    'The fixture must exceed one D1 string parameter',
+  );
+  let storedBytes = 0;
+  for (const result of saved) {
+    const json = JSON.stringify(result);
+    const bytes = Buffer.byteLength(json);
+    assert.ok(
+      bytes <= 256 * 1024,
+      'Every saved page respects its existing result-size limit',
+    );
+    storedBytes += bytes;
+    await db
+      .prepare(
+        'INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .bind(id, result.sourceUrl, origin, 'fixture', json, bytes)
+      .run();
+  }
+  assert.ok(
+    storedBytes < 4 * 1024 * 1024,
+    'The saved map remains within its total storage budget',
+  );
+  const allowed = new Set(targets);
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    assert.ok(
+      allowed.has(url.href),
+      `A saved full page or recursive preview link must not be fetched: ${url.href}`,
+    );
+    return html([`${origin}/unvisited-backlink`, 'https://unvisited.org/next']);
+  };
+  const restored = await call({
+    action: 'start',
+    id,
+    enforceSqlStringLimit: true,
+  });
+  assert.equal(restored.status, 200, await restored.clone().text());
+  const { maxSqlStringBytes } = await restored.json();
+  assert.ok(
+    maxSqlStringBytes > 0 && maxSqlStringBytes < 1024 * 1024,
+    'Restoration must bind a bounded URL selection instead of the complete saved graph',
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM crawl_frontier WHERE scan_id = ? AND is_preview = 1',
+        )
+        .bind(id)
+        .first()
+    ).count,
+    100,
+  );
+  await drain();
+  const results = await pages(id);
+  const previews = results.filter((page) => page.crawlMode === 'preview');
+  assert.equal(previews.length, 100);
+  assert.equal(results.filter((page) => !page.crawlMode).length, saved.length);
+  assert.equal((await scan(id)).status, 'completed');
+  const previewCounts = new Map();
+  for (const result of previews) {
+    const previewOrigin = new URL(result.sourceUrl).origin;
+    previewCounts.set(
+      previewOrigin,
+      (previewCounts.get(previewOrigin) ?? 0) + 1,
+    );
+  }
+  assert.ok([...previewCounts.values()].every((count) => count <= 10));
+  const requestCount = requests.length;
+  const resumed = await call({
+    action: 'start',
+    id,
+    enforceSqlStringLimit: true,
+  });
+  assert.equal(resumed.status, 200, await resumed.clone().text());
+  await drain();
+  assert.equal(requests.length, requestCount);
+  assert.deepEqual(await pages(id), results);
+});
+
+test('landing previews share a one-hundred-URL budget without consuming the full site page budget', async () => {
+  const targets = Array.from({ length: 11 }, (_, host) =>
+    Array.from(
+      { length: 10 },
+      (_, page) => `https://partner-${host}.org/page-${page}`,
+    ),
+  ).flat();
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    return url.origin === origin ? html(targets) : html();
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  const results = await pages(id);
+  assert.equal(
+    results.filter((page) => page.crawlMode === 'preview').length,
+    100,
+  );
+  assert.equal(results.filter((page) => !page.crawlMode).length, 1);
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal((await scan(id)).limit_reason, null);
+  assert.equal(JSON.parse((await scan(id)).sites_json).length, 1);
+  const count = requests.length;
+  assert.equal(new Set(requests.map((request) => request.url)).size, count);
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    count,
+    'The global preview cap survives restarts',
+  );
+  const promotedOrigin = new URL(
+    results.find((page) => page.crawlMode === 'preview').sourceUrl,
+  ).origin;
+  await db
+    .prepare("UPDATE scans SET sites_json = ?, status = 'paused' WHERE id = ?")
+    .bind(
+      JSON.stringify([
+        site,
+        { ...site, origin: promotedOrigin, seedUrl: `${promotedOrigin}/` },
+      ]),
+      id,
+    )
+    .run();
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    count + 1,
+    'Promotion only fetches the new full-scan seed and cannot free preview capacity',
+  );
+  assert.equal(
+    (await pages(id)).filter((page) => page.crawlMode === 'preview').length,
+    100,
+  );
+});
+
+test('landing previews retain robots crawl-delay before their first page request', async () => {
+  const landing = 'https://partner.org/landing';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response(
+        url.origin === origin ? '' : 'User-agent: VizlinxBot\nCrawl-delay: 3\n',
+      );
+    return url.origin === origin ? html([landing]) : html();
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  await next();
+  assert.equal(requests.length, 3);
+  assert.ok(pending[0].options.delaySeconds >= 3);
+  await next({ resetGate: false });
+  assert.equal(requests.length, 3);
+  assert.ok(pending[0].options.delaySeconds >= 3);
+  await drain();
+  assert.equal(requests.filter((request) => request.url === landing).length, 1);
+});
+
+for (const limit of ['daily_limit', 'time_limit', 'scan_storage_limit'])
+  test(`landing previews obey the shared ${limit} after full-scan results are saved`, async () => {
+    const landing = 'https://partner.org/landing';
+    respond = (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      return url.origin === origin ? html([landing]) : html();
+    };
+    const id = await create();
+    await start(id);
+    await next();
+    await next();
+    assert.equal((await pages(id)).length, 1);
+    if (limit === 'daily_limit')
+      await db
+        .prepare('UPDATE crawl_daily_budget SET request_count = 9999')
+        .run();
+    else if (limit === 'time_limit')
+      await db
+        .prepare('UPDATE scans SET crawl_started_at = ? WHERE id = ?')
+        .bind(Date.now() - 15 * 60_000 - 1, id)
+        .run();
+    else
+      await db
+        .prepare('UPDATE page_results SET result_bytes = ? WHERE scan_id = ?')
+        .bind(4 * 1024 * 1024, id)
+        .run();
+    await drain();
+    assert.equal((await scan(id)).limit_reason, limit);
+    assert.equal((await pages(id)).length, 1);
+    if (limit === 'daily_limit') {
+      assert.equal(
+        requests.length,
+        3,
+        'Preview robots must consume the final daily request slot',
+      );
+      assert.equal(
+        requests.some((request) => request.url === landing),
+        false,
+      );
+    }
+    if (limit === 'time_limit') assert.equal(requests.length, 2);
+    const count = requests.length;
+    assert.equal((await call({ action: 'start', id })).status, 429);
+    assert.equal(requests.length, count);
+  });
+
+test('landing previews obey robots and retain HTTP errors while other origins continue', async () => {
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return url.origin === 'https://denied.org'
+        ? new Response(
+            'User-agent: VizlinxBot\nDisallow: /private\nCrawl-delay: 3\n',
+          )
+        : new Response('', { status: 404 });
+    if (url.origin === origin)
+      return html([
+        '/second',
+        'https://denied.org/private',
+        'https://error.org/landing',
+        'https://allowed.org/landing',
+      ]);
+    if (url.origin === 'https://error.org')
+      return new Response('', { status: 503 });
+    if (url.origin === 'https://allowed.org')
+      return html([`${origin}/unvisited-backlink`]);
+    assert.fail(`A disallowed page must never be fetched: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  const previews = (await pages(id)).filter(
+    (page) => page.crawlMode === 'preview',
+  );
+  assert.equal(previews.length, 3);
+  assert.equal(
+    previews.find((page) => page.sourceUrl === 'https://denied.org/private')
+      .status,
+    'robots_denied',
+  );
+  assert.equal(
+    previews.find((page) => page.sourceUrl === 'https://error.org/landing')
+      .status,
+    'http_error',
+  );
+  assert.equal(
+    previews.find((page) => page.sourceUrl === 'https://allowed.org/landing')
+      .status,
+    'ok',
+  );
+  assert.equal(
+    requests.some((request) => request.url === 'https://denied.org/private'),
+    false,
+  );
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal((await pages(id)).filter((page) => !page.crawlMode).length, 2);
+});
+
+test('HTTP 429 stops only its preview origin for the current run and resume cannot retry its pending URLs', async () => {
+  let promoted = false;
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin)
+      return html([
+        '/second',
+        'https://throttled.org/a-throttle',
+        'https://throttled.org/z-pending',
+        'https://allowed.org/landing',
+      ]);
+    if (url.href === 'https://throttled.org/a-throttle')
+      return new Response('', { status: 429 });
+    if (url.origin === 'https://allowed.org') return html();
+    if (url.origin === 'https://throttled.org' && promoted) return html();
+    assert.fail(`A throttled preview must not continue: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal(JSON.parse((await scan(id)).sites_json)[0].paused, false);
+  assert.equal(
+    (await pages(id)).find((page) => page.httpStatus === 429).crawlMode,
+    'preview',
+  );
+  assert.ok(
+    (await pages(id)).some(
+      (page) => page.sourceUrl === 'https://allowed.org/landing',
+    ),
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT preview_throttled FROM crawl_robots WHERE scan_id = ? AND origin = ?',
+        )
+        .bind(id, 'https://throttled.org')
+        .first()
+    ).preview_throttled,
+    1,
+  );
+  const count = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, count);
+  assert.equal(
+    requests.some((request) => request.url.endsWith('/z-pending')),
+    false,
+  );
+  promoted = true;
+  await db
+    .prepare("UPDATE scans SET sites_json = ?, status = 'paused' WHERE id = ?")
+    .bind(
+      JSON.stringify([
+        site,
+        {
+          ...site,
+          origin: 'https://throttled.org',
+          seedUrl: 'https://throttled.org/',
+        },
+      ]),
+      id,
+    )
+    .run();
+  await start(id);
+  await drain();
+  assert.equal((await scan(id)).status, 'completed');
+  assert.equal(
+    (await pages(id)).find(
+      (page) => page.sourceUrl === 'https://throttled.org/z-pending',
+    ).crawlMode,
+    undefined,
+  );
+  assert.equal(
+    requests.filter(
+      (request) => request.url === 'https://throttled.org/a-throttle',
+    ).length,
+    1,
+  );
+});
+
+test('preview redirects follow only the same origin and every hop consumes the shared preview URL cap', async () => {
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin)
+      return html(['https://redirect.org/hop-0', 'https://external.org/start']);
+    if (url.origin === 'https://external.org')
+      return new Response('', {
+        status: 302,
+        headers: { Location: 'https://unvisited.org/landing' },
+      });
+    assert.equal(url.origin, 'https://redirect.org');
+    const index = Number(url.pathname.replace('/hop-', ''));
+    return new Response('', {
+      status: 302,
+      headers: { Location: `/hop-${index + 1}` },
+    });
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  const previews = (await pages(id)).filter(
+    (page) => page.crawlMode === 'preview',
+  );
+  assert.equal(
+    previews.filter(
+      (page) => new URL(page.sourceUrl).origin === 'https://redirect.org',
+    ).length,
+    10,
+  );
+  assert.equal(
+    requests.some((request) => request.url === 'https://redirect.org/hop-10'),
+    false,
+  );
+  assert.equal(
+    requests.some(
+      (request) => new URL(request.url).origin === 'https://unvisited.org',
+    ),
+    false,
+  );
+  assert.deepEqual(
+    previews.find((page) => page.sourceUrl === 'https://external.org/start')
+      .redirect,
+    { kind: 'external', targetUrl: 'https://unvisited.org/landing' },
+  );
+  assert.equal((await scan(id)).status, 'completed');
+  const count = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, count);
+});
+
+for (const lateStatus of [200, 429])
+  test(`a revoked preview lease cannot persist its late HTTP ${lateStatus} result or throttle`, async () => {
+    const started = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    respond = async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      if (url.origin === origin) return html(['https://partner.org/landing']);
+      started.resolve();
+      await released.promise;
+      return lateStatus === 429
+        ? new Response('', { status: 429 })
+        : html([`${origin}/late-backlink`, '/late-internal']);
+    };
+    const id = await create();
+    await start(id);
+    await next();
+    await next();
+    await next();
+    const inFlight = next();
+    try {
+      await started.promise;
+      const saved = await pages(id);
+      const savedEvents = await events(id);
+      await db
+        .prepare(
+          "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL, crawl_lease_until = NULL, crawl_enqueued_tick = -1 WHERE id = ?",
+        )
+        .bind(id)
+        .run();
+      released.resolve();
+      await inFlight;
+      assert.deepEqual(await pages(id), saved);
+      assert.deepEqual(await events(id), savedEvents);
+      assert.equal(
+        (
+          await db
+            .prepare(
+              'SELECT preview_throttled FROM crawl_robots WHERE scan_id = ? AND origin = ?',
+            )
+            .bind(id, 'https://partner.org')
+            .first()
+        ).preview_throttled,
+        0,
+      );
+      assert.equal((await scan(id)).status, 'paused');
+      const count = requests.length;
+      await start(id);
+      await drain();
+      assert.equal(
+        requests.length,
+        count,
+        'A reserved preview attempt must not be retried after lease revocation',
+      );
+      const interrupted = (await pages(id)).find(
+        (page) => page.sourceUrl === 'https://partner.org/landing',
+      );
+      assert.equal(interrupted.crawlMode, 'preview');
+      assert.equal(interrupted.status, 'network_error');
+    } finally {
+      released.resolve();
+      await inFlight;
+    }
+  });

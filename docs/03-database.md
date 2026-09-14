@@ -2,7 +2,7 @@
 
 > Schéma D1 `vizlinx-scans`: migrace, tabulky, vztahy, indexy a retence. Provoz (binding, `db:remote` při deployi) viz [04](./04-deployment.md); kdo do tabulek zapisuje a s jakými podmínkami viz [01](./01-backend.md).
 
-**Revidováno:** 2026-09-13 · **Platí pro:** main
+**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -40,6 +40,7 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 | `0004_crawl_ready.sql` | `scans.crawl_ready` — tick se smí zařadit až po naplnění frontieru |
 | `0005_scan_log.sql` | `scans.activity_json`, `scans.scan_log_truncated`; tabulka `scan_events` |
 | `0006_scan_history.sql` | `scans.run_id`, `run_number`, `run_created_at` (backfill z `id` a `created_at`); archiv `scan_runs`, `scan_run_pages`, `scan_run_events` |
+| `0007_landing_page_previews.sql` | `crawl_frontier.is_preview` a `crawl_robots.preview_throttled` (oba `NOT NULL DEFAULT 0`); index `crawl_frontier_preview` pro kvóty automatických kontrol externích URL |
 
 - **Lokálně:** `npm run db:local` (`wrangler d1 migrations apply DB --local`), součást `npm run dev:full`. Vypíše tabulku neaplikovaných migrací; bez TTY je aplikuje bez dotazu.
 - **Produkce:** `npm run db:remote` (`--remote`, potřebuje `CLOUDFLARE_API_TOKEN`) běží **před** `wrangler deploy` — v `npm run deploy` i v CI jobu `deploy` ([04](./04-deployment.md)). Nový Worker tedy startuje nad hotovým schématem; naopak starý Worker musí mezitím přežít nové schéma, proto jen aditivní změny.
@@ -53,10 +54,10 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 | Tabulka | Účel | Co není vidět z názvů sloupců |
 |---|---|---|
 | `visitors` | anonymní relace | `token_hash` je SHA-256 cookie, nikdy surový token; `expires_at` se prodlužuje při `POST /session` a při založení mapy |
-| `scans` | mapa = sestava až 3 originů a její **aktuální běh** | `sites_json` je `ScanSite[]` jako text a SQL do něj sahá přes `json_each` / `json_extract` (`worker/index.ts:564`); `status` je `ScanStatus`; `execution_mode` `extension` / `server`; `ticket_hash` a `runner_hash` jen pro historické rozšíření; `crawl_*` je checkpoint fronty; `activity_json` poslední fáze pro UI |
-| `page_results` | jeden strukturovaný `PageResult` na URL aktuálního běhu | `result_json` celý výsledek, `result_hash` pro idempotenci, `result_bytes` pro limit 4 MiB na mapu, `source_origin` pro limit 100 na origin |
-| `crawl_frontier` | fronta URL aktuálního běhu | `state` `pending` → `attempted` → `done`; `attempted` po pádu znamená „slot spotřebován, nestahovat znovu“ |
-| `crawl_robots` | robots.txt per (mapa, origin) | `policy_json` = `StoredRobots` (`body`, `denied`, `delayMs`); `state` `pending` / `attempted` / `done` |
+| `scans` | mapa = sestava až 3 originů běžného skenu a její **aktuální běh** | `sites_json` je `ScanSite[]` jako text a SQL do něj sahá přes `json_each` / `json_extract` (`worker/index.ts:564`); automaticky kontrolované externí originy se do něj nepřidávají; `status` je `ScanStatus`; `execution_mode` `extension` / `server`; `ticket_hash` a `runner_hash` jen pro historické rozšíření; `crawl_*` je checkpoint fronty; `activity_json` poslední fáze pro UI |
+| `page_results` | jeden strukturovaný `PageResult` na URL aktuálního běhu | `result_json` celý výsledek včetně volitelného `crawlMode: 'preview'`, `result_hash` pro idempotenci, `result_bytes` pro společný limit 4 MiB na mapu, `source_origin` pro limity stránek |
+| `crawl_frontier` | fronta URL aktuálního běhu | `state` `pending` → `attempted` → `done`; `attempted` po pádu znamená „slot spotřebován, nestahovat znovu“; `is_preview = 1` rezervuje trvalý slot do kvóty 10 URL na externí origin / 100 na průchod |
+| `crawl_robots` | robots.txt per (mapa, origin), také pro externí kontroly | `policy_json` = `StoredRobots` (`body`, `denied`, `delayMs`); `state` `pending` / `attempted` / `done`; `preview_throttled = 1` po HTTP 429 stránky blokuje další automatické kontroly originu v tomto průchodu |
 | `crawl_origin_gates` | **globální** brána originu | `next_allowed_at` sdílejí všechny mapy a návštěvníci; klíč je origin, ne mapa |
 | `crawl_daily_budget` | **globální** denní počítadlo požadavků | `day` = `floor(now / 86 400 000)`, tedy UTC den |
 | `creation_quotas` | kvóty na IP a den | `bucket_hash` = hash `kind:day:ip`; limit druhu se porovnává v SQL |
@@ -71,7 +72,9 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 - **Kaskády:** `visitors` → `scans` → (`page_results`, `crawl_frontier`, `crawl_robots`, `scan_events`, `scan_runs` → `scan_run_pages`, `scan_run_events`), vše `ON DELETE CASCADE`. Smazání relace tedy smaže i archiv; `cleanupExpired` toho využívá a maže jen kořeny.
 - **Aktuální běh vs. archiv:** `scans` drží jen aktuální běh. `rescan` (`worker/scan-history.ts:216`) v jednom `batch` zkopíruje metadata do `scan_runs`, výsledky do `scan_run_pages`, události do `scan_run_events`, smaže živé `page_results`, `scan_events`, `crawl_frontier`, `crawl_robots` a přepíše `run_id`, `run_number`, generaci a checkpointy. Čtení snapshotu i logu bere živý i archivní zdroj v jednom `batch` (`readRunSnapshot`, `worker/scan-history.ts:98`), takže souběžná archivace nevrátí půl stavu.
 - **Historické mapy z rozšíření** mají `run_id = id` a `run_number = 1` z backfillu v `0006`; nic se nepřesouvalo.
-- **`sites_json` jsou zároveň data i pravidlo:** `maxPages`, `paused` a `intervalMs` v něm čte crawler i SQL kvóty. Serverový běh nastaví všem webům `maxPages = 100` (`worker/crawler.ts:199`); HTTP 429 přepíše `paused: true` daného webu podmíněným `UPDATE` (`worker/crawler.ts:466`).
+- **`sites_json` jsou zároveň data i pravidlo:** `maxPages`, `paused` a `intervalMs` v něm čte crawler i SQL kvóty. Serverový běh nastaví všem vybraným webům `maxPages = 100`; HTTP 429 při běžném skenu přepíše `paused: true` daného webu podmíněným `UPDATE` (`worker/crawler.ts`).
+- **Preview slot není aktuální režim originu:** `crawl_frontier.is_preview` se při povýšení webu do běžného skenu nemaže ani nenuluje. Počet všech těchto řádků, včetně `pending`, neúspěšných i `done`, vynucuje kvótu 10/100 při vložení dalších URL. Běžný sken povýšeného originu započítává stávající výsledky do vlastního limitu 100 stránek. Jeho aktuální oprávnění určuje `sites_json`, proto může pokračovat i přes starší `preview_throttled`.
+- **Obnovení a historie preview:** `/start` ponechá frontier a robots včetně slotů a omezení HTTP 429. `/rescan` je odstraní s ostatním živým stavem, takže nový průchod dostane nové kvóty automatických kontrol. Archivace kopíruje celé `result_json` a `event_json`; `crawlMode` se zachová bez nových sloupců v archivních tabulkách. Pozdější povýšení webu nepřepisuje původ dříve uložených výsledků.
 - **Stav `interrupted` v DB neexistuje** — dopočítává se při čtení z `heartbeat_at` (`control`, `worker/scan-history.ts:50`).
 - **Retence se vynucuje při čtení**, ne jen úklidem: každý dotaz na mapu má `created_at > now − 30 d` (`owned`, `worker/index.ts:177`), takže expirovaná data jsou nedostupná, i když ještě fyzicky existují.
 
@@ -86,6 +89,7 @@ Jen to, na čem stojí chování:
 - `scan_runs` `UNIQUE (scan_id, run_number)` — dva souběžné `rescan` nemohou založit dva běhy se stejným číslem.
 - `scans.ticket_hash` a `scans.runner_hash` `UNIQUE` — ticket i token lze vyměnit jen jednou.
 - `crawl_frontier` PK `(scan_id, url)` + index `crawl_frontier_site (scan_id, origin, state)` — dedup URL a výběr kandidáta per origin.
+- `crawl_frontier_preview (scan_id, is_preview, origin)` — počty rezervovaných preview URL v celém průchodu i pro jednotlivé originy; slot se rezervuje stejným podmíněným `INSERT`, který ověřuje generaci a případný lease.
 - `results_scan_origin (scan_id, source_origin)` — počet stránek na origin se počítá při každém zápisu.
 - `scans_owner_created (owner_hash, created_at)` — seznam map vlastníka; `scans_created`, `visitors_expiry`, `creation_quotas_expiry` — úklid podle času.
 - **Bez FK na `crawl_origin_gates` a `crawl_daily_budget`** — jsou globální a přežívají mapy; uklízí je crawler při startu (`worker/crawler.ts:238`).

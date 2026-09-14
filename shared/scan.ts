@@ -3,6 +3,8 @@ export const SCAN_LIMITS = {
   sites: 3,
   runsPerMap: 10,
   pagesPerSite: 100,
+  previewPagesPerSite: 10,
+  previewPagesPerScan: 100,
   linksPerPage: 500,
   discoveredPerPage: 500,
   htmlBytes: 2 * 1024 * 1024,
@@ -45,6 +47,7 @@ export type ScanRedirect =
     };
 export type PageResult = {
   sourceUrl: string;
+  crawlMode?: 'preview';
   title: string;
   observedAt: string;
   status: PageStatus;
@@ -86,6 +89,7 @@ export type ScanRunSummary = ScanSummary & {
 };
 export type ScanHistory = { runs: ScanRunSummary[]; limit: number };
 export type ScanActivity = {
+  crawlMode?: 'preview';
   phase:
     | 'queued'
     | 'fetching_robots'
@@ -103,6 +107,7 @@ export type ScanActivity = {
 };
 export type ScanLogEvent = {
   id: number;
+  crawlMode?: 'preview';
   at: string;
   type:
     | 'scan_started'

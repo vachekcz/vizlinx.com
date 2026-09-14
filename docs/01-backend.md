@@ -2,7 +2,7 @@
 
 > Cloudflare Worker v `worker/`: API pro mapy, fronta serverového skeneru a jeho síťová pravidla. Nasazení a bindingy viz [04](./04-deployment.md), schéma D1 viz [03](./03-database.md), klientská část viz [02](./02-frontend.md).
 
-**Revidováno:** 2026-09-13 · **Platí pro:** main
+**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -83,7 +83,7 @@ Prefix `/api/v1` (`API_PREFIX`). Odpovědi jsou holé JSON objekty, chyby `{ "er
 | `POST /runner/scans/:id/progress` | heartbeat a stav | `worker/index.ts:525` |
 | `PUT /runner/scans/:id/results` | idempotentní uložení `PageResult` | `worker/index.ts:542` |
 
-Tvary (`ScanSite`, `ScanSnapshot`, `ScanControl`, `PageResult`, `ScanLogEvent`, …) jsou v `shared/scan.ts`, validace vstupů ve `worker/validation.ts`. Produktový popis chování drží historické kontrakty v `docs/tasks/` (viz [index](./README.md)); při rozporu platí kód.
+Tvary (`ScanSite`, `ScanSnapshot`, `ScanControl`, `PageResult`, `ScanLogEvent`, …) jsou v `shared/scan.ts`, validace vstupů ve `worker/validation.ts`. `PageResult`, `ScanLogEvent` a `ScanActivity` mají volitelné `crawlMode: 'preview'` pro automatickou kontrolu externí cílové stránky. Chybějící příznak zachovává původní význam výsledků. Původ výsledku se při pozdějším přidání webu do běžného skenu nemění; uloží se také do historie.
 
 ---
 
@@ -109,9 +109,21 @@ Historické mapy z rozšíření (`execution_mode = 'extension'`) zůstávají �
 - **robots.txt pro `VizlinxBot`** (`fetchServerRobots`, `worker/server-fetch.ts:50`): 404/410 = povoleno; jakákoli jiná ne-2xx odpověď, redirect, timeout nebo tělo nad 64 KiB = **celý origin zamítnut** (fail closed). `Crawl-delay` prodlužuje interval originu. Zamítnuté stránky dostanou výsledek `robots_denied` bez požadavku.
 - **Přesměrování** (`fetchServerPage`, `worker/server-fetch.ts:85`): 301/302/303/307/308 na **přesně stejný origin** zařadí cíl do frontieru jako další stránku (`redirectTargets`, `worker/crawler.ts:72`); jiný origin, nepodporovaný status nebo neplatný cíl se nenásledují a zůstávají jen v metadatech `redirect` výsledku a logu. Výsledek přesměrování má vždy status `redirect_unresolved`, rozlišuje `redirect.kind`.
 - **Obsah:** jen `text/html` / `application/xhtml+xml`, jinak `not_html`; tělo nad 2 MiB → `too_large`; síťová chyba nebo timeout → `network_error`; ne-2xx → `http_error`. Odkazy extrahuje `extractHtml` z `<a href>` / `<area href>` s ohledem na `<base href>`, bez spouštění skriptů (`extension/extract.ts:34`).
-- **HTTP 429 stránky** atomicky pozastaví daný origin v `sites_json` a zapíše `site_throttled`; ostatní weby pokračují, zrušení pauzy je na vlastníkovi (`worker/crawler.ts:463`).
+- **HTTP 429 stránky** při běžném skenu atomicky pozastaví daný origin v `sites_json` a zapíše `site_throttled`; ostatní weby pokračují, zrušení pauzy je na vlastníkovi. Při automatické kontrole externího cíle místo toho nastaví `crawl_robots.preview_throttled = 1`: další kontroly tohoto originu se přeskočí po celý aktuální průchod, i po obnovení. Výslovné přidání originu do běžného skenu umožní pokračovat podle pravidel běžného skenu. Odpovědi robots.txt dál podléhají samostatnému fail-closed pravidlu výše.
 - **Přerušený pokus** (`state = 'attempted'` po pádu) se nestahuje znovu — slot se spotřebuje výsledkem `network_error` s vysvětlením (`worker/crawler.ts:675`).
-- **Objevené URL** se do frontieru přidávají jen pro origin ve scope, deduplikované, do velikosti `pagesPerSite + 1` na origin (`addFrontier`, `worker/crawler.ts:80`). Externí odkazy zůstávají jen jako hrany výsledku, nikdy se nestahují.
+- **Objevené URL běžného skenu** se pro origin ve scope přidávají deduplikované do frontieru velikosti `pagesPerSite + 1` na origin (`addFrontier`). Přímé externí HTML odkazy z těchto stránek zařazují omezenou kontrolu svých cílových URL (`previewFrontierStatements`), popsanou níže.
+
+### Automatická kontrola externích cílových stránek
+
+Odkaz z plně povoleného originu A na `B/produkt` zařadí přímo tuto URL, bez přidání B do `sites_json` a bez automatického načtení jeho homepage. Kontrola používá stejný veřejný fetch, robots, globální bránu originu a denní, časový i úložný rozpočet. Výchozí interval externího originu je 3 s, delší `Crawl-delay` jej prodlužuje.
+
+Výsledkem je běžný `PageResult` s `crawlMode: 'preview'`, včetně všech extrahovaných odkazů do stávajících limitů. Odkaz zpět na libovolnou stránku A je důkaz pro hranu B → A; odkazy na jiné weby se také uchovají. **Žádný HTML odkaz z kontrolované externí stránky se automaticky nenásleduje**, ani interní odkaz B, další externí C nebo nová stránka povoleného A. Výjimkou je přesměrování na stejný origin, jehož každý krok spotřebovává stejný rozpočet kontrol. Cross-origin přesměrování se ani zde nenásleduje.
+
+Limit je **10 jedinečných URL na externí origin a 100 celkem za průchod mapou**. Slot vzniká vložením URL do `crawl_frontier` s `is_preview = 1`; obsazené sloty se nevracejí při chybě, zákazu robots, dokončení ani přidání originu do běžného skenu. Jedna URL tedy spotřebuje nejvýše jeden slot bez ohledu na počet příchozích odkazů. Robots požadavky nespadají do limitu URL, ale spotřebovávají denní síťový rozpočet. Vyčerpání limitu kontrol neukončuje další běžný sken; zbývající cíle zůstanou neověřené.
+
+Při obnovení se kandidáti z uložených výsledků před navázáním JSON parametru omezí na zbývající sloty podle frontieru. Agregovaný seznam odkazů velké mapy tak nepřekročí limit velikosti parametru D1; konečné kvóty dál atomicky hlídá SQL.
+
+Obnovení přes `/start` zachová frontier i příznak omezení HTTP 429. Z uložených výsledků znovu doplní jen povolenou práci: HTML odkazy z dosud externích preview výsledků další sken nerozvíjejí. **Povýšení webu** používá existující `POST /scans/:id/sites` a následný `/start`; dosavadní výsledky a sloty zůstávají, uložené odkazy povýšeného webu už mohou pokračovat běžným skenem. Dřívější kontroly se započítají do jeho limitu 100 stránek a URL se znovu nestahují. `/rescan` založí nový průchod s prázdným frontierem a robots, tedy i novými kvótami kontrol; předchozí výsledky a log zůstanou v archivu.
 
 ---
 
@@ -121,8 +133,9 @@ Hodnoty jsou konstanty v kódu; při jejich změně se aktualizuje tato tabulka,
 
 | Omezení | Hodnota | Kde |
 |---|---|---|
-| Originy v mapě | 3 | `SCAN_LIMITS.sites`, `shared/scan.ts` |
-| Stránky na origin (včetně neúspěšných) | 100 | `SCAN_LIMITS.pagesPerSite` |
+| Originy pro běžný sken (externí kontroly se nepočítají) | 3 | `SCAN_LIMITS.sites`, `shared/scan.ts` |
+| Stránky běžného skenu na origin (včetně neúspěšných a dřívějších kontrol) | 100 | `SCAN_LIMITS.pagesPerSite` |
+| Automaticky kontrolované externí URL na origin / průchod mapou | 10 / 100 | `SCAN_LIMITS.previewPagesPerSite`, `.previewPagesPerScan`; trvalé sloty ve frontieru |
 | Běhů na mapu (historie) | 10 | `SCAN_LIMITS.runsPerMap` |
 | Skupiny odkazů / objevené URL na stránku | 500 / 500 | `SCAN_LIMITS.linksPerPage`, `.discoveredPerPage` |
 | HTML tělo / výsledek stránky / výsledky mapy | 2 MiB / 256 KiB / 4 MiB | `SCAN_LIMITS.htmlBytes`, `.resultBytes`; `MAX_SCAN_BYTES` ve `worker/crawler.ts:24` a `worker/index.ts:28` |
@@ -153,6 +166,7 @@ Co se nesmí porušit a proč:
 - **Znalost ID mapy není přístup.** Každý webový endpoint prochází `owned()` (`worker/index.ts:173`): řádek musí patřit hashi cookie a být mladší než 30 dní. Tokeny a cookies se v D1 ukládají jen jako SHA-256 hash, surová hodnota existuje pouze u klienta.
 - **Generace a lease rozhodují o platnosti práce.** Každá změna z webu (`PATCH`, `/sites`, `/start`, `/rescan`) zvýší `crawl_generation` a zruší lease; každý zápis crawleru má podmínku `activeSql` (`worker/crawler.ts:46`), takže opožděná odpověď staré generace nic nezapíše. Nový kód, který z fronty zapisuje do `scans`, `page_results` nebo `crawl_*`, musí tuto podmínku převzít.
 - **Jeden tick = nejvýše jeden síťový požadavek, žádný `waitUntil`.** HTTP handler nikdy neskenuje sám, pouze zařadí zprávu; `ctx` se ve Workeru vůbec nepoužívá. Dlouhý běh by narazil na `cpu_ms` a ztratil by se při restartu isolate.
+- **Automatická kontrola externích cílů nerozšiřuje běžný scope.** HTML odkazy preview výsledku jsou evidence, nikoli další frontier. Limit 10/100 se vynucuje při rezervaci URL v SQL, jeho sloty přežijí obnovení i povýšení webu. Ochrana generací a lease platí také pro preview výsledky, navazující přesměrování a HTTP 429.
 - **Idempotence v SQL, ne v JS.** `page_results` má PK `(scan_id, source_url)` a `INSERT … ON CONFLICT DO NOTHING`; stejný `result_hash` je OK, jiný obsah 409 (`worker/index.ts:611`). Limity počtu stránek, bajtů i denního rozpočtu se vynucují v podmínce téhož `INSERT` (`worker/crawler.ts:417`), takže je souběžné ticky nemohou překročit.
 - **Log se zapisuje ve stejném batchi jako přechod stavu** s guardem `changes() = 1` (`scanLogStatements`, `worker/scan-log.ts:8`) — událost bez skutečně provedené změny se nezapíše. Do logu ani `console.error` nepatří tokeny, těla requestů, URL ani extrahovaný obsah (`worker/index.ts:646`).
 - **Rozpočty jsou globální, ne per mapa.** `crawl_origin_gates` a `crawl_daily_budget` sdílejí všechny mapy i návštěvníci; nový běh (`rescan`) dostane nové per-run limity, ale ne nový denní rozpočet (`worker/scan-history.ts:224`).

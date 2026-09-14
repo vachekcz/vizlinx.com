@@ -180,6 +180,142 @@ test('does not turn the internal discovery queue or non-web links into graph edg
   expect(data.sites).toHaveLength(2);
 });
 
+test('measures only directly linked preview targets and preserves backlinks and further known sites', () => {
+  const found = (targetUrl: string) => ({
+    targetUrl,
+    anchor: 'Link',
+    rel: [],
+    region: 'content' as const,
+    occurrences: 1,
+  });
+  const scan = snapshot([
+    result({
+      links: [
+        found('https://external.cz/landing'),
+        found('https://external.cz/landing#duplicate'),
+        found('https://external.cz/redirect'),
+        found('https://external.cz/blocked'),
+        found('https://external.cz/unknown'),
+      ],
+    }),
+    result({
+      sourceUrl: 'https://external.cz/landing',
+      crawlMode: 'preview',
+      links: [
+        found('https://alpha.cz/contact'),
+        found('https://third.cz/only-known'),
+        found('https://external.cz/internal'),
+      ],
+      discoveredUrls: ['https://external.cz/internal'],
+    }),
+    result({
+      sourceUrl: 'https://external.cz/redirect',
+      crawlMode: 'preview',
+      status: 'redirect_unresolved',
+      redirect: {
+        kind: 'same_origin',
+        targetUrl: 'https://external.cz/final',
+      },
+    }),
+    result({
+      sourceUrl: 'https://external.cz/final',
+      crawlMode: 'preview',
+    }),
+    result({
+      sourceUrl: 'https://external.cz/blocked',
+      crawlMode: 'preview',
+      status: 'robots_denied',
+    }),
+  ]);
+  const data = scanToDataset(scan);
+  expect(
+    data.sites.find((site) => site.id === 'https://external.cz'),
+  ).toMatchObject({
+    scanned: false,
+    preview: {
+      attemptedPages: 4,
+      inspectedPages: 2,
+      knownTargets: 4,
+      checkedTargets: 2,
+      failedTargets: 1,
+      backlinkCount: 1,
+    },
+  });
+  expect(
+    data.sites.find((site) => site.id === 'https://third.cz'),
+  ).toMatchObject({
+    scanned: false,
+    preview: { attemptedPages: 0, knownTargets: 0, backlinkCount: 0 },
+  });
+  expect(
+    data.links.some((link) => link.target.id === 'https://alpha.cz/contact'),
+  ).toBe(true);
+  expect(
+    data.pages.find((page) => page.id === 'https://third.cz/only-known')
+      ?.status,
+  ).toBe('known');
+  expect(
+    data.pages.find((page) => page.id === 'https://external.cz/internal')
+      ?.status,
+  ).toBe('known');
+  const promoted = scanToDataset({
+    ...scan,
+    sites: [
+      ...scan.sites,
+      {
+        origin: 'https://external.cz',
+        seedUrl: 'https://external.cz/',
+        intervalMs: 3000,
+        maxPages: 100,
+        paused: false,
+      },
+    ],
+  });
+  expect(
+    promoted.sites.find((site) => site.id === 'https://external.cz'),
+  ).toMatchObject({ scanned: true });
+  expect(
+    promoted.sites.find((site) => site.id === 'https://external.cz')?.preview,
+  ).toBeUndefined();
+  expect(promoted.links.map((link) => link.id)).toEqual(
+    data.links.map((link) => link.id),
+  );
+});
+
+test('does not report pending preview redirects as failed or loop on cyclic redirects', () => {
+  const data = scanToDataset(
+    snapshot([
+      result({
+        links: ['pending', 'loop'].map((path) => ({
+          targetUrl: `https://external.cz/${path}`,
+          anchor: path,
+          rel: [],
+          region: 'content' as const,
+          occurrences: 1,
+        })),
+      }),
+      ...['pending', 'loop'].map((path) =>
+        result({
+          sourceUrl: `https://external.cz/${path}`,
+          crawlMode: 'preview',
+          status: 'redirect_unresolved',
+          redirect: {
+            kind: 'same_origin',
+            targetUrl: `https://external.cz/${path === 'pending' ? 'not-fetched' : path}`,
+          },
+        }),
+      ),
+    ]),
+  );
+  expect(
+    data.sites.find((site) => site.id === 'https://external.cz')?.preview,
+  ).toMatchObject({
+    checkedTargets: 0,
+    failedTargets: 1,
+    knownTargets: 2,
+  });
+});
+
 async function mockScan(page: BrowserPage, current: () => ScanSnapshot) {
   await page.route('**/api/v1/**', async (route) => {
     await route.fulfill({

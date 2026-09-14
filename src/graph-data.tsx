@@ -60,7 +60,9 @@ export function useGraphData() {
 export function pageStatusLabel(page: Page) {
   switch (page.status) {
     case 'ok':
-      return 'Úspěšně načtená stránka';
+      return page.crawlMode === 'preview'
+        ? 'Úspěšně načtená stránka · kontrola cílové URL'
+        : 'Úspěšně načtená stránka';
     case 'known':
       return 'Pouze známá URL · zatím nenačteno';
     case 'http_error':
@@ -78,6 +80,13 @@ export function pageStatusLabel(page: Page) {
     default:
       return 'Ukázková stránka';
   }
+}
+
+export function previewStatusLabel(site: Site) {
+  if (site.preview?.inspectedPages) return 'Částečně prozkoumáno';
+  if (site.preview?.failedTargets) return 'Nepodařilo se ověřit';
+  if (site.preview?.attemptedPages) return 'Zatím neověřeno';
+  return 'Neprozkoumáno';
 }
 
 export function siteUrl(site: Site) {
