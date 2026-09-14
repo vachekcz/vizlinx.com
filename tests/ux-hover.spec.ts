@@ -52,11 +52,11 @@ for (const mode of ['pulse', 'quiet', 'focus']) {
     await atlas.click();
     const detail = page.getByRole('complementary', { name: 'Detail výběru' });
     const outgoing = detail.getByRole('button', {
-      name: 'journal.example 5 odkazů z atlas.example',
+      name: '5 odkazů ven: z atlas.example na journal.example',
       exact: true,
     });
     const incoming = detail.getByRole('button', {
-      name: 'journal.example 3 odkazy na atlas.example',
+      name: '3 odkazy sem: z journal.example na atlas.example',
       exact: true,
     });
     await outgoing.hover();
@@ -163,7 +163,7 @@ test('supports keyboard preview and reduced motion without losing navigation', a
   await expect(page.locator('.graph-highlight-pulse')).toBeHidden();
   await page.keyboard.press('Enter');
   const outgoing = page.getByRole('button', {
-    name: 'journal.example 5 odkazů z atlas.example',
+    name: '5 odkazů ven: z atlas.example na journal.example',
     exact: true,
   });
   await outgoing.focus();

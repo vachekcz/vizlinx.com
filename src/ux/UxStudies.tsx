@@ -1656,16 +1656,21 @@ function Detail({
                   aria-labelledby={`ux-related-site-${group.site.id}`}
                   key={group.site.id}
                 >
-                  <h4 id={`ux-related-site-${group.site.id}`}>
-                    {group.site.domain}
-                  </h4>
+                  <div className="ux-detail-domain">
+                    <h4 id={`ux-related-site-${group.site.id}`}>
+                      {group.site.domain}
+                    </h4>
+                    <ExternalLink
+                      url={group.site.origin ?? `https://${group.site.domain}`}
+                    />
+                  </div>
                   {group.connections.map((item) => {
                     const outgoing = item.source.id === site.id;
                     const DirectionIcon = outgoing
                       ? ArrowUpRight
                       : ArrowDownLeft;
                     const count = `${item.links.length} ${linkCountLabel(item.links.length)}`;
-                    const direction = `${outgoing ? 'z' : 'na'} ${site.domain}`;
+                    const label = `${count} ${outgoing ? 'ven' : 'sem'}`;
                     return (
                       <button
                         className={`ux-related-row ux-related-direction ${previewTarget?.type === 'connection' && previewTarget.id === item.id ? 'is-previewed' : ''}`}
@@ -1675,7 +1680,7 @@ function Detail({
                         })}
                         key={item.id}
                         data-detail-target={`connection:${item.id}`}
-                        aria-label={`${group.site.domain} ${count} ${direction}`}
+                        aria-label={`${label}: z ${item.source.domain} na ${item.target.domain}`}
                         onClick={() =>
                           onSelect({ type: 'connection', id: item.id })
                         }
@@ -1686,8 +1691,7 @@ function Detail({
                           aria-hidden="true"
                         />
                         <span>
-                          <strong>{count}</strong>
-                          <small>{direction}</small>
+                          <strong>{label}</strong>
                         </span>
                         <ChevronRight size={14} aria-hidden="true" />
                       </button>
@@ -1723,7 +1727,10 @@ function Detail({
           <h2>Odkud a kam</h2>
           <div className="ux-url-step">
             <span>ZDROJ</span>
-            <strong>{getSite(link.source.siteId).domain}</strong>
+            <strong className={contextual ? 'ux-detail-domain' : undefined}>
+              <span>{getSite(link.source.siteId).domain}</span>
+              {contextual && <ExternalLink url={pageUrl(link.source)} />}
+            </strong>
             <code>{link.source.path}</code>
           </div>
           <div className="ux-url-arrow">
@@ -1731,7 +1738,10 @@ function Detail({
           </div>
           <div className="ux-url-step">
             <span>CÍL</span>
-            <strong>{getSite(link.target.siteId).domain}</strong>
+            <strong className={contextual ? 'ux-detail-domain' : undefined}>
+              <span>{getSite(link.target.siteId).domain}</span>
+              {contextual && <ExternalLink url={pageUrl(link.target)} />}
+            </strong>
             <code>{link.target.path}</code>
           </div>
           <dl className="ux-metadata">
@@ -1774,10 +1784,24 @@ function Detail({
               className="ux-connection-heading"
               aria-label={`Odkazy z ${connection.source.domain} na ${connection.target.domain}`}
             >
-              <span>{connection.source.domain}</span>
-              <span>
+              <span className="ux-detail-domain">
+                <span>{connection.source.domain}</span>
+                <ExternalLink
+                  url={
+                    connection.source.origin ??
+                    `https://${connection.source.domain}`
+                  }
+                />
+              </span>
+              <span className="ux-detail-domain">
                 <ArrowRight size={17} aria-hidden="true" />
-                {connection.target.domain}
+                <span>{connection.target.domain}</span>
+                <ExternalLink
+                  url={
+                    connection.target.origin ??
+                    `https://${connection.target.domain}`
+                  }
+                />
               </span>
             </h2>
           ) : (

@@ -785,6 +785,14 @@
   flex-shrink: 0;
   color: var(--muted);
 }
+.ux-detail .ux-detail-domain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ux-detail-domain > :not(.external-link) {
+  min-width: 0;
+}
 .ux-detail > .ux-site-dot {
   width: 42px;
   height: 42px;
@@ -860,14 +868,14 @@
   gap: 6px;
   margin-top: 16px;
 }
-.ux-related-site > h4 {
-  margin: 0 0 2px;
+.ux-related-site h4 {
+  margin: 0;
   font-size: 11px;
   font-weight: 650;
   overflow-wrap: anywhere;
 }
 .ux-related-site .ux-related-direction {
-  min-height: 49px;
+  min-height: 40px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1447,7 +1455,8 @@
   position: relative;
   z-index: 1;
 }
-.ux-scan-site-heading .external-link {
+.ux-scan-site-heading .external-link,
+.ux-detail-domain .external-link {
   width: 24px;
   height: 24px;
   min-width: 24px;
@@ -1460,14 +1469,18 @@
     box-shadow 0.15s;
 }
 .ux-scan-site-heading .external-link:hover,
-.ux-scan-site-heading .external-link:focus-visible {
+.ux-scan-site-heading .external-link:focus-visible,
+.ux-detail-domain .external-link:hover,
+.ux-detail-domain .external-link:focus-visible {
   background: var(--surface);
   border-color: var(--accent);
   box-shadow: 0 2px 5px color-mix(in srgb, var(--accent) 15%, transparent);
 }
-.ux-scan-site-heading .external-link svg {
+.ux-scan-site-heading .external-link svg,
+.ux-detail-domain .external-link svg {
   width: 12px;
   height: 12px;
+  color: inherit;
 }
 .ux-site-action {
   width: 27px;
