@@ -25,18 +25,20 @@ if [ ! -d "node_modules" ]; then
 fi
 
 # Added, copied, modified or renamed only: a deleted path cannot be formatted.
-STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
-if [ -z "$STAGED" ]; then
+# NUL-delimited into an array: a path with a space or a glob character must not
+# be split or expanded, or prettier would reformat whatever the shell matched.
+STAGED=()
+while IFS= read -r -d '' file; do
+  STAGED+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+if [ ${#STAGED[@]} -eq 0 ]; then
   exit 0
 fi
 
 # --ignore-unknown skips files prettier has no parser for; .prettierignore
 # still applies, so ignored paths (docs/, README.md, dist/) drop out here.
-# Word splitting of the file list is intended.
-# shellcheck disable=SC2086
-if ! npx prettier --check --ignore-unknown $STAGED >/dev/null 2>&1; then
-  # shellcheck disable=SC2086
-  npx prettier --write --ignore-unknown $STAGED
+if ! npx prettier --check --ignore-unknown -- "${STAGED[@]}" >/dev/null 2>&1; then
+  npx prettier --write --ignore-unknown -- "${STAGED[@]}"
   echo ""
   echo "❌ Commit stopped: prettier reformatted staged files."
   echo "   Review 'git status', stage the changes and commit again."
