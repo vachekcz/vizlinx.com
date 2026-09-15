@@ -172,12 +172,21 @@ async function start(id, generation) {
   const response = await call({ action: 'start', id, generation });
   assert.equal(response.status, 200, await response.clone().text());
 }
-async function next({ resetGate = true, claimGate } = {}) {
+async function next({
+  resetGate = true,
+  claimGate,
+  enforceSqlStringLimit = false,
+} = {}) {
   const queued = pending.shift();
   assert.ok(queued, 'A continuation must be queued');
   if (resetGate)
     await db.prepare('UPDATE crawl_origin_gates SET next_allowed_at = 0').run();
-  const response = await call({ action: 'tick', body: queued.body, claimGate });
+  const response = await call({
+    action: 'tick',
+    body: queued.body,
+    claimGate,
+    enforceSqlStringLimit,
+  });
   assert.deepEqual(await response.json(), ['ack']);
   return queued;
 }
@@ -453,20 +462,22 @@ test('external redirects are recorded but do not expand even an approved second 
   );
 });
 
-test('redirect-only sites cannot exceed the 1000 request page budget', async () => {
+test('protocol/www redirect-only sites share the 1000 request page budget', async () => {
   respond = (request) => {
     const path = new URL(request.url).pathname;
     if (path === '/robots.txt') return new Response('', { status: 404 });
     const index = path === '/' ? 0 : Number(path.slice(1));
     return new Response('', {
       status: 302,
-      headers: { Location: `/${index + 1}` },
+      headers: {
+        Location: `${index % 2 ? origin : 'http://www.example.com'}/${index + 1}`,
+      },
     });
   };
   const id = await create();
   await start(id);
   await drain();
-  assert.equal(requests.length, 1001);
+  assert.equal(requests.length, 1002);
   assert.equal((await pages(id)).length, 1000);
   assert.equal((await scan(id)).limit_reason, 'page_limit');
 });
@@ -2082,3 +2093,1017 @@ test('a configured seed can be manually scanned before any result exists', async
   assert.equal((await pages(id)).length, 1);
   assert.equal((await pages(id))[0].crawlMode, 'manual');
 });
+
+test('protocol and www redirects preserve one site owner, robots, exact URLs and history events', async () => {
+  const original = 'http://example.com';
+  const secure = 'https://example.com';
+  const canonical = 'https://www.example.com';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === original)
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${secure}/start` },
+      });
+    if (url.origin === secure)
+      return new Response(null, {
+        status: 308,
+        headers: { Location: `${canonical}/folder/` },
+      });
+    if (url.pathname === '/folder/')
+      return html(['child', `${original}/`, 'https://unrelated.org/landing']);
+    return html();
+  };
+  const id = await create([
+    { ...site, origin: original, seedUrl: `${original}/` },
+  ]);
+  await start(id);
+  while (pending.length) {
+    const before = requests.length;
+    await next();
+    assert.ok(
+      requests.length - before <= 1,
+      'Every hop is a separate queue tick',
+    );
+  }
+  const results = await pages(id);
+  assert.deepEqual(
+    requests.slice(0, 7).map((request) => request.url),
+    [
+      `${original}/robots.txt`,
+      `${original}/`,
+      `${secure}/robots.txt`,
+      `${secure}/start`,
+      `${canonical}/robots.txt`,
+      `${canonical}/folder/`,
+      `${canonical}/folder/child`,
+    ],
+  );
+  assert.equal(
+    results.find((page) => page.sourceUrl === `${canonical}/folder/child`)
+      .siteOrigin,
+    original,
+  );
+  assert.ok(
+    results
+      .filter((page) => page.siteOrigin === original)
+      .every((page) => !page.crawlMode),
+  );
+  const redirects = (await events(id)).filter((event) => event.redirect);
+  assert.deepEqual(
+    redirects.map((event) => [
+      event.url,
+      event.redirect.targetUrl,
+      event.httpStatus,
+      event.origin,
+      event.level,
+    ]),
+    [
+      [`${original}/`, `${secure}/start`, 301, original, 'info'],
+      [`${secure}/start`, `${canonical}/folder/`, 308, original, 'info'],
+    ],
+  );
+  const before = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    before,
+    'Resume must retain alias ownership and URL deduplication',
+  );
+});
+
+test('redirected robots uses individual paced requests, keeps its original policy scope and logs each hop', async () => {
+  const target = 'https://www.example.com/policies/bot.txt';
+  respond = (request) => {
+    if (request.url === `${origin}/robots.txt`)
+      return new Response(null, { status: 302, headers: { Location: target } });
+    if (request.url === target)
+      return new Response(
+        'User-agent: VizlinxBot\nDisallow: /private\nCrawl-delay: 4\n',
+      );
+    return html(['/private']);
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  assert.equal(requests.length, 1);
+  await db
+    .prepare(
+      'INSERT INTO crawl_origin_gates (origin, next_allowed_at) VALUES (?, ?)',
+    )
+    .bind('https://www.example.com', Date.now() + 60_000)
+    .run();
+  await next({ resetGate: false });
+  assert.equal(
+    requests.length,
+    1,
+    'Redirect target must respect a gate shared with other scans',
+  );
+  await next();
+  assert.equal(requests.length, 2);
+  assert.ok(pending[0].options.delaySeconds >= 4);
+  await next({ resetGate: false });
+  assert.equal(
+    requests.length,
+    2,
+    'Redirected policy crawl-delay applies to original page origin',
+  );
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl.endsWith('/private'))
+      .status,
+    'robots_denied',
+  );
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [`${origin}/robots.txt`, target, `${origin}/`],
+  );
+  assert.equal(
+    (await db.prepare('SELECT request_count FROM crawl_daily_budget').first())
+      .request_count,
+    3,
+  );
+  const robotsEvents = (await events(id)).filter(
+    (event) => event.type === 'robots_checked',
+  );
+  assert.equal(robotsEvents[0].redirect.kind, 'site_variant');
+  assert.equal(robotsEvents[0].redirect.targetUrl, target);
+  assert.equal(robotsEvents[0].httpStatus, 302);
+  assert.equal(robotsEvents[1].url, target);
+  assert.equal(robotsEvents[1].httpStatus, 200);
+  assert.equal(robotsEvents[1].status, 'ok');
+});
+
+test('www redirects like aitom.cz scan public pages while retaining robots path restrictions', async () => {
+  const source = 'https://aitom.cz';
+  const canonical = 'https://www.aitom.cz';
+  const robots =
+    'User-agent: *\nDisallow: /core/wp-admin/\nAllow: /core/wp-admin/admin-ajax.php\nDisallow: /app/uploads/wpo/wpo-plugins-tables-list.json\nDisallow: /?s=\nDisallow: /page/*/?s=\nDisallow: /search/\nDisallow: /*filterTax=\nDisallow: /*filterTerm\n\nUser-agent: User-Agent\nDisallow: /Amazonbot\n';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.origin === source)
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${canonical}${url.pathname}` },
+      });
+    if (url.pathname === '/robots.txt') return new Response(robots);
+    return html(
+      url.pathname === '/' ? ['/sluzby/', '/search/', '/core/wp-admin/'] : [],
+    );
+  };
+  const id = await create([{ ...site, origin: source, seedUrl: `${source}/` }]);
+  await start(id);
+  await drain();
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [
+      `${source}/robots.txt`,
+      `${canonical}/robots.txt`,
+      `${source}/`,
+      `${canonical}/robots.txt`,
+      `${canonical}/`,
+      `${canonical}/sluzby/`,
+    ],
+  );
+  const results = await pages(id);
+  for (const path of ['/', '/sluzby/']) {
+    const result = results.find(
+      (page) => page.sourceUrl === `${canonical}${path}`,
+    );
+    assert.equal(result.status, 'ok');
+    assert.equal(result.siteOrigin, source);
+  }
+  for (const path of ['/search/', '/core/wp-admin/'])
+    assert.equal(
+      results.find((page) => page.sourceUrl === `${canonical}${path}`).status,
+      'robots_denied',
+    );
+  assert.equal((await scan(id)).status, 'completed');
+  assert.ok(
+    (await events(id))
+      .filter((event) => event.type === 'robots_checked')
+      .every((event) => event.level === 'info'),
+  );
+});
+
+test('robots HTTP failures stop pages without claiming a Disallow rule and remain cached on resume', async () => {
+  for (const status of [403, 429, 503]) {
+    const before = requests.length;
+    respond = () => new Response('Unavailable', { status });
+    const id = await create();
+    await start(id);
+    await drain();
+    assert.equal(requests.length - before, 1);
+    const [result] = await pages(id);
+    assert.equal(result.status, 'robots_unavailable');
+    assert.equal(
+      result.httpStatus,
+      null,
+      'The page itself was never requested',
+    );
+    assert.match(result.error, /could not be loaded/);
+    assert.equal(
+      (await events(id)).find((event) => event.type === 'page_finished').level,
+      'error',
+    );
+    const entry = (await events(id)).find(
+      (event) => event.type === 'robots_checked',
+    );
+    assert.equal(entry.status, 'robots_unavailable');
+    assert.equal(entry.httpStatus, status);
+    assert.equal(entry.level, 'error');
+    await start(id);
+    await drain();
+    assert.equal(requests.length - before, 1);
+  }
+});
+
+test('robots redirect loops, overlong chains and unrelated domains fail closed with an explicit log', async () => {
+  for (const scenario of ['loop', 'limit', 'external']) {
+    const before = requests.length;
+    respond = (request) => {
+      const path = new URL(request.url).pathname;
+      const nextPath =
+        path === '/robots.txt'
+          ? '/policy-1'
+          : `/policy-${Number(path.split('-')[1]) + 1}`;
+      return new Response(null, {
+        status: 307,
+        headers: {
+          Location:
+            scenario === 'external'
+              ? 'https://unrelated.org/robots.txt'
+              : scenario === 'loop'
+                ? '/robots.txt'
+                : nextPath,
+        },
+      });
+    };
+    const id = await create();
+    await start(id);
+    await drain();
+    assert.equal(requests.length - before, scenario === 'limit' ? 6 : 1);
+    assert.equal((await pages(id))[0].status, 'robots_unavailable');
+    const entry = (await events(id))
+      .filter((event) => event.type === 'robots_checked')
+      .at(-1);
+    assert.equal(entry.level, 'error');
+    assert.equal(entry.status, 'robots_unavailable');
+    assert.equal(entry.httpStatus, 307);
+    assert.equal(
+      entry.redirect.kind,
+      scenario === 'external' ? 'external' : 'invalid',
+    );
+    if (scenario !== 'external')
+      assert.equal(
+        entry.redirect.reason,
+        scenario === 'loop' ? 'redirect_loop' : 'redirect_limit',
+      );
+  }
+});
+
+test('a page redirect checks target robots and shares pause and throttling with the original site', async () => {
+  const target = 'https://www.example.com';
+  let deny = true;
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response(
+        url.origin === target && deny ? 'User-agent: *\nDisallow: /\n' : '',
+        { status: 200 },
+      );
+    if (url.origin === origin)
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${target}/` },
+      });
+    return new Response('Slow down', { status: 429 });
+  };
+  const denied = await create();
+  await start(denied);
+  await drain();
+  assert.equal(
+    requests.some((request) => request.url === `${target}/`),
+    false,
+  );
+  assert.equal(
+    (await pages(denied)).find((page) => page.sourceUrl === `${target}/`)
+      .status,
+    'robots_denied',
+  );
+  deny = false;
+  const throttled = await create();
+  await start(throttled);
+  await next();
+  await next();
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), throttled)
+    .run();
+  const before = requests.length;
+  await drain();
+  assert.equal(
+    requests.length,
+    before,
+    'Pausing the owner stops pending alias pages and robots',
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), throttled)
+    .run();
+  await start(throttled);
+  await drain();
+  assert.equal(JSON.parse((await scan(throttled)).sites_json)[0].paused, true);
+  assert.equal(
+    (await events(throttled)).find((event) => event.type === 'site_throttled')
+      .origin,
+    origin,
+  );
+});
+
+test('preview variant redirects share the ten-URL cap and never expand HTML links', async () => {
+  const partner = 'http://partner.org';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.origin === origin) return html([`${partner}/0`]);
+    const index = Number(url.pathname.slice(1));
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: `${index % 2 ? partner : 'https://www.partner.org'}/${index + 1}`,
+      },
+    });
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  const previews = (await pages(id)).filter(
+    (page) => page.crawlMode === 'preview',
+  );
+  assert.equal(previews.length, 10);
+  assert.ok(
+    previews.every(
+      (page) => (page.siteOrigin ?? new URL(page.sourceUrl).origin) === partner,
+    ),
+  );
+  assert.equal((await scan(id)).status, 'completed');
+  const before = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, before);
+});
+
+test('an observed redirect joins an already queued preview to its full site without freeing preview slots', async () => {
+  const alias = 'https://www.example.com';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (request.url === `${origin}/`)
+      return html(['/redirect', `${alias}/landing`]);
+    if (url.pathname === '/redirect')
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${alias}/landing` },
+      });
+    if (url.pathname === '/landing') return html(['/internal']);
+    return html();
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === `${alias}/internal`)
+      .siteOrigin,
+    origin,
+  );
+  assert.equal(
+    (await pages(id)).some((page) => page.crawlMode === 'preview'),
+    false,
+  );
+  const reserved = await db
+    .prepare(
+      'SELECT origin, is_preview FROM crawl_frontier WHERE scan_id = ? AND url = ?',
+    )
+    .bind(id, `${alias}/landing`)
+    .first();
+  assert.deepEqual(reserved, { origin, is_preview: 1 });
+});
+
+test('joining a throttled preview to its full site preserves the pause until the user resumes it', async () => {
+  const alias = 'https://www.example.com';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (request.url === `${origin}/`)
+      return html(['/redirect', `${alias}/rate`, `${alias}/next`]);
+    if (url.pathname === '/redirect')
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${alias}/next` },
+      });
+    if (url.pathname === '/rate')
+      return new Response('Slow down', { status: 429 });
+    return html();
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), id)
+    .run();
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === `${alias}/rate`)
+      .httpStatus,
+    429,
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.some((request) => request.url === `${alias}/next`),
+    false,
+  );
+  assert.equal(JSON.parse((await scan(id)).sites_json)[0].paused, true);
+  assert.ok(
+    (await events(id)).some(
+      (event) => event.type === 'site_throttled' && event.origin === origin,
+    ),
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.filter((request) => request.url === `${alias}/next`).length,
+    1,
+  );
+});
+
+test('a redirect rejected by the storage budget cannot transfer ownership without a saved result', async () => {
+  const alias = 'https://www.example.com';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.pathname === '/') return html(['/redirect', `${alias}/target`]);
+    return new Response(null, {
+      status: 301,
+      headers: { Location: `${alias}/target` },
+    });
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  await db
+    .prepare('UPDATE page_results SET result_bytes = ? WHERE scan_id = ?')
+    .bind(4 * 1024 * 1024, id)
+    .run();
+  await drain();
+  assert.equal((await scan(id)).limit_reason, 'scan_storage_limit');
+  assert.equal((await pages(id)).length, 1);
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT origin FROM crawl_frontier WHERE scan_id = ? AND url = ?',
+        )
+        .bind(id, `${alias}/target`)
+        .first()
+    ).origin,
+    alias,
+  );
+  assert.equal(
+    (await events(id)).some((event) => event.redirect),
+    false,
+  );
+});
+
+test('robots redirects survive pause checkpoints and cannot exceed the daily request budget', async () => {
+  const target = `${origin}/policy`;
+  respond = (request) =>
+    request.url === `${origin}/robots.txt`
+      ? new Response(null, { status: 301, headers: { Location: target } })
+      : request.url === target
+        ? new Response('User-agent: *\nAllow: /\n')
+        : html();
+  const id = await create();
+  await start(id);
+  await next();
+  await db
+    .prepare(
+      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_lease_token = NULL WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  pending.length = 0;
+  await start(id);
+  await drain();
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [`${origin}/robots.txt`, target, `${origin}/`],
+  );
+  const limited = await create();
+  await db.prepare('UPDATE crawl_daily_budget SET request_count = 9999').run();
+  const before = requests.length;
+  await start(limited);
+  await drain();
+  assert.equal(requests.length, before + 1);
+  assert.equal((await scan(limited)).limit_reason, 'daily_limit');
+  assert.equal(
+    (await events(limited)).filter((event) => event.redirect).length,
+    1,
+  );
+});
+
+test('joining an already completed preview expands its saved links without fetching it again', async () => {
+  const alias = 'https://www.example.com';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (request.url === `${origin}/`)
+      return html(['/redirect', `${alias}/landing`]);
+    if (url.pathname === '/redirect')
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${alias}/landing` },
+      });
+    if (url.pathname === '/landing')
+      return html(['/internal', 'https://third.org/reference']);
+    return html();
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), id)
+    .run();
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === `${alias}/landing`)
+      .crawlMode,
+    'preview',
+  );
+  assert.equal(
+    requests.some((request) => request.url === `${alias}/internal`),
+    false,
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.filter((request) => request.url === `${alias}/landing`).length,
+    1,
+  );
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === `${alias}/internal`)
+      .siteOrigin,
+    origin,
+  );
+  assert.equal(
+    (await pages(id)).find(
+      (page) => page.sourceUrl === 'https://third.org/reference',
+    ).crawlMode,
+    'preview',
+  );
+});
+
+test('joining large saved previews bounds D1 URL parameters and preserves reserved slots', async () => {
+  const alias = 'https://www.example.com';
+  const id = await create();
+  let aggregateBytes = 0;
+  for (let index = 0; index < 10; index++) {
+    const result = {
+      sourceUrl: `${alias}/saved-${index}`,
+      crawlMode: 'preview',
+      title: 'Saved preview',
+      observedAt: new Date().toISOString(),
+      status: 'ok',
+      httpStatus: 200,
+      links: Array.from({ length: 70 }, (_, link) => ({
+        targetUrl: `https://partner-${index}.org/${link}-${'x'.repeat(3000)}`,
+        anchor: '',
+        rel: [],
+        region: 'content',
+        occurrences: 1,
+      })),
+      discoveredUrls: [],
+      truncated: false,
+    };
+    const json = JSON.stringify(result);
+    assert.ok(Buffer.byteLength(json) < 256 * 1024);
+    aggregateBytes += Buffer.byteLength(json);
+    await db
+      .prepare(
+        'INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .bind(
+        id,
+        result.sourceUrl,
+        alias,
+        'fixture',
+        json,
+        Buffer.byteLength(json),
+      )
+      .run();
+  }
+  assert.ok(aggregateBytes > 2_000_000);
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : new Response(null, {
+          status: 301,
+          headers: { Location: `${alias}/saved-0` },
+        });
+  await start(id);
+  await next();
+  await next({ enforceSqlStringLimit: true });
+  assert.equal(
+    (await pages(id)).length,
+    11,
+    'Redirect and ownership transfer must commit',
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT origin FROM crawl_frontier WHERE scan_id = ? AND url = ?',
+        )
+        .bind(id, `${alias}/saved-0`)
+        .first()
+    ).origin,
+    origin,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT COUNT(*) AS count FROM crawl_frontier WHERE scan_id = ? AND is_preview = 1',
+        )
+        .bind(id)
+        .first()
+    ).count,
+    100,
+  );
+});
+
+test('manual pages on a confirmed alias share their owner pause and preserve siteOrigin without expanding on restart', async () => {
+  const alias = 'https://www.example.com';
+  const partner = 'https://partner.org/landing';
+  const target = `${alias}/manual`;
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl)
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${alias}/landing` },
+      });
+    if (url.href === `${alias}/landing`) return html([partner]);
+    if (url.href === partner) return html([target]);
+    if (url.href === target)
+      return html(['/manual-child', 'https://third.org/manual-child']);
+    assert.fail(`A manual alias page must not expand its links: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), id)
+    .run();
+  const before = requests.length;
+  assert.equal((await manual(id, target)).status, 409);
+  assert.equal(requests.length, before);
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  const response = await manual(id, target);
+  assert.equal(response.status, 200, await response.clone().text());
+  await drain();
+  const result = (await pages(id)).find((page) => page.sourceUrl === target);
+  assert.equal(result.crawlMode, 'manual');
+  assert.equal(result.siteOrigin, origin);
+  assert.equal(
+    (await events(id)).find(
+      (event) => event.type === 'page_finished' && event.url === target,
+    ).origin,
+    origin,
+  );
+  const completed = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, completed);
+  assert.deepEqual(
+    (await pages(id)).find((page) => page.sourceUrl === target),
+    result,
+  );
+});
+
+test('manual alias admission shares the thousand-page owner budget with exact-origin results and reservations', async () => {
+  const alias = 'https://www.example.com';
+  const id = await create();
+  const targets = [`${alias}/last-slot-a`, `${origin}/last-slot-b`];
+  const saved = Array.from({ length: 999 }, (_, index) => ({
+    ...savedPage(
+      index === 0
+        ? site.seedUrl
+        : `${index % 2 ? alias : origin}/saved-${index}`,
+      index === 0 ? targets : [],
+      index % 2 ? 'manual' : 'preview',
+    ),
+    ...(index % 2 ? { siteOrigin: origin } : {}),
+  }));
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'running' WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  await db
+    .prepare(
+      `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
+    SELECT ?1, json_extract(value, '$.sourceUrl'), CASE WHEN json_extract(value, '$.siteOrigin') IS NOT NULL THEN ?2 ELSE ?3 END, 'fixture', value, length(value) FROM json_each(?4)`,
+    )
+    .bind(id, alias, origin, JSON.stringify(saved))
+    .run();
+  await db
+    .prepare(
+      `INSERT INTO crawl_frontier (scan_id, url, origin, state, is_manual, is_preview)
+    SELECT scan_id, source_url, ?2, 'done', json_extract(result_json, '$.crawlMode') = 'manual', json_extract(result_json, '$.crawlMode') = 'preview'
+    FROM page_results WHERE scan_id = ?1`,
+    )
+    .bind(id, origin)
+    .run();
+  const responses = await Promise.all(targets.map((url) => manual(id, url)));
+  assert.deepEqual(
+    responses.map((response) => response.status).sort(),
+    [200, 429],
+  );
+  const accepted =
+    targets[responses.findIndex((response) => response.status === 200)];
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : request.url === accepted
+        ? html()
+        : assert.fail(
+            `The alias must not bypass the owner budget: ${request.url}`,
+          );
+  await drain();
+  assert.equal((await pages(id)).length, 1000);
+  assert.equal(
+    (
+      await manual(
+        id,
+        targets.find((url) => url !== accepted),
+      )
+    ).status,
+    429,
+  );
+});
+
+test('promoting an already completed manual alias page preserves its one-page scope', async () => {
+  const alias = 'https://www.example.com';
+  const partner = 'https://partner.org/landing';
+  const target = `${alias}/manual`;
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl) return html(['/redirect', partner]);
+    if (url.href === partner) return html([target]);
+    if (url.href === target)
+      return html(['/manual-child', 'https://third.org/manual-child']);
+    if (url.href === `${origin}/redirect`)
+      return new Response(null, { status: 301, headers: { Location: target } });
+    assert.fail(`Promotion must not expand a saved manual page: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), id)
+    .run();
+  await next();
+  await next();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === partner).crawlMode,
+    'preview',
+  );
+  assert.equal((await manual(id, target)).status, 200);
+  await drain();
+  const original = (await pages(id)).find((page) => page.sourceUrl === target);
+  assert.equal(original.crawlMode, 'manual');
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  await start(id);
+  await drain();
+  const promoted = (await pages(id)).find((page) => page.sourceUrl === target);
+  assert.equal(promoted.crawlMode, 'manual');
+  assert.deepEqual(
+    promoted,
+    original,
+    'Promotion must preserve the observed result metadata',
+  );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          'SELECT origin FROM crawl_frontier WHERE scan_id = ? AND url = ?',
+        )
+        .bind(id, target)
+        .first()
+    ).origin,
+    origin,
+  );
+  assert.equal(requests.filter((request) => request.url === target).length, 1);
+  const before = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(requests.length, before);
+});
+
+test('a manual variant redirect requires another click and gives its target the original site owner', async () => {
+  const partner = 'https://partner.org/landing';
+  const redirect = `${origin}/manual-redirect`;
+  const target = 'https://www.example.com/manual-target';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl) return html([partner]);
+    if (url.href === partner) return html([redirect]);
+    if (url.href === redirect)
+      return new Response(null, { status: 301, headers: { Location: target } });
+    if (url.href === target) return html(['/manual-child']);
+    assert.fail(
+      `A manual redirect or its target must not expand automatically: ${url.href}`,
+    );
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal((await manual(id, redirect)).status, 200);
+  await drain();
+  const redirected = (await pages(id)).find(
+    (page) => page.sourceUrl === redirect,
+  );
+  assert.equal(redirected.crawlMode, 'manual');
+  assert.deepEqual(redirected.redirect, {
+    kind: 'site_variant',
+    targetUrl: target,
+  });
+  assert.equal(
+    requests.some((request) => request.url === target),
+    false,
+  );
+  const before = requests.length;
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    before,
+    'Restart must not follow a saved manual redirect',
+  );
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([{ ...site, paused: true }]), id)
+    .run();
+  assert.equal((await manual(id, target)).status, 409);
+  await db
+    .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+    .bind(JSON.stringify([site]), id)
+    .run();
+  assert.equal((await manual(id, target)).status, 200);
+  await drain();
+  const result = (await pages(id)).find((page) => page.sourceUrl === target);
+  assert.equal(result.crawlMode, 'manual');
+  assert.equal(result.siteOrigin, origin);
+  assert.equal(requests.filter((request) => request.url === target).length, 1);
+});
+
+for (const priorManualRedirect of [false, true])
+  test(`a redirect confirmation transfers concurrently admitted manual work${priorManualRedirect ? ' through an earlier manual redirect owner' : ''}`, async () => {
+    const alias = 'https://www.example.com';
+    const partner = 'https://partner.org/landing';
+    const target = `${alias}/manual`;
+    const previousOwner = 'http://example.com';
+    const previousRedirect = `${previousOwner}/prior-manual-redirect`;
+    const arrived = Promise.withResolvers();
+    const released = Promise.withResolvers();
+    respond = async (request) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      if (url.href === site.seedUrl) return html(['/redirect', partner]);
+      if (url.href === partner) return html([target, previousRedirect]);
+      if (url.href === previousRedirect)
+        return new Response(null, {
+          status: 301,
+          headers: { Location: target },
+        });
+      if (url.href === `${origin}/redirect`) {
+        arrived.resolve();
+        await released.promise;
+        return new Response(null, {
+          status: 301,
+          headers: { Location: `${alias}/canonical` },
+        });
+      }
+      if (url.href === target) return html(['/manual-child']);
+      if (url.href === `${alias}/canonical`) return html();
+      assert.fail(`Unexpected redirect/manual race request: ${url.href}`);
+    };
+    const id = await create();
+    await start(id);
+    await next();
+    await next();
+    await db
+      .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+      .bind(JSON.stringify([{ ...site, paused: true }]), id)
+      .run();
+    await next();
+    await next();
+    if (priorManualRedirect) {
+      assert.equal((await manual(id, previousRedirect)).status, 200);
+      await next();
+      await next();
+      assert.equal(
+        (await pages(id)).find((page) => page.sourceUrl === previousRedirect)
+          .crawlMode,
+        'manual',
+      );
+      assert.equal(
+        requests.some((request) => request.url === target),
+        false,
+      );
+    }
+    await db
+      .prepare('UPDATE scans SET sites_json = ? WHERE id = ?')
+      .bind(JSON.stringify([site]), id)
+      .run();
+    const inFlight = next();
+    await arrived.promise;
+    const frontierOwner = async () =>
+      (
+        await db
+          .prepare(
+            'SELECT origin FROM crawl_frontier WHERE scan_id = ? AND url = ?',
+          )
+          .bind(id, target)
+          .first()
+      ).origin;
+    try {
+      const response = await manual(id, target);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(
+        await frontierOwner(),
+        priorManualRedirect ? previousOwner : alias,
+        'The new owner has not yet been confirmed',
+      );
+    } finally {
+      released.resolve();
+    }
+    await inFlight;
+    assert.equal(
+      await frontierOwner(),
+      origin,
+      'The redirect transaction must transfer concurrently admitted manual work',
+    );
+    await drain();
+    const result = (await pages(id)).find((page) => page.sourceUrl === target);
+    assert.equal(result.crawlMode, 'manual');
+    assert.equal(result.siteOrigin, origin);
+    assert.equal(
+      requests.filter((request) => request.url === target).length,
+      1,
+    );
+  });

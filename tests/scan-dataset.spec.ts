@@ -151,6 +151,205 @@ test('newly discovered origins preserve existing IDs, colors and initial positio
   expect(after.links[0].region).toBe('Neznámé');
 });
 
+test('groups observed HTTP and www aliases under their owner while retaining exact page URLs', () => {
+  const scan = snapshot([
+    result({
+      sourceUrl: 'https://www.alpha.cz/final',
+      siteOrigin: 'https://alpha.cz',
+      links: [
+        {
+          targetUrl: 'http://alpha.cz/inside',
+          anchor: 'Internal',
+          rel: [],
+          region: 'content',
+          occurrences: 1,
+        },
+      ],
+    }),
+    result({
+      sourceUrl: 'http://alpha.cz/next',
+      siteOrigin: 'https://alpha.cz',
+      status: 'redirect_unresolved',
+      redirect: {
+        kind: 'site_variant',
+        targetUrl: 'https://www.alpha.cz/final',
+      },
+    }),
+    result({
+      status: 'redirect_unresolved',
+      redirect: { kind: 'site_variant', targetUrl: 'http://alpha.cz/next' },
+    }),
+  ]);
+  const before = scanToDataset(snapshot());
+  const data = scanToDataset(scan);
+  expect(data.sites).toEqual(before.sites);
+  expect(
+    data.pages.find((page) => page.id === 'https://www.alpha.cz/final'),
+  ).toMatchObject({
+    siteId: 'https://alpha.cz',
+    url: 'https://www.alpha.cz/final',
+    path: '/final',
+    status: 'ok',
+  });
+  expect(
+    data.pages.find((page) => page.id === 'http://alpha.cz/inside')?.siteId,
+  ).toBe('https://alpha.cz');
+  expect(data.links).toHaveLength(0);
+});
+
+test('groups pending redirect aliases without merging another explicitly selected variant', () => {
+  const scan = snapshot([
+    result({
+      status: 'redirect_unresolved',
+      redirect: {
+        kind: 'site_variant',
+        targetUrl: 'https://www.alpha.cz/pending',
+      },
+    }),
+    result({
+      sourceUrl: 'https://beta.cz/',
+      links: [
+        {
+          targetUrl: 'https://www.alpha.cz/pending',
+          anchor: 'Target',
+          rel: [],
+          region: 'content',
+          occurrences: 1,
+        },
+      ],
+    }),
+  ]);
+  const pending = scanToDataset(scan);
+  expect(pending.sites).toHaveLength(2);
+  expect(pending.links[0].target).toMatchObject({
+    siteId: 'https://alpha.cz',
+    url: 'https://www.alpha.cz/pending',
+    status: 'known',
+  });
+  const independent = scanToDataset({
+    ...scan,
+    sites: [
+      ...scan.sites,
+      {
+        ...scan.sites[0],
+        origin: 'https://www.alpha.cz',
+        seedUrl: 'https://www.alpha.cz/',
+      },
+    ],
+    results: [
+      ...scan.results,
+      result({
+        sourceUrl: 'https://www.alpha.cz/final',
+        siteOrigin: 'https://alpha.cz',
+      }),
+    ],
+  });
+  expect(independent.sites).toHaveLength(3);
+  expect(independent.links[0].target.siteId).toBe('https://www.alpha.cz');
+  expect(independent.pages.find((page) => page.path === '/final')?.siteId).toBe(
+    'https://www.alpha.cz',
+  );
+});
+
+test('joins an earlier preview under a selected website only after its redirect confirms the alias', () => {
+  const earlier = result({
+    sourceUrl: 'https://www.alpha.cz/earlier',
+    crawlMode: 'preview',
+    links: [
+      {
+        targetUrl: 'https://beta.cz/target',
+        anchor: 'Saved',
+        rel: [],
+        region: 'content',
+        occurrences: 1,
+      },
+    ],
+  });
+  const before = scanToDataset(snapshot([earlier]));
+  expect(before.sites).toHaveLength(3);
+  const after = scanToDataset(
+    snapshot([
+      earlier,
+      result({
+        status: 'redirect_unresolved',
+        redirect: {
+          kind: 'site_variant',
+          targetUrl: 'https://www.alpha.cz/next',
+        },
+      }),
+    ]),
+  );
+  expect(after.sites).toHaveLength(2);
+  expect(after.links[0].id).toBe(before.links[0].id);
+  expect(after.links[0].source).toMatchObject({
+    siteId: 'https://alpha.cz',
+    url: earlier.sourceUrl,
+    crawlMode: 'preview',
+    status: 'ok',
+  });
+});
+
+test('counts preview redirect variants and backlinks under one logical external website', () => {
+  const found = (targetUrl: string) => ({
+    targetUrl,
+    anchor: 'Link',
+    rel: [],
+    region: 'content' as const,
+    occurrences: 1,
+  });
+  const data = scanToDataset(
+    snapshot([
+      result({
+        links: [
+          found('http://external.cz/landing'),
+          found('http://external.cz/pending'),
+          found('http://external.cz/loop'),
+        ],
+      }),
+      ...['landing', 'pending', 'loop'].map((path) =>
+        result({
+          sourceUrl: `http://external.cz/${path}`,
+          crawlMode: 'preview',
+          status: 'redirect_unresolved',
+          redirect: {
+            kind: 'site_variant',
+            targetUrl: `https://www.external.cz/${path}`,
+          },
+        }),
+      ),
+      result({
+        sourceUrl: 'https://www.external.cz/landing',
+        siteOrigin: 'http://external.cz',
+        crawlMode: 'preview',
+        links: [found('https://alpha.cz/back')],
+      }),
+      result({
+        sourceUrl: 'https://www.external.cz/loop',
+        siteOrigin: 'http://external.cz',
+        crawlMode: 'preview',
+        status: 'redirect_unresolved',
+        redirect: {
+          kind: 'site_variant',
+          targetUrl: 'http://external.cz/loop',
+        },
+      }),
+    ]),
+  );
+  expect(data.sites.map((site) => site.id)).toEqual([
+    'https://alpha.cz',
+    'https://beta.cz',
+    'http://external.cz',
+  ]);
+  expect(data.sites[2].preview).toEqual({
+    attemptedPages: 5,
+    inspectedPages: 1,
+    knownTargets: 3,
+    checkedTargets: 1,
+    failedTargets: 1,
+    backlinkCount: 1,
+  });
+});
+
 test('does not turn the internal discovery queue or non-web links into graph edges', () => {
   const data = scanToDataset(
     snapshot([
@@ -670,3 +869,106 @@ test('balances crowded live domains by default and preserves manual placement as
   await expectSiteSpacing(page);
   await expectBalancedLiveLayout(page);
 });
+
+test('keeps pending manual aliases with their owner while honoring explicitly selected variants', () => {
+  const owner = 'https://alpha.cz';
+  const alias = 'https://www.alpha.cz';
+  const scan: ScanSnapshot = {
+    ...snapshot([
+      result({
+        status: 'redirect_unresolved',
+        redirect: { kind: 'site_variant', targetUrl: `${alias}/home` },
+      }),
+      result({ sourceUrl: `${alias}/home`, siteOrigin: owner }),
+    ]),
+    pendingPages: [`${alias}/manual`],
+  };
+  scan.sites[0].paused = true;
+  const queued = scanToDataset(scan);
+  expect(
+    queued.pages.find((page) => page.url === `${alias}/manual`),
+  ).toMatchObject({
+    id: `${alias}/manual`,
+    siteId: owner,
+    status: 'known',
+    scanState: 'queued',
+    scanDisabledReason: 'Nejprve pokračuj ve skenování tohoto webu.',
+  });
+  expect(queued.sites.map((site) => site.id)).not.toContain(alias);
+  scan.sites.push({
+    ...scan.sites[0],
+    origin: alias,
+    seedUrl: `${alias}/`,
+    paused: false,
+  });
+  const separate = scanToDataset(scan);
+  expect(
+    separate.pages.find((page) => page.url === `${alias}/manual`),
+  ).toMatchObject({
+    siteId: alias,
+    scanState: 'queued',
+    scanDisabledReason: undefined,
+  });
+});
+
+for (const selectedRedirectFirst of [false, true]) {
+  test(`joins manual redirect aliases to the selected owner when its redirect is ${selectedRedirectFirst ? 'first' : 'last'}`, () => {
+    const selectedOrigin = 'http://example.com';
+    const targetOrigin = 'https://www.example.com';
+    const manualOrigin = 'https://example.com';
+    const selectedRedirect = result({
+      sourceUrl: `${selectedOrigin}/start`,
+      status: 'redirect_unresolved',
+      redirect: { kind: 'site_variant', targetUrl: `${targetOrigin}/landing` },
+    });
+    const manualRedirect = result({
+      sourceUrl: `${manualOrigin}/manual`,
+      crawlMode: 'manual',
+      status: 'redirect_unresolved',
+      redirect: { kind: 'site_variant', targetUrl: `${targetOrigin}/landing` },
+    });
+    const scan = snapshot(
+      selectedRedirectFirst
+        ? [selectedRedirect, manualRedirect]
+        : [manualRedirect, selectedRedirect],
+    );
+    scan.sites = [
+      {
+        ...scan.sites[0],
+        origin: selectedOrigin,
+        seedUrl: selectedRedirect.sourceUrl,
+        paused: true,
+      },
+    ];
+    scan.pendingPages = [`${targetOrigin}/landing`, `${manualOrigin}/pending`];
+    const data = scanToDataset(scan);
+    expect(data.sites.map((site) => site.id)).toEqual([selectedOrigin]);
+    expect(data.pages.every((page) => page.siteId === selectedOrigin)).toBe(
+      true,
+    );
+    expect(
+      data.pages.find((page) => page.url === manualRedirect.sourceUrl),
+    ).toMatchObject({ crawlMode: 'manual', siteId: selectedOrigin });
+    expect(
+      data.pages.find((page) => page.url === `${manualOrigin}/pending`),
+    ).toMatchObject({
+      scanState: 'queued',
+      scanDisabledReason: 'Nejprve pokračuj ve skenování tohoto webu.',
+    });
+
+    scan.sites.push({
+      ...scan.sites[0],
+      origin: manualOrigin,
+      seedUrl: `${manualOrigin}/`,
+    });
+    const separate = scanToDataset(scan);
+    expect(separate.sites.map((site) => site.id)).toEqual([
+      selectedOrigin,
+      manualOrigin,
+    ]);
+    expect(
+      separate.pages.find((page) => page.url === manualRedirect.sourceUrl)
+        ?.siteId,
+    ).toBe(manualOrigin);
+  });
+}

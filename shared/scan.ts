@@ -29,6 +29,7 @@ export type PageStatus =
   | 'network_error'
   | 'redirect_unresolved'
   | 'robots_denied'
+  | 'robots_unavailable'
   | 'not_html'
   | 'too_large';
 export type FoundLink = {
@@ -39,14 +40,22 @@ export type FoundLink = {
   occurrences: number;
 };
 export type ScanRedirect =
-  | { kind: 'same_origin' | 'external'; targetUrl: string }
+  | { kind: 'same_origin'; targetUrl: string }
+  | { kind: 'site_variant'; targetUrl: string }
+  | { kind: 'external'; targetUrl: string }
   | {
       kind: 'invalid';
       targetUrl?: string;
-      reason?: 'unsupported_status' | 'invalid_target';
+      reason?:
+        | 'unsupported_status'
+        | 'invalid_target'
+        | 'redirect_loop'
+        | 'redirect_limit';
     };
 export type PageResult = {
   sourceUrl: string;
+  // Server crawl owner; the actual request URL keeps its original origin.
+  siteOrigin?: string;
   crawlMode?: 'preview' | 'manual';
   title: string;
   observedAt: string;
@@ -180,4 +189,23 @@ export function normalizeLinkUrl(value: string, base: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function isSiteVariant(source: string, target: string): boolean {
+  try {
+    const left = new URL(normalizeScanUrl(source));
+    const right = new URL(normalizeScanUrl(target));
+    return (
+      left.hostname.replace(/^www\./, '') ===
+      right.hostname.replace(/^www\./, '')
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isFollowableRedirect(
+  redirect: ScanRedirect | undefined,
+): redirect is Extract<ScanRedirect, { kind: 'same_origin' | 'site_variant' }> {
+  return redirect?.kind === 'same_origin' || redirect?.kind === 'site_variant';
 }

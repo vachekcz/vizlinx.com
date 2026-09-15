@@ -76,7 +76,7 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 |---|---|
 | `scans.test.mjs` | web + runner API: vlastnictví a izolace návštěvníků, relace a retence, kvóty, párování, idempotentní upload, přidání webu, kontrola `Origin` |
 | `scan-history.test.mjs` | `runs`, `rescan`, archivace v jedné transakci, zastaralé `runId`, kapacita historie, sdílené rozpočty; zachování preview výsledků v archivu a reset kvót i HTTP 429 pro nový průchod |
-| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, redirecty, pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení |
+| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, HTTP/HTTPS/www redirecty a jejich společný rozpočet/pauza, přesměrovaný robots (kurzor, smyčky, limit, denní rozpočet), pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení, dodatečné připojení preview aliasu včetně HTTP 429 a ochrany proti zápisu bez uloženého důkazu |
 | `scan-log.test.mjs` | atomický zápis logu, dedup klíčů, ořez na 500, kaskáda při smazání mapy |
 | `fetch-result.test.mjs` | streamový limit těla, ořez výsledku na 256 KiB, klasifikace robots a HTTP odpovědí |
 
@@ -85,6 +85,8 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 **Pravidlo úrovní:** chování Workeru a SQL → `tests-api/`; chování UI pro daný stav API → Playwright s mockem; průchod celým stackem → jeden scénář ve `scripts/test-prototype.mjs`, ne nový Playwright test proti Workeru.
 
 ---
+
+Regrese robots pokrývá přesměrování podle odpovědí aitom.cz na www, povolené veřejné stránky a zakázané cesty. Chyby HTTP i nedokončené řetězce mají `robots_unavailable`; historie zachová selhání a nový běh po obnovení dostupnosti načte pravidla znovu. Prohlížečová sada rozlišuje zákaz a chybu načtení v logu a podrobnostech výsledků.
 
 ## Konvence a testovací data
 
@@ -120,4 +122,4 @@ Artefakty: `browser-test-results` (`test-results/`, vždy) a `site` (`dist/`), k
 
 ### Ruční sken a větší weby
 
-`crawler.test.mjs` ověřuje hranici 1 000 stránek, nezávislost limitů originů, ruční načtení čtvrtého webu, deduplikaci a zákaz rekurze po obnovení. `scans.test.mjs` ověřuje `/pages`, vlastnictví, známou veřejnou URL, povinný aktuální `runId` a rezervace limitu. `scan-workspace.spec.ts` pokrývá ▶ při třech úvodních webech, URL mimo limit zobrazení grafu, čekání, stahování, výsledek, chybu a archiv; `scan-dataset.spec.ts` zachování ručních výsledků a dalších známých URL.
+`crawler.test.mjs` ověřuje hranici 1 000 stránek na web, nezávislost limitů samostatně vybraných webů, ruční načtení čtvrtého webu, deduplikaci a zákaz rekurze po obnovení. `scans.test.mjs` ověřuje `/pages`, vlastnictví, známou veřejnou URL, povinný aktuální `runId` a rezervace limitu. `scan-workspace.spec.ts` pokrývá ▶ při třech úvodních webech, URL mimo limit zobrazení grafu, čekání, stahování, výsledek, chybu a archiv; `scan-dataset.spec.ts` zachování ručních výsledků a dalších známých URL.
