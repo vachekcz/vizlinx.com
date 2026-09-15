@@ -110,6 +110,12 @@ function linkCountLabel(count: number): string {
   return count === 1 ? 'odkaz' : count >= 2 && count <= 4 ? 'odkazy' : 'odkazů';
 }
 
+function formatSeconds(value: number): string {
+  const unit =
+    value === 1 ? 'sekunda' : value >= 2 && value <= 4 ? 'sekundy' : 'sekund';
+  return `${value} ${unit}`;
+}
+
 function runLinkCount(currentRun: number, selectedRun: number, total: number) {
   return Math.max(1, total - (currentRun - selectedRun) * 3);
 }
@@ -337,6 +343,11 @@ function Study({
           : 'Zpět na seznam odkazů'
     : undefined;
   const scanned = sites.filter((site) => site.scanned);
+  const scanIntervals = [
+    ...new Set(scanned.map((site) => intervals[site.id] ?? 3)),
+  ];
+  const intervalSummary =
+    scanIntervals.length === 1 ? `${scanIntervals[0]} s` : 'Různé';
   const listedSites = scanned.filter((site) =>
     `${site.domain} ${site.name}`
       .toLowerCase()
@@ -826,18 +837,44 @@ function Study({
           }}
         />
       )}
-      <details className="ux-settings">
+      <details
+        className={`ux-settings${variant === 2 ? ' ux-settings-contextual' : ''}`}
+      >
         <summary>
           <Settings2 size={15} />
           Nastavení skenu
+          {variant === 2 && (
+            <span
+              className="ux-settings-value"
+              title={
+                scanIntervals.length === 1
+                  ? 'Stejná prodleva u všech webů'
+                  : 'Weby mají různé prodlevy'
+              }
+            >
+              {intervalSummary}
+            </span>
+          )}
           <ChevronDown size={14} />
         </summary>
-        <p>Interval požadavků pro každý web</p>
+        {variant === 2 ? (
+          <>
+            <p className="ux-settings-label">Prodleva mezi načítáním stránek</p>
+            <p className="ux-settings-hint" id="ux-scan-delay-help">
+              Delší prodleva znamená pomalejší sken a menší zátěž webu.
+            </p>
+          </>
+        ) : (
+          <p>Interval požadavků pro každý web</p>
+        )}
         {scanned.map((site) => (
           <label key={site.id}>
-            {site.domain}
+            <span>{site.domain}</span>
             <select
               aria-label={`Interval ${site.domain}`}
+              aria-describedby={
+                variant === 2 ? 'ux-scan-delay-help' : undefined
+              }
               value={intervals[site.id] ?? 3}
               disabled={archived}
               onChange={(event) =>
@@ -849,7 +886,7 @@ function Study({
             >
               {[1, 3, 5, 10, 30, 60].map((value) => (
                 <option key={value} value={value}>
-                  {value} s
+                  {variant === 2 ? formatSeconds(value) : `${value} s`}
                 </option>
               ))}
             </select>

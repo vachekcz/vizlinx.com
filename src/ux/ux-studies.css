@@ -486,6 +486,43 @@
   line-height: 1.8;
   margin-top: 15px;
 }
+.ux-settings-contextual summary {
+  gap: 6px;
+}
+.ux-settings-contextual summary > svg {
+  flex-shrink: 0;
+}
+.ux-settings-value {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--raised);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.ux-settings-contextual summary > svg:last-child {
+  margin-left: 0;
+}
+.ux-settings-contextual[open] summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.ux-settings-contextual .ux-settings-label {
+  margin-bottom: 5px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.ux-settings-contextual .ux-settings-hint {
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+.ux-settings-contextual label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ux-settings-contextual select {
+  flex-shrink: 0;
+  padding-inline: 6px;
+}
 .ux-sidebar-bottom {
   margin-top: auto;
   padding-bottom: 18px;
