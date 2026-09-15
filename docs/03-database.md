@@ -2,7 +2,7 @@
 
 > Schéma D1 `vizlinx-scans`: migrace, tabulky, vztahy, indexy a retence. Provoz (binding, `db:remote` při deployi) viz [04](./04-deployment.md); kdo do tabulek zapisuje a s jakými podmínkami viz [01](./01-backend.md).
 
-**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
+**Revidováno:** 2026-09-15 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -41,6 +41,7 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 | `0005_scan_log.sql` | `scans.activity_json`, `scans.scan_log_truncated`; tabulka `scan_events` |
 | `0006_scan_history.sql` | `scans.run_id`, `run_number`, `run_created_at` (backfill z `id` a `created_at`); archiv `scan_runs`, `scan_run_pages`, `scan_run_events` |
 | `0007_landing_page_previews.sql` | `crawl_frontier.is_preview` a `crawl_robots.preview_throttled` (oba `NOT NULL DEFAULT 0`); index `crawl_frontier_preview` pro kvóty automatických kontrol externích URL |
+| `0008_manual_page_scans.sql` | `crawl_frontier.is_manual` — trvalá rezervace ručního skenu konkrétní URL |
 
 - **Lokálně:** `npm run db:local` (`wrangler d1 migrations apply DB --local`), součást `npm run dev:full`. Vypíše tabulku neaplikovaných migrací; bez TTY je aplikuje bez dotazu.
 - **Produkce:** `npm run db:remote` (`--remote`, potřebuje `CLOUDFLARE_API_TOKEN`) běží **před** `wrangler deploy` — v `npm run deploy` i v CI jobu `deploy` ([04](./04-deployment.md)). Nový Worker tedy startuje nad hotovým schématem; naopak starý Worker musí mezitím přežít nové schéma, proto jen aditivní změny.
@@ -73,7 +74,8 @@ Soubory `migrations/NNNN_nazev.sql`, číslované postupně. Zatím jen aditivn�
 - **Aktuální běh vs. archiv:** `scans` drží jen aktuální běh. `rescan` (`worker/scan-history.ts:216`) v jednom `batch` zkopíruje metadata do `scan_runs`, výsledky do `scan_run_pages`, události do `scan_run_events`, smaže živé `page_results`, `scan_events`, `crawl_frontier`, `crawl_robots` a přepíše `run_id`, `run_number`, generaci a checkpointy. Čtení snapshotu i logu bere živý i archivní zdroj v jednom `batch` (`readRunSnapshot`, `worker/scan-history.ts:98`), takže souběžná archivace nevrátí půl stavu.
 - **Historické mapy z rozšíření** mají `run_id = id` a `run_number = 1` z backfillu v `0006`; nic se nepřesouvalo.
 - **`sites_json` jsou zároveň data i pravidlo:** `maxPages`, `paused` a `intervalMs` v něm čte crawler i SQL kvóty. Serverový běh nastaví všem vybraným webům `maxPages = 100`; HTTP 429 při běžném skenu přepíše `paused: true` daného webu podmíněným `UPDATE` (`worker/crawler.ts`).
-- **Preview slot není aktuální režim originu:** `crawl_frontier.is_preview` se při povýšení webu do běžného skenu nemaže ani nenuluje. Počet všech těchto řádků, včetně `pending`, neúspěšných i `done`, vynucuje kvótu 10/100 při vložení dalších URL. Běžný sken povýšeného originu započítává stávající výsledky do vlastního limitu 100 stránek. Jeho aktuální oprávnění určuje `sites_json`, proto může pokračovat i přes starší `preview_throttled`.
+- **Preview slot není aktuální režim originu:** `crawl_frontier.is_preview` se při povýšení webu do běžného skenu nemaže ani nenuluje. Počet všech těchto řádků, včetně `pending`, neúspěšných i `done`, vynucuje kvótu 10/100 při vložení dalších URL. Běžný sken povýšeného originu započítává stávající výsledky do vlastního limitu 1 000 stránek. Jeho aktuální oprávnění určuje `sites_json`, proto může pokračovat i přes starší `preview_throttled`.
+- **Ruční stránky:** `crawl_frontier.is_manual` označuje konkrétní URL vyžádanou přes ▶ a zachovává se po obnovení. `is_preview` zůstává nezávislý, aby ruční volba nevracela dříve spotřebovaný automatický slot. Vložení rezervuje místo do celkového limitu 1 000 stránek na origin včetně uložených výsledků a dalších ručních rezervací. Výsledky a log nesou `crawlMode: 'manual'`, který zachová i archiv. `/rescan` ruční frontier vymaže s ostatním živým stavem.
 - **Obnovení a historie preview:** `/start` ponechá frontier a robots včetně slotů a omezení HTTP 429. `/rescan` je odstraní s ostatním živým stavem, takže nový průchod dostane nové kvóty automatických kontrol. Archivace kopíruje celé `result_json` a `event_json`; `crawlMode` se zachová bez nových sloupců v archivních tabulkách. Pozdější povýšení webu nepřepisuje původ dříve uložených výsledků.
 - **Stav `interrupted` v DB neexistuje** — dopočítává se při čtení z `heartbeat_at` (`control`, `worker/scan-history.ts:50`).
 - **Retence se vynucuje při čtení**, ne jen úklidem: každý dotaz na mapu má `created_at > now − 30 d` (`owned`, `worker/index.ts:177`), takže expirovaná data jsou nedostupná, i když ještě fyzicky existují.

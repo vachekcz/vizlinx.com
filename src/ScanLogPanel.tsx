@@ -66,7 +66,9 @@ function eventLabel(event: ScanLogEvent) {
           : 'Stránka zpracována';
       return event.crawlMode === 'preview'
         ? `Kontrola cílové URL · ${label}`
-        : label;
+        : event.crawlMode === 'manual'
+          ? `Ruční sken stránky · ${label}`
+          : label;
     }
     case 'scan_completed':
       return 'Známá fronta je dokončená';
@@ -119,7 +121,9 @@ export function ScanActivityStatus({
       title =
         activity.crawlMode === 'preview'
           ? 'Kontroluji cílovou stránku odkazu'
-          : 'Načítám stránku';
+          : activity.crawlMode === 'manual'
+            ? 'Skenuji vybranou stránku'
+            : 'Načítám stránku';
     else if (activity?.phase === 'waiting') {
       const next = Date.parse(activity.nextRequestAt ?? '');
       const seconds = Number.isFinite(next)

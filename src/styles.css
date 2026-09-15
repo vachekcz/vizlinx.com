@@ -2059,3 +2059,82 @@ tbody tr:hover {
     flex-basis: 36px;
   }
 }
+
+.known-pages > input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface);
+}
+.known-pages ul {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.known-pages li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.known-pages .external-url {
+  width: 100%;
+  min-width: 0;
+}
+.known-page-select {
+  text-align: left;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  min-width: 0;
+}
+.known-pages li > small {
+  color: var(--muted);
+}
+.page-scan-button {
+  font-size: 11px;
+  gap: 6px;
+}
+.known-pages-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.graph-page-scan {
+  color: var(--ink);
+  cursor: pointer;
+}
+.graph-page-scan > rect {
+  fill: var(--surface);
+  stroke: var(--line);
+}
+.graph-page-scan:hover > rect,
+.graph-page-scan:focus-visible > rect {
+  stroke: var(--ink);
+  stroke-width: 2px;
+}
+.graph-page-scan[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.inspector-site-picker {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  margin: 12px 0;
+}
+.inspector-site-picker select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--ink);
+  background: var(--surface);
+}

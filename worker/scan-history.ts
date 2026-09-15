@@ -101,7 +101,7 @@ export async function readRunSnapshot(
   runId: string | null = null,
 ): Promise<ScanSnapshot> {
   const cutoff = Date.now() - RETENTION_MS;
-  const [current, archived, pages] = await env.DB.batch<
+  const [current, archived, pages, pending] = await env.DB.batch<
     Record<string, unknown>
   >([
     env.DB.prepare(
@@ -120,6 +120,13 @@ export async function readRunSnapshot(
       JOIN scans s ON s.id = r.scan_id WHERE s.id = ?1 AND r.id = ?2 AND s.created_at > ?3
       ORDER BY source_url`,
     ).bind(scanId, runId, cutoff),
+    env.DB.prepare(
+      `SELECT f.url FROM crawl_frontier f JOIN scans s ON s.id = f.scan_id
+      WHERE s.id = ?1 AND s.created_at > ?3 AND (?2 IS NULL OR COALESCE(s.run_id, s.id) = ?2)
+        AND f.is_manual = 1 AND f.state != 'done'
+        AND NOT EXISTS (SELECT 1 FROM page_results p WHERE p.scan_id = f.scan_id AND p.source_url = f.url)
+      ORDER BY f.rowid`,
+    ).bind(scanId, runId, cutoff),
   ]);
   const activeRow = current.results[0] as ScanRow | undefined;
   const archivedRow = archived.results[0] as ArchivedRow | undefined;
@@ -135,6 +142,9 @@ export async function readRunSnapshot(
   return {
     ...metadata,
     results,
+    ...(activeRow
+      ? { pendingPages: pending.results.map((entry) => String(entry.url)) }
+      : {}),
     ...(activity ? { activity: JSON.parse(activity) as ScanActivity } : {}),
   };
 }

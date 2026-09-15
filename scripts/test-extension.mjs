@@ -634,7 +634,7 @@ try {
 
   scan.id = 'fixture-upload-page-ceiling';
   scan.status = 'waiting';
-  scan.sites[0].maxPages = 100;
+  scan.sites[0].maxPages = 1000;
   results.clear();
   uploads.length = 0;
   uploadLimitCode = 'page_limit';
@@ -646,7 +646,7 @@ try {
   await expect(ceilingQuota.locator('#status')).not.toContainText('Zvyšte');
   await ceilingQuota.reload();
   await expect(ceilingQuota.locator('#status')).toContainText(
-    'maximální limit 100 stránek',
+    'maximální limit 1000 stránek',
   );
   assert.equal(uploads.length, 1);
 

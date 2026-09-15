@@ -16,7 +16,7 @@ describe('scan history', () => {
     origin: 'https://example.com',
     seedUrl: 'https://example.com/start/',
     intervalMs: 7000,
-    maxPages: 100,
+    maxPages: 1000,
     paused: false,
   };
   const result = {

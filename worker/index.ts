@@ -8,6 +8,7 @@ import {
 import { ApiError, object, pageResult, readJson, sites } from './validation';
 import {
   consumeCrawlBatch,
+  enqueueManualPage,
   startServerScan,
   type CrawlMessage,
 } from './crawler';
@@ -295,7 +296,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   const webMatch = path.match(
-    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|start|rescan|log))?$/,
+    /^\/api\/v1\/scans\/([a-f0-9-]{36})(\/(?:pairing-ticket|sites|pages|start|rescan|log))?$/,
   );
   if (webMatch) {
     const row = await owned(request, env, webMatch[1]);
@@ -311,6 +312,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
       checkRun(row, (await readJson(request)).runId, true);
       await limitCreation(request, env, 'start');
       await rescan(env, row);
+      return json(await snapshot(env, await owned(request, env, row.id)));
+    }
+    if (webMatch[2] === '/pages' && request.method === 'POST') {
+      const body = await readJson(request);
+      checkRun(row, body.runId, true);
+      await enqueueManualPage(env, row.id, body.url, row.crawl_generation);
       return json(await snapshot(env, await owned(request, env, row.id)));
     }
     if (webMatch[2] === '/sites' && request.method === 'POST') {

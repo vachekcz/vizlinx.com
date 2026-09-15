@@ -8,12 +8,13 @@ let mf;
 let db;
 const pending = [];
 const requests = [];
+const claimGates = new Map();
 let respond = () => new Response('Not found', { status: 404 });
 const origin = 'https://example.com';
 const site = {
   origin,
   seedUrl: `${origin}/`,
-  maxPages: 100,
+  maxPages: 1000,
   intervalMs: 1000,
   paused: false,
 };
@@ -27,7 +28,7 @@ before(async () => {
   const output = await build({
     stdin: {
       resolveDir: process.cwd(),
-      contents: `import { startServerScan, consumeCrawlBatch } from './worker/crawler.ts';
+      contents: `import { startServerScan, consumeCrawlBatch, enqueueManualPage } from './worker/crawler.ts';
         export default { async fetch(request, env) {
           const input = await request.json();
           const queue = { async send(body, options) {
@@ -51,9 +52,27 @@ before(async () => {
               } };
             },
           } : env.DB;
-          const bound = { ...env, DB: database, CRAWL_QUEUE: queue, CRAWLER_ENABLED: input.enabled === false ? 'false' : 'true' };
+          const gatedDatabase = input.claimGate ? {
+            batch: (...args) => database.batch(...args),
+            prepare(sql) {
+              const statement = database.prepare(sql);
+              if (!sql.startsWith("UPDATE crawl_frontier SET state = 'attempted'")) return statement;
+              return { bind(...parameters) {
+                const bound = statement.bind(...parameters);
+                return { async first(...args) {
+                  await env.CLAIM_GATE.fetch('https://gate.invalid/' + input.claimGate);
+                  return bound.first(...args);
+                } };
+              } };
+            },
+          } : database;
+          const bound = { ...env, DB: gatedDatabase, CRAWL_QUEUE: queue, CRAWLER_ENABLED: input.enabled === false ? 'false' : 'true' };
           if (input.action === 'start') {
             try { await startServerScan(bound, input.id, input.generation); return Response.json({ ok: true, maxSqlStringBytes }); }
+            catch (error) { return Response.json({ error: error.message }, { status: error.status ?? 500 }); }
+          }
+          if (input.action === 'manual') {
+            try { await enqueueManualPage(bound, input.id, input.url, input.generation); return Response.json({ ok: true }); }
             catch (error) { return Response.json({ error: error.message }, { status: error.status ?? 500 }); }
           }
           const outcomes = [];
@@ -77,6 +96,12 @@ before(async () => {
       compatibilityFlags: ['global_fetch_strictly_public'],
       d1Databases: ['DB'],
       serviceBindings: {
+        CLAIM_GATE: async (request) => {
+          const gate = claimGates.get(new URL(request.url).pathname.slice(1));
+          gate.arrived.resolve();
+          await gate.released.promise;
+          return new Response('released');
+        },
         QUEUE_SPY: async (request) => {
           pending.push(await request.json());
           return new Response('queued');
@@ -112,6 +137,7 @@ afterEach(async () => {
       'DELETE FROM crawl_origin_gates',
     ].map((sql) => db.prepare(sql)),
   );
+  claimGates.clear();
   pending.length = 0;
   requests.length = 0;
   respond = () => new Response('Not found', { status: 404 });
@@ -146,17 +172,17 @@ async function start(id, generation) {
   const response = await call({ action: 'start', id, generation });
   assert.equal(response.status, 200, await response.clone().text());
 }
-async function next({ resetGate = true } = {}) {
+async function next({ resetGate = true, claimGate } = {}) {
   const queued = pending.shift();
   assert.ok(queued, 'A continuation must be queued');
   if (resetGate)
     await db.prepare('UPDATE crawl_origin_gates SET next_allowed_at = 0').run();
-  const response = await call({ action: 'tick', body: queued.body });
+  const response = await call({ action: 'tick', body: queued.body, claimGate });
   assert.deepEqual(await response.json(), ['ack']);
   return queued;
 }
 async function drain() {
-  for (let count = 0; pending.length && count < 1000; count++) await next();
+  for (let count = 0; pending.length && count < 5000; count++) await next();
   assert.equal(
     pending.length,
     0,
@@ -188,38 +214,38 @@ async function events(id) {
   ).results.map(({ event_json }) => JSON.parse(event_json));
 }
 
-test('a large site stops at exactly 100 pages and a restart or duplicate cannot fetch page 101', async () => {
-  respond = (request) =>
-    new URL(request.url).pathname === '/robots.txt'
-      ? new Response('', { status: 404 })
-      : html(Array.from({ length: 150 }, (_, index) => `/page-${index}`));
+test('a large site stops at exactly 1000 pages and a restart or duplicate cannot fetch page 1001', async () => {
+  respond = (request) => {
+    const path = new URL(request.url).pathname;
+    if (path === '/robots.txt') return new Response('', { status: 404 });
+    const index = path === '/' ? 0 : Number(path.slice('/page-'.length));
+    return html([`/page-${index + 1}`]);
+  };
   const id = await create();
   await start(id);
   const first = { ...pending[0].body };
   await drain();
-  assert.equal((await pages(id)).length, 100);
+  assert.equal((await pages(id)).length, 1000);
   assert.equal(
     requests.length,
-    101,
+    1001,
     'The robots request also consumes the daily budget',
   );
-  assert.equal(new Set(requests.map((request) => request.url)).size, 101);
+  assert.equal(new Set(requests.map((request) => request.url)).size, 1001);
   assert.equal((await scan(id)).status, 'limited');
   assert.equal((await scan(id)).limit_reason, 'page_limit');
   assert.equal(JSON.parse((await scan(id)).activity_json).phase, 'limited');
-  assert.equal(
-    (await events(id)).filter((event) => event.type === 'page_finished').length,
-    100,
-  );
+  assert.equal((await events(id)).length, 500);
+  assert.equal((await scan(id)).scan_log_truncated, 1);
   assert.equal((await events(id)).at(-1).type, 'scan_limited');
   await call({ action: 'tick', body: first });
   await start(id);
   await drain();
-  assert.equal(requests.length, 101, 'Completed page slots survive a restart');
+  assert.equal(requests.length, 1001, 'Completed page slots survive a restart');
   assert.equal(
     (await db.prepare('SELECT request_count FROM crawl_daily_budget').first())
       .request_count,
-    101,
+    1001,
   );
 });
 
@@ -427,7 +453,7 @@ test('external redirects are recorded but do not expand even an approved second 
   );
 });
 
-test('redirect-only sites cannot exceed the 100 request page budget', async () => {
+test('redirect-only sites cannot exceed the 1000 request page budget', async () => {
   respond = (request) => {
     const path = new URL(request.url).pathname;
     if (path === '/robots.txt') return new Response('', { status: 404 });
@@ -440,8 +466,8 @@ test('redirect-only sites cannot exceed the 100 request page budget', async () =
   const id = await create();
   await start(id);
   await drain();
-  assert.equal(requests.length, 101);
-  assert.equal((await pages(id)).length, 100);
+  assert.equal(requests.length, 1001);
+  assert.equal((await pages(id)).length, 1000);
   assert.equal((await scan(id)).limit_reason, 'page_limit');
 });
 
@@ -621,7 +647,7 @@ test('an expired run stops before network activity and its time limit survives c
   await start(id);
   await db
     .prepare('UPDATE scans SET crawl_started_at = ? WHERE id = ?')
-    .bind(Date.now() - 15 * 60_000 - 1, id)
+    .bind(Date.now() - 4 * 60 * 60_000 - 1, id)
     .run();
   await drain();
   assert.equal(requests.length, 0);
@@ -715,7 +741,9 @@ test('a full origin does not stop a second approved origin', async () => {
     new URL(request.url).pathname === '/robots.txt'
       ? new Response('', { status: 404 })
       : new URL(request.url).origin === origin
-        ? html(Array.from({ length: 110 }, (_, index) => `/page-${index}`))
+        ? html([
+            `/page-${new URL(request.url).pathname === '/' ? 1 : Number(new URL(request.url).pathname.slice('/page-'.length)) + 1}`,
+          ])
         : html(['/deep']);
   const id = await create([site, second]);
   await start(id);
@@ -724,7 +752,7 @@ test('a full origin does not stop a second approved origin', async () => {
   assert.equal(
     results.filter((result) => new URL(result.sourceUrl).origin === origin)
       .length,
-    100,
+    1000,
   );
   assert.equal(
     results.filter(
@@ -1208,6 +1236,18 @@ test('landing previews share a one-hundred-URL budget without consuming the full
     (await pages(id)).filter((page) => page.crawlMode === 'preview').length,
     100,
   );
+  const known = new Set((await pages(id)).map((page) => page.sourceUrl));
+  const manualTarget = targets.find((url) => !known.has(url));
+  assert.equal((await manual(id, manualTarget)).status, 200);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === manualTarget).crawlMode,
+    'manual',
+  );
+  assert.equal(
+    (await pages(id)).filter((page) => page.crawlMode === 'preview').length,
+    100,
+  );
 });
 
 test('landing previews retain robots crawl-delay before their first page request', async () => {
@@ -1255,7 +1295,7 @@ for (const limit of ['daily_limit', 'time_limit', 'scan_storage_limit'])
     else if (limit === 'time_limit')
       await db
         .prepare('UPDATE scans SET crawl_started_at = ? WHERE id = ?')
-        .bind(Date.now() - 15 * 60_000 - 1, id)
+        .bind(Date.now() - 4 * 60 * 60_000 - 1, id)
         .run();
     else
       await db
@@ -1536,3 +1576,509 @@ for (const lateStatus of [200, 429])
       await inFlight;
     }
   });
+
+async function manual(id, url, generation) {
+  return call({
+    action: 'manual',
+    id,
+    url,
+    generation: generation ?? (await scan(id)).crawl_generation,
+  });
+}
+
+async function savePage(id, result) {
+  const serialized = JSON.stringify(result);
+  await db
+    .prepare(
+      'INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .bind(
+      id,
+      result.sourceUrl,
+      new URL(result.sourceUrl).origin,
+      'fixture',
+      serialized,
+      new TextEncoder().encode(serialized).byteLength,
+    )
+    .run();
+}
+
+const savedPage = (sourceUrl, discoveredUrls = [], crawlMode) => ({
+  sourceUrl,
+  title: 'Saved fixture',
+  observedAt: new Date().toISOString(),
+  status: 'ok',
+  httpStatus: 200,
+  links: [],
+  discoveredUrls,
+  truncated: false,
+  ...(crawlMode ? { crawlMode } : {}),
+});
+
+test('manual pages extend a three-site map without recursively following their links, including on resume', async () => {
+  const sites = [
+    site,
+    ...['https://second.org', 'https://third.org'].map((origin) => ({
+      ...site,
+      origin,
+      seedUrl: `${origin}/`,
+    })),
+  ];
+  const landing = 'https://partner.org/landing';
+  const target = 'https://fourth.org/manual';
+  const scopedTarget = `${origin}/manual-backlink`;
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl) return html([landing]);
+    if (sites.some((site) => site.seedUrl === url.href)) return html();
+    if (url.href === landing) return html([target, scopedTarget]);
+    if ([target, scopedTarget].includes(url.href))
+      return html(['/never-follow', 'https://fifth.org/never-follow']);
+    assert.fail(`Manual page links must remain unvisited: ${url.href}`);
+  };
+  const id = await create(sites);
+  await start(id);
+  await drain();
+  for (const url of [target, scopedTarget]) {
+    const response = await manual(id, `${url}#fragment`);
+    assert.equal(response.status, 200, await response.clone().text());
+    const repeated = await manual(id, url);
+    assert.equal(repeated.status, 200, await repeated.clone().text());
+    await drain();
+    const result = (await pages(id)).find((page) => page.sourceUrl === url);
+    assert.equal(result.crawlMode, 'manual');
+    assert.equal(result.links.length, 2);
+    assert.equal(requests.filter((request) => request.url === url).length, 1);
+    assert.ok(
+      (await events(id)).some(
+        (event) =>
+          event.type === 'page_finished' &&
+          event.url === url &&
+          event.crawlMode === 'manual',
+      ),
+    );
+  }
+  assert.equal(JSON.parse((await scan(id)).sites_json).length, 3);
+  const count = requests.length;
+  assert.equal((await manual(id, target)).status, 200);
+  await start(id);
+  await drain();
+  assert.equal(
+    requests.length,
+    count,
+    'Completed manual pages must retain their one-page scope after resume',
+  );
+});
+
+test('a manual page can exceed the ten-page automatic preview cap for its origin', async () => {
+  const targets = Array.from(
+    { length: 11 },
+    (_, index) => `https://partner.org/page-${index}`,
+  );
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    return html(url.origin === origin ? targets : []);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal(
+    (await pages(id)).filter((page) => page.crawlMode === 'preview').length,
+    10,
+  );
+  const existing = new Set((await pages(id)).map((page) => page.sourceUrl));
+  const remaining = targets.find((url) => !existing.has(url));
+  const response = await manual(id, remaining);
+  assert.equal(response.status, 200, await response.clone().text());
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === remaining).crawlMode,
+    'manual',
+  );
+  assert.equal((await pages(id)).length, 12);
+});
+
+test('queued manual pages retain their scope when paused before fetching and resumed', async () => {
+  const target = `${origin}/manual`;
+  const id = await create();
+  await savePage(id, savedPage(site.seedUrl, [target], 'manual'));
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'completed' WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  assert.equal((await manual(id, target)).status, 200);
+  await db
+    .prepare(
+      "UPDATE scans SET status = 'paused', crawl_generation = crawl_generation + 1, crawl_enqueued_tick = -1 WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  await drain();
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : request.url === target
+        ? html(['/never-follow'])
+        : assert.fail(`Unexpected resumed request: ${request.url}`);
+  await start(id);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === target).crawlMode,
+    'manual',
+  );
+  assert.equal(requests.filter((request) => request.url === target).length, 1);
+});
+
+test('manual admission counts saved results from every mode and reserves the final site slot atomically', async () => {
+  const id = await create();
+  const targets = [`${origin}/last-slot-a`, `${origin}/last-slot-b`];
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'running' WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  const saved = Array.from({ length: 999 }, (_, index) =>
+    savedPage(
+      index === 0 ? site.seedUrl : `${origin}/saved-${index}`,
+      index === 0 ? targets : [],
+      index % 2 ? 'manual' : 'preview',
+    ),
+  );
+  await db
+    .prepare(
+      `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
+    SELECT ?1, json_extract(value, '$.sourceUrl'), ?2, 'fixture', value, length(value) FROM json_each(?3)`,
+    )
+    .bind(id, origin, JSON.stringify(saved))
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO crawl_frontier (scan_id, url, origin, state, is_manual, is_preview) SELECT scan_id, source_url, source_origin, 'done', json_extract(result_json, '$.crawlMode') = 'manual', json_extract(result_json, '$.crawlMode') = 'preview' FROM page_results WHERE scan_id = ?",
+    )
+    .bind(id)
+    .run();
+  const responses = await Promise.all(targets.map((url) => manual(id, url)));
+  assert.deepEqual(
+    responses.map((response) => response.status).sort(),
+    [200, 429],
+  );
+  const accepted =
+    targets[responses.findIndex((response) => response.status === 200)];
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : request.url === accepted
+        ? html()
+        : assert.fail(`The site cap must prevent this request: ${request.url}`);
+  await drain();
+  assert.equal((await pages(id)).length, 1000);
+  const rejected = targets.find((url) => url !== accepted);
+  assert.equal((await manual(id, rejected)).status, 429);
+});
+
+test('manual admission rejects unknown, private and stale URLs without fetching', async () => {
+  const id = await create();
+  const known = 'https://other.org/known';
+  await savePage(
+    id,
+    savedPage(site.seedUrl, [known, 'http://127.0.0.1/private']),
+  );
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'completed' WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  for (const url of [
+    'https://unknown.org/',
+    'http://127.0.0.1/private',
+    'https://example.com:8080/private',
+    'not a URL',
+  ]) {
+    assert.equal((await manual(id, url)).status, 400);
+  }
+  assert.equal((await manual(id, known, 999)).status, 409);
+  assert.equal(requests.length, 0);
+  assert.equal(pending.length, 0);
+});
+
+for (const reason of ['time_limit', 'scan_storage_limit', 'daily_limit']) {
+  test(`manual admission cannot bypass a ${reason}`, async () => {
+    const id = await create();
+    const known = 'https://other.org/known';
+    await savePage(id, savedPage(site.seedUrl, [known]));
+    await db
+      .prepare(
+        "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'limited', limit_reason = ? WHERE id = ?",
+      )
+      .bind(reason, id)
+      .run();
+    if (reason === 'daily_limit') {
+      await db
+        .prepare('INSERT INTO crawl_daily_budget VALUES (?, 10000)')
+        .bind(Math.floor(Date.now() / 86_400_000))
+        .run();
+    }
+    assert.equal((await manual(id, known)).status, 429);
+    assert.equal(pending.length, 0);
+    assert.equal(requests.length, 0);
+  });
+}
+
+test('manual admission preserves an in-flight automatic page and prioritizes the selected pending page', async () => {
+  const arrived = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  const target = `${origin}/z-manual`;
+  respond = async (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.pathname === '/')
+      return html(['/a-current', '/b-automatic', target]);
+    if (url.pathname === '/a-current') {
+      arrived.resolve();
+      await released.promise;
+      return html();
+    }
+    if (url.href === target) return html(['/manual-child']);
+    if (url.pathname === '/b-automatic') return html();
+    assert.fail(`Unexpected recursive manual request: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await next();
+  await next();
+  const inFlight = next();
+  await arrived.promise;
+  try {
+    const before = await scan(id);
+    assert.equal((await manual(id, `${origin}/a-current`)).status, 200);
+    const response = await manual(id, target);
+    assert.equal(response.status, 200, await response.clone().text());
+    const after = await scan(id);
+    assert.equal(after.crawl_generation, before.crawl_generation);
+    assert.equal(after.crawl_lease_token, before.crawl_lease_token);
+  } finally {
+    released.resolve();
+  }
+  await inFlight;
+  await drain();
+  assert.deepEqual(
+    requests
+      .filter((request) => !request.url.endsWith('/robots.txt'))
+      .map((request) => new URL(request.url).pathname),
+    ['/', '/a-current', '/z-manual', '/b-automatic'],
+  );
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl.endsWith('/a-current'))
+      .status,
+    'ok',
+  );
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === target).crawlMode,
+    'manual',
+  );
+});
+
+test('manual pages respect robots and cannot resume an externally throttled origin', async () => {
+  const landing = 'https://partner.org/landing';
+  const target = 'https://partner.org/manual';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('User-agent: *\nDisallow: /denied\n');
+    if (url.href === site.seedUrl) return html([landing]);
+    if (url.href === landing)
+      return html([target, '/denied', '/after-throttle']);
+    if (url.href === target) return new Response('', { status: 429 });
+    assert.fail(`Forbidden manual network request: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal((await manual(id, 'https://partner.org/denied')).status, 200);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl.endsWith('/denied')).status,
+    'robots_denied',
+  );
+  assert.equal((await manual(id, target)).status, 200);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === target).httpStatus,
+    429,
+  );
+  assert.equal(
+    (await manual(id, 'https://partner.org/after-throttle')).status,
+    429,
+  );
+});
+
+test('disabling the crawler pauses queued manual work and preserves it for resume', async () => {
+  const id = await create();
+  const target = 'https://partner.org/manual';
+  await savePage(id, savedPage(site.seedUrl, [target], 'manual'));
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'completed' WHERE id = ?",
+    )
+    .bind(id)
+    .run();
+  assert.equal(
+    (
+      await call({
+        action: 'manual',
+        id,
+        url: target,
+        generation: 0,
+        enabled: false,
+      })
+    ).status,
+    503,
+  );
+  assert.equal(pending.length, 0);
+  assert.equal((await manual(id, target)).status, 200);
+  const queued = pending.shift();
+  const response = await call({
+    action: 'tick',
+    body: queued.body,
+    enabled: false,
+  });
+  assert.deepEqual(await response.json(), ['ack']);
+  assert.equal(requests.length, 0);
+  assert.equal((await scan(id)).status, 'paused');
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : request.url === target
+        ? html()
+        : assert.fail(`Unexpected resumed request: ${request.url}`);
+  await start(id);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === target).crawlMode,
+    'manual',
+  );
+});
+
+for (const samePage of [true, false]) {
+  test(
+    `manual admission during an automatic claim ${samePage ? 'preserves the selected page mode' : 'reserves the last slot before any automatic fetch'}`,
+    { timeout: 60_000 },
+    async () => {
+      const id = await create();
+      await start(id);
+      const automatic = `${origin}/a-automatic`;
+      const target = samePage ? automatic : `${origin}/z-manual`;
+      const saved = Array.from({ length: samePage ? 1 : 999 }, (_, index) =>
+        savedPage(
+          index === 0 ? site.seedUrl : `${origin}/saved-${index}`,
+          index === 0 ? [automatic, target] : [],
+        ),
+      );
+      await db
+        .prepare(
+          `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
+      SELECT ?1, json_extract(value, '$.sourceUrl'), ?2, 'fixture', value, length(value) FROM json_each(?3)`,
+        )
+        .bind(id, origin, JSON.stringify(saved))
+        .run();
+      await db
+        .prepare(
+          "INSERT OR REPLACE INTO crawl_frontier (scan_id, url, origin, state) SELECT scan_id, source_url, source_origin, 'done' FROM page_results WHERE scan_id = ?",
+        )
+        .bind(id)
+        .run();
+      await db
+        .prepare(
+          'INSERT INTO crawl_frontier (scan_id, url, origin) VALUES (?, ?, ?)',
+        )
+        .bind(id, automatic, origin)
+        .run();
+      await db
+        .prepare(
+          "UPDATE crawl_robots SET state = 'done', policy_json = ? WHERE scan_id = ?",
+        )
+        .bind(JSON.stringify({ body: '', denied: false, delayMs: 0 }), id)
+        .run();
+      const gate = {
+        arrived: Promise.withResolvers(),
+        released: Promise.withResolvers(),
+      };
+      claimGates.set('manual-race', gate);
+      respond = (request) =>
+        request.url === target
+          ? html(['/manual-child'])
+          : assert.fail(
+              `An automatic request must not consume the reserved manual slot: ${request.url}`,
+            );
+      const inFlight = next({ claimGate: 'manual-race' });
+      await gate.arrived.promise;
+      try {
+        const response = await manual(id, target);
+        assert.equal(response.status, 200, await response.clone().text());
+      } finally {
+        gate.released.resolve();
+      }
+      await inFlight;
+      await drain();
+      assert.equal((await pages(id)).length, samePage ? 2 : 1000);
+      assert.equal(
+        (await pages(id)).find((page) => page.sourceUrl === target).crawlMode,
+        'manual',
+      );
+      assert.deepEqual(
+        requests.map((request) => request.url),
+        [target],
+      );
+    },
+  );
+}
+
+test('a discovered external redirect target can be manually scanned', async () => {
+  const target = 'https://redirect-target.org/landing';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.pathname === '/robots.txt')
+      return new Response('', { status: 404 });
+    if (url.href === site.seedUrl)
+      return new Response('', { status: 302, headers: { Location: target } });
+    if (url.href === target) return html(['/do-not-follow']);
+    assert.fail(`Redirect landing links must remain unvisited: ${url.href}`);
+  };
+  const id = await create();
+  await start(id);
+  await drain();
+  assert.equal((await pages(id)).length, 1);
+  assert.equal((await manual(id, target)).status, 200);
+  await drain();
+  assert.equal(
+    (await pages(id)).find((page) => page.sourceUrl === target).crawlMode,
+    'manual',
+  );
+  assert.equal((await pages(id)).length, 2);
+});
+
+test('a configured seed can be manually scanned before any result exists', async () => {
+  const id = await create();
+  await start(id);
+  respond = (request) =>
+    new URL(request.url).pathname === '/robots.txt'
+      ? new Response('', { status: 404 })
+      : request.url === site.seedUrl
+        ? html(['/do-not-follow'])
+        : assert.fail(
+            `Manual seed links must remain unvisited: ${request.url}`,
+          );
+  assert.equal((await manual(id, site.seedUrl)).status, 200);
+  await drain();
+  assert.equal((await pages(id)).length, 1);
+  assert.equal((await pages(id))[0].crawlMode, 'manual');
+});

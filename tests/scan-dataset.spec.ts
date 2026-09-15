@@ -176,7 +176,9 @@ test('does not turn the internal discovery queue or non-web links into graph edg
     ]),
   );
   expect(data.links).toHaveLength(0);
-  expect(data.pages.some((page) => page.path === '/queued')).toBe(false);
+  expect(data.pages.find((page) => page.path === '/queued')?.status).toBe(
+    'known',
+  );
   expect(data.sites).toHaveLength(2);
 });
 
@@ -463,22 +465,32 @@ test('limits live map detail while preserving every discovered link in table and
   await expect(page.getByTestId('link-count')).toHaveText('252');
   await expect(page.locator('.site-node')).toHaveCount(12);
   await expect(
-    page.getByText('Dalších 3 odkazovaných webů najdete v tabulce.'),
+    page.getByText('Dalších 3 odkazovaných webů najdete v seznamu a tabulce.'),
   ).toBeAttached();
   const external = page.getByRole('button', {
     name: 'Doména external.cz',
     exact: true,
   });
   await expect(page.locator('.sidebar-section-label > span').last()).toHaveText(
-    '12',
+    '15',
   );
   if (testInfo.project.name === 'desktop') {
     await page.getByLabel('Hledat doménu v seznamu').fill('other-11.cz');
     await expect(
-      page.getByText('Žádná doména neodpovídá hledání.', { exact: true }),
+      page.locator('.site-list').getByRole('button', { name: /other-11.cz/ }),
     ).toBeVisible();
     await page.getByLabel('Hledat doménu v seznamu').fill('');
   }
+  await page
+    .getByLabel('Vybrat web v mapě')
+    .selectOption('https://other-11.cz');
+  await expect(page.locator('.inspector h2')).toHaveText('other-11.cz');
+  await expect(
+    page.locator('.inspector').getByRole('button', {
+      name: 'Proskenovat https://other-11.cz/',
+      exact: true,
+    }),
+  ).toBeEnabled();
   const center = await external.locator('circle').evaluate((circle) => ({
     x: Number(circle.getAttribute('cx')),
     y: Number(circle.getAttribute('cy')),
