@@ -1167,14 +1167,16 @@ function Study({
               )}
               {view !== 'map' && (
                 <section
-                  className={`ux-bottom-sheet ${view === 'history' ? 'ux-history-sheet' : ''}`}
+                  className={`ux-bottom-sheet ${view === 'history' ? 'ux-history-sheet' : 'ux-results-sheet'}`}
                 >
                   <div className="ux-sheet-heading">
-                    <span>
-                      {view === 'results'
-                        ? 'Každý odkaz, přehledně.'
-                        : 'Historie skenů'}
-                    </span>
+                    {view === 'results' ? (
+                      <h2 className="ux-results-title">
+                        Odkazy <span>{filtered.length}</span>
+                      </h2>
+                    ) : (
+                      <span>Historie skenů</span>
+                    )}
                     <button
                       className="ux-icon"
                       onClick={() => setView('map')}
@@ -1185,6 +1187,7 @@ function Study({
                   </div>
                   {view === 'results' ? (
                     <Results
+                      contextual
                       links={filtered}
                       query={query}
                       onQuery={setQuery}
@@ -1966,6 +1969,7 @@ function Detail({
 }
 
 function Results({
+  contextual = false,
   links,
   query,
   onQuery,
@@ -1974,6 +1978,7 @@ function Results({
   onExport,
   onSelect,
 }: {
+  contextual?: boolean;
   links: Link[];
   query: string;
   onQuery: (value: string) => void;
@@ -1984,13 +1989,17 @@ function Results({
 }) {
   const { pageUrl, getSite } = useGraphData();
   return (
-    <section className="ux-results">
-      <div className="ux-results-heading">
-        <div>
-          <h2>Každý odkaz má svůj zdroj.</h2>
-          <p>Prohledej URL nebo text odkazu a rozklikni souvislosti.</p>
+    <section
+      className={`ux-results${contextual ? ' ux-results-contextual' : ''}`}
+    >
+      {!contextual && (
+        <div className="ux-results-heading">
+          <div>
+            <h2>Každý odkaz má svůj zdroj.</h2>
+            <p>Prohledej URL nebo text odkazu a rozklikni souvislosti.</p>
+          </div>
         </div>
-      </div>
+      )}
       <div className="ux-table-tools">
         <label className="ux-search">
           <Search size={16} />
@@ -2029,15 +2038,44 @@ function Results({
           </thead>
           <tbody>
             {links.map((link) => (
-              <tr key={link.id}>
-                <td>
-                  <strong>{getSite(link.source.siteId).domain}</strong>
-                  <span>{link.source.path}</span>
-                </td>
-                <td>
-                  <strong>{getSite(link.target.siteId).domain}</strong>
-                  <span>{link.target.path}</span>
-                </td>
+              <tr
+                key={link.id}
+                className={contextual ? 'ux-result-row' : undefined}
+                onClick={
+                  contextual
+                    ? (event) => {
+                        if (
+                          event.target instanceof Element &&
+                          event.target.closest('a, button')
+                        )
+                          return;
+                        onSelect({ type: 'link', id: link.id });
+                      }
+                    : undefined
+                }
+              >
+                {[link.source, link.target].map((endpoint, index) => (
+                  <td key={index}>
+                    {contextual ? (
+                      <>
+                        <small className="ux-result-domain">
+                          {getSite(endpoint.siteId).domain}
+                        </small>
+                        <div className="ux-url-page">
+                          <code>{endpoint.path}</code>
+                          <span className="ux-url-actions">
+                            <ExternalLink url={pageUrl(endpoint)} />
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{getSite(endpoint.siteId).domain}</strong>
+                        <span>{endpoint.path}</span>
+                      </>
+                    )}
+                  </td>
+                ))}
                 <td>
                   {link.anchor}
                   {link.rel.includes('nofollow') && (
@@ -2051,7 +2089,11 @@ function Results({
                     onClick={() => onSelect({ type: 'link', id: link.id })}
                     aria-label={`Detail odkazu ${pageUrl(link.source)} na ${pageUrl(link.target)}`}
                   >
-                    <ArrowUpRight size={17} />
+                    {contextual ? (
+                      <ChevronRight size={17} />
+                    ) : (
+                      <ArrowUpRight size={17} />
+                    )}
                   </button>
                 </td>
               </tr>
