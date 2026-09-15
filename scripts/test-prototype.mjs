@@ -278,23 +278,32 @@ try {
 
   const id = await createScan(origins[0]);
   await expect.poll(async () => (await scanRow(id)).status).toBe('completed');
-  await expect(page.locator('.scan-stats')).toContainText('1 načtených');
-  assert.equal(
-    fetched.some((url) => url.startsWith(origins[1])),
-    false,
-    'External links must not expand the approved fetch scope',
+  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(page.locator('[data-connection]')).toHaveCount(2);
+  assert.deepEqual(
+    fetched.filter((url) => url.startsWith(origins[1])),
+    [`${origins[1]}/robots.txt`, `${origins[1]}/deep`],
+    'Only the linked landing page is checked on an external website',
   );
   const original = (await pageRows(id)).results;
   assert.equal(
     JSON.parse(original[0].result_json).links[0].targetUrl,
     `${origins[1]}/deep`,
   );
+  const originalPreview = original.find(
+    (row) => row.source_url === `${origins[1]}/deep`,
+  );
+  assert.equal(JSON.parse(originalPreview.result_json).crawlMode, 'preview');
+  assert.equal(
+    JSON.parse(originalPreview.result_json).links[0].targetUrl,
+    `${origins[0]}/`,
+  );
   await page.getByRole('button', { name: 'Průběh skenu', exact: true }).click();
   const logPanel = page.getByRole('dialog', { name: 'Průběh skenu' });
   const logRows = logPanel
     .getByRole('region', { name: 'Záznamy skenu' })
     .locator('li');
-  await expect(logRows).toHaveCount(4);
+  await expect(logRows).toHaveCount(6);
   await expect(logRows.nth(0)).toContainText('Spuštěn sken');
   await expect(logRows.nth(1)).toContainText(
     'Zkontrolována pravidla robots.txt',
@@ -304,11 +313,12 @@ try {
   await expect(logRows.nth(2)).toContainText('HTTP 200');
   await expect(logRows.nth(2)).toContainText('1 odkazů');
   await expect(logRows.nth(2)).toContainText(`${origins[0]}/`);
-  await expect(logRows.nth(3)).toContainText('Známá fronta je dokončená');
+  await expect(logRows.nth(4)).toContainText(`${origins[1]}/deep`);
+  await expect(logRows.last()).toContainText('Známá fronta je dokončená');
   await logPanel.getByRole('button', { name: 'Zavřít průběh skenu' }).click();
   await addSite(origins[1]);
   assert.equal(
-    fetched.some((url) => url.startsWith(origins[1])),
+    fetched.includes(`${origins[1]}/`),
     false,
     'Adding a website waits for the explicit resume action',
   );
@@ -324,13 +334,14 @@ try {
   await expect(
     page.getByRole('button', { name: 'Doména b.vizlinx.com', exact: true }),
   ).toBeVisible();
-  assert.ok(
-    fetched.includes(`${origins[1]}/deep`),
-    'A discovered deep link is scanned after approving its origin',
+  assert.equal(
+    fetched.filter((url) => url === `${origins[1]}/deep`).length,
+    1,
+    'Promoting a website reuses its previously fetched landing page',
   );
   assert.deepEqual(
-    (await pageRows(id)).results.filter(
-      (row) => row.source_url === `${origins[0]}/`,
+    (await pageRows(id)).results.filter((row) =>
+      original.some((saved) => saved.source_url === row.source_url),
     ),
     original,
   );
@@ -498,7 +509,7 @@ try {
   await expect
     .poll(async () => (await scanRow(historyId)).status)
     .toBe('completed');
-  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   const readApi = async (path) => {
     const response = await context.request.get(
       `${appOrigin}/api/v1/scans/${historyId}${path}`,
@@ -530,7 +541,7 @@ try {
     .getByLabel('Historie skenů', { exact: true })
     .selectOption(oldRun.runId);
   await expect(page).toHaveURL(new RegExp(`&run=${oldRun.runId}$`));
-  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   await expect(
     page.getByRole('button', { name: 'Skenovat znovu', exact: true }),
   ).toHaveCount(0);
@@ -538,7 +549,7 @@ try {
   await expect(logRows).toHaveCount(oldLog.events.length);
   await expect(logPanel).toContainText(`${origins[0]}/history-old`);
   await page.reload();
-  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   const archivedRun = await readApi(`/runs/${oldRun.runId}`);
   assert.equal(archivedRun.archived, true);
   assert.deepEqual(archivedRun.results, oldRun.results);
@@ -551,7 +562,7 @@ try {
     .getByRole('button', { name: 'Zpět na aktuální sken', exact: true })
     .click();
   await expect(page).toHaveURL(new RegExp(`\\?id=${historyId}$`));
-  await expect(page.locator('.scan-stats')).toContainText('2 načtených');
+  await expect(page.locator('.scan-stats')).toContainText('3 načtených');
   const finalRun = await readApi('');
   assert.equal(
     finalRun.results.find((result) => result.sourceUrl.endsWith('/history-new'))
@@ -575,7 +586,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/Queues/D1; parsed links in graph/table; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching; live rescan of the same map with immutable historical results and logs.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; automatic landing preview with backlinks in graph/table; promotion reuses preview evidence; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching; live rescan of the same map with immutable historical results and logs.',
   );
 } finally {
   releaseSlowPage?.();

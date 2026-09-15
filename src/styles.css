@@ -1004,6 +1004,16 @@ h1 > span {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
+
+.site-preview {
+  margin: 16px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.site-preview > p {
+  margin: 8px 0;
+}
 .inspector-stats > div {
   display: grid;
   grid-template-columns: 1fr auto;

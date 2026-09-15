@@ -49,16 +49,25 @@ function eventLabel(event: ScanLogEvent) {
     case 'site_added':
       return 'Přidán web do mapy';
     case 'site_throttled':
-      return 'Web pozastaven po HTTP 429 – pokračování povol v detailu webu';
+      return event.crawlMode === 'preview'
+        ? 'Kontrola cílového webu pozastavena po HTTP 429'
+        : 'Web pozastaven po HTTP 429 – pokračování povol v detailu webu';
     case 'settings_changed':
       return 'Změněno nastavení skenu';
     case 'robots_checked':
       return event.status === 'robots_denied'
         ? 'Robots.txt nepovoluje skenování'
         : 'Zkontrolována pravidla robots.txt';
-    case 'page_finished':
-      if (event.redirect) return redirectLabel(event.redirect);
-      return event.status ? pageLabels[event.status] : 'Stránka zpracována';
+    case 'page_finished': {
+      const label = event.redirect
+        ? redirectLabel(event.redirect)
+        : event.status
+          ? pageLabels[event.status]
+          : 'Stránka zpracována';
+      return event.crawlMode === 'preview'
+        ? `Kontrola cílové URL · ${label}`
+        : label;
+    }
     case 'scan_completed':
       return 'Známá fronta je dokončená';
     case 'scan_limited':
@@ -106,7 +115,11 @@ export function ScanActivityStatus({
   }
   if (running) {
     if (activity?.phase === 'fetching_robots') title = 'Kontroluji robots.txt';
-    else if (activity?.phase === 'fetching_page') title = 'Načítám stránku';
+    else if (activity?.phase === 'fetching_page')
+      title =
+        activity.crawlMode === 'preview'
+          ? 'Kontroluji cílovou stránku odkazu'
+          : 'Načítám stránku';
     else if (activity?.phase === 'waiting') {
       const next = Date.parse(activity.nextRequestAt ?? '');
       const seconds = Number.isFinite(next)
@@ -259,6 +272,12 @@ function LogDrawer({
       (!origin || event.origin === origin) &&
       (!errorsOnly || event.level === 'error'),
   );
+  const origins = [
+    ...new Set([
+      ...scan.sites.map((site) => site.origin),
+      ...events.flatMap((event) => (event.origin ? [event.origin] : [])),
+    ]),
+  ];
   return (
     <dialog
       ref={dialog}
@@ -294,9 +313,9 @@ function LogDrawer({
             }}
           >
             <option value="">Všechny weby</option>
-            {scan.sites.map((site) => (
-              <option key={site.origin} value={site.origin}>
-                {new URL(site.origin).host}
+            {origins.map((origin) => (
+              <option key={origin} value={origin}>
+                {new URL(origin).host}
               </option>
             ))}
           </select>

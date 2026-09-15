@@ -545,15 +545,17 @@ export default function Graph({
       (previous.compact !== compact || previous.resetKey !== resetKey);
     if (reset || previous === null) automaticLayout.current = true;
     if (focusedExpanded.length > 0) automaticLayout.current = false;
+    const shiftedSites =
+      live && !reset
+        ? layoutSites.filter((site) => {
+            const base = previous?.bases[site.id];
+            return base && (base.x !== site.x || base.y !== site.y);
+          })
+        : [];
+    const shiftedBase = shiftedSites.length > 0;
+    if (shiftedBase) automaticLayout.current = false;
     const automatic = automaticLayout.current;
     const balanced = live && automatic;
-    const shiftedBase =
-      live &&
-      !reset &&
-      layoutSites.some((site) => {
-        const base = previous?.bases[site.id];
-        return base && (base.x !== site.x || base.y !== site.y);
-      });
     const added = expanded.filter((id) => !previous?.expanded.includes(id));
     const newVisibleSite = inputSites.some(
       (site) => !previous?.visibleIds.includes(site.id),
@@ -577,9 +579,11 @@ export default function Graph({
       !shiftedBase
     )
       return;
-    const anchorId = [...added, ...focusedExpanded].find((id) =>
-      inputSites.some((site) => site.id === id),
-    );
+    const anchorId = [
+      ...added,
+      ...focusedExpanded,
+      ...shiftedSites.map((site) => site.id),
+    ].find((id) => inputSites.some((site) => site.id === id));
     setPositions((current) => {
       const offsets = reset ? {} : { ...current };
       if (shiftedBase) {
@@ -1308,7 +1312,13 @@ export default function Graph({
                         className="node-meta"
                       >
                         {live
-                          ? `${knownSitePages.filter((page) => page.status === 'ok').length} načteno · ${knownPageCount} URL`
+                          ? site.scanned
+                            ? `${knownSitePages.filter((page) => page.status === 'ok').length} načteno · ${knownPageCount} URL`
+                            : site.preview?.inspectedPages
+                              ? `Částečně · ${site.preview.inspectedPages} načteno`
+                              : site.preview?.attemptedPages
+                                ? 'Neověřeno · kontrola cíle'
+                                : 'Pouze známé URL'
                           : site.scanned
                             ? `${sitePages.length} stránek`
                             : 'neprozkoumáno'}

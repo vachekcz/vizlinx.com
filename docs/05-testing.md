@@ -2,7 +2,7 @@
 
 > Co se čím testuje, jak to spustit lokálně a které gates běží v CI. Definice pipeline je `.github/workflows/verify-and-deploy.yml`; její deploy část viz [04](./04-deployment.md).
 
-**Revidováno:** 2026-09-13 · **Platí pro:** main
+**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -72,20 +72,20 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 | `review-graph.spec.ts`, `expansion-position.spec.ts` | rozložení mapy, stabilita pozic při rozbalení, žádné překryvy (helper `graph-spacing.ts`) |
 | `review-data.spec.ts` | export CSV odpovídá inspektoru a filtrům |
 | `connection-variants.spec.ts`, `fine-connections.spec.ts` | styly spojnic a `/connections/lab` |
-| `scan-dataset.spec.ts` | adaptér `scanToDataset` a vykreslení živých dat |
-| `scan-workspace.spec.ts` | celý `/scan`: relace, založení, pauza, přidání webu, limity, log, historie běhů, chybové stavy |
+| `scan-dataset.spec.ts` | adaptér `scanToDataset` a vykreslení živých dat; pokrytí přímo odkazovaných externích cílů, zpětné vazby, neověřené cíle, přesměrování a povýšení webu |
+| `scan-workspace.spec.ts` | celý `/scan`: relace, založení, pauza, přidání webu, limity, log, historie běhů, chybové stavy; viditelnost částečných kontrol a zpětných vazeb, preview aktivita a log, „Prozkoumat web“ se zachováním výsledků a pozice, chyby přidání/startu, limit tří webů a archiv pouze ke čtení |
 
 **`node:test` + Miniflare (`tests-api/`)** — každý soubor si esbuildem sbalí potřebnou část Workeru (`stdin` s importem `./worker/...`), založí čistou D1, aplikuje `migrations/*.sql` a odchozí `fetch` směruje do in-process fixture (`outboundService`), takže nic nejde do sítě.
 
 | Soubor | Pokrývá |
 |---|---|
 | `scans.test.mjs` | web + runner API: vlastnictví a izolace návštěvníků, relace a retence, kvóty, párování, idempotentní upload, přidání webu, kontrola `Origin` |
-| `scan-history.test.mjs` | `runs`, `rescan`, archivace v jedné transakci, zastaralé `runId`, kapacita historie, sdílené rozpočty |
-| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, redirecty, pozdní odpovědi po pauze |
+| `scan-history.test.mjs` | `runs`, `rescan`, archivace v jedné transakci, zastaralé `runId`, kapacita historie, sdílené rozpočty; zachování preview výsledků v archivu a reset kvót i HTTP 429 pro nový průchod |
+| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, redirecty, pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení |
 | `scan-log.test.mjs` | atomický zápis logu, dedup klíčů, ořez na 500, kaskáda při smazání mapy |
 | `fetch-result.test.mjs` | streamový limit těla, ořez výsledku na 256 KiB, klasifikace robots a HTTP odpovědí |
 
-**Skripty (`scripts/`)** — `test-prototype.mjs` propojí skutečný `dist/` a Worker bundle (s posunem času jen v harnessu) v Miniflare s headless Chromiem: založení mapy, log, přidání webu, pauza uprostřed requestu, přesně 100 stažení, redirecty, rescan s historií. `test-extension.mjs` chrání historický extension runner (permissions, robots, intervaly, outbox, limity). `benchmark-scan.test.mjs` testuje frontu a výpočty benchmarku bez sítě.
+**Skripty (`scripts/`)** — `test-prototype.mjs` propojí skutečný `dist/` a Worker bundle (s posunem času jen v harnessu) v Miniflare s headless Chromiem: založení mapy, log, přidání webu, pauza uprostřed requestu, přesně 100 stažení, redirecty, rescan s historií. Externí kontrolu ověřuje přes A → B/deep → A: před přidáním B už mapa ukazuje oba směry; po povýšení B zůstávají původní výsledky a B/deep se znovu nestahuje. Archivní scénář zahrnuje i preview výsledek. `test-extension.mjs` chrání historický extension runner (permissions, robots, intervaly, outbox, limity). `benchmark-scan.test.mjs` testuje frontu a výpočty benchmarku bez sítě.
 
 **Pravidlo úrovní:** chování Workeru a SQL → `tests-api/`; chování UI pro daný stav API → Playwright s mockem; průchod celým stackem → jeden scénář ve `scripts/test-prototype.mjs`, ne nový Playwright test proti Workeru.
 

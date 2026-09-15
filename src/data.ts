@@ -12,6 +12,14 @@ export type Site = {
   radius: number;
   scanned: boolean;
   origin?: string;
+  preview?: {
+    attemptedPages: number;
+    inspectedPages: number;
+    knownTargets: number;
+    checkedTargets: number;
+    failedTargets: number;
+    backlinkCount: number;
+  };
 };
 
 export type Page = {
@@ -22,6 +30,7 @@ export type Page = {
   url?: string;
   status?: PageStatus | 'known';
   error?: string;
+  crawlMode?: 'preview';
 };
 export type Link = {
   id: string;

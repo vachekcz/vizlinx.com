@@ -12,7 +12,12 @@ import {
   X,
 } from 'lucide-react';
 import ExternalLink from './ExternalLink';
-import { pageStatusLabel, siteUrl, useGraphData } from './graph-data';
+import {
+  pageStatusLabel,
+  previewStatusLabel,
+  siteUrl,
+  useGraphData,
+} from './graph-data';
 import type { Link, Selection, Site } from './data';
 
 const observationFormatter = new Intl.DateTimeFormat('cs-CZ', {
@@ -52,6 +57,8 @@ type Props = {
   controlsDisabled?: boolean;
   pageLimits?: Record<string, number>;
   onPageLimitChange?: (id: string, limit: number) => void;
+  onExploreSite?: (id: string) => void;
+  exploreDisabledReason?: string;
 };
 
 function IntervalControl({
@@ -303,6 +310,8 @@ export default function Inspector({
   controlsDisabled = false,
   pageLimits = {},
   onPageLimitChange,
+  onExploreSite,
+  exploreDisabledReason,
 }: Props) {
   const { aggregateConnections, getSite, getPage, pageUrl, pages, live } =
     useGraphData();
@@ -348,7 +357,7 @@ export default function Inspector({
                 ? live
                   ? 'Povolený origin'
                   : 'Ukázkový web'
-                : 'Neprozkoumáno'}
+                : previewStatusLabel(site)}
             </span>
             <div className="external-url">
               <h2>{site.domain}</h2>
@@ -358,6 +367,58 @@ export default function Inspector({
               {site.name} <span>·</span> {site.category}
             </p>
           </div>
+          {live && !site.scanned && (
+            <div className="site-preview" data-testid="site-preview">
+              {site.preview?.attemptedPages ? (
+                <>
+                  <p>
+                    Zkontrolováno {site.preview.checkedTargets} z{' '}
+                    {site.preview.knownTargets} známých cílových URL z vybraných
+                    webů.
+                  </p>
+                  {site.preview.failedTargets > 0 && (
+                    <p className="empty-note">
+                      Nepodařilo se ověřit {site.preview.failedTargets} cílových
+                      URL. Podrobnosti jsou u jednotlivých stránek.
+                    </p>
+                  )}
+                  {site.preview.inspectedPages > 0 && (
+                    <p>
+                      {site.preview.backlinkCount > 0
+                        ? `Nalezené odkazy zpět na odkazující vybrané weby: ${site.preview.backlinkCount}.`
+                        : 'Na zkontrolovaných stránkách jsme odkaz zpět na odkazující vybrané weby nenašli.'}
+                    </p>
+                  )}
+                  <p className="empty-note">
+                    Jde pouze o kontrolu cílových stránek, nikoli celého webu.
+                  </p>
+                </>
+              ) : (
+                <p className="empty-note">
+                  Tento web známe pouze z odkazů. Jeho stránky zatím nebyly
+                  zkontrolovány.
+                </p>
+              )}
+              {onExploreSite && (
+                <>
+                  <button
+                    className="outline-button expand-button"
+                    disabled={
+                      controlsDisabled || Boolean(exploreDisabledReason)
+                    }
+                    onClick={() => onExploreSite(site.id)}
+                  >
+                    <Play size={16} />
+                    Prozkoumat web
+                  </button>
+                  <p className="empty-note">
+                    {exploreDisabledReason ??
+                      'Naváže běžným skenem webu. Mapa i dosavadní výsledky zůstanou zachované.'}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
           <div className="inspector-stats">
             <div>
               <ArrowUpRight size={16} />
@@ -492,7 +553,7 @@ export default function Inspector({
                 );
               })}
           </div>
-          {!site.scanned && (
+          {!live && !site.scanned && (
             <p className="empty-note">
               Tento web známe pouze z odkazů. Jeho stránky nebyly prozkoumány.
             </p>

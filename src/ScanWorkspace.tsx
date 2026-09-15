@@ -395,6 +395,46 @@ export default function ScanWorkspace() {
     });
   };
 
+  const exploreSite = (origin: string) => {
+    void action(async () => {
+      if (!scan || historical) return;
+      if (scan.sites.some((site) => site.origin === origin)) return;
+      if (scan.sites.length >= SCAN_LIMITS.sites)
+        throw new Error(
+          `Běžný sken může zahrnovat nejvýše ${SCAN_LIMITS.sites} weby v jedné mapě.`,
+        );
+      let site: ScanSite;
+      try {
+        [site] = parseSites(origin, 3);
+      } catch {
+        throw new Error(
+          'Tento cíl nelze skenovat. Skenování je dostupné jen pro veřejné HTTP(S) weby na standardním portu.',
+        );
+      }
+      const updated = await api<ScanSnapshot>(`/scans/${scan.id}/sites`, {
+        method: 'POST',
+        body: JSON.stringify({ site, runId: scan.runId }),
+      });
+      setScan(updated);
+      setRefreshError('');
+      try {
+        setScan(
+          await api<ScanSnapshot>(`/scans/${scan.id}/start`, {
+            method: 'POST',
+            body: JSON.stringify({ runId: updated.runId }),
+          }),
+        );
+      } catch (cause) {
+        throw new Error(
+          `Web je přidaný a výsledky zůstaly uložené. Spuštění skenu se nepodařilo; zkus „Pokračovat ve skenování“. ${cause instanceof Error ? cause.message : ''}`,
+        );
+      }
+      setNotice(
+        'Běžný sken webu běží. Dosavadní výsledky i mapa zůstaly zachované.',
+      );
+    });
+  };
+
   const rescan = () => {
     void action(async () => {
       if (!scan || historical || !scan.runId) return;
@@ -662,7 +702,10 @@ export default function ScanWorkspace() {
         <p className="scan-note">
           Čteme veřejné statické HTML bez spouštění JavaScriptu a bez tvého
           přihlášení. Sken běží na serveru i po zavření karty. Nejvýše{' '}
-          {SCAN_LIMITS.pagesPerSite} stránek na web.
+          {SCAN_LIMITS.pagesPerSite} stránek na web. Odkazované cílové stránky
+          automaticky kontrolujeme do limitu {SCAN_LIMITS.previewPagesPerSite}{' '}
+          URL na odkazovaný web a {SCAN_LIMITS.previewPagesPerScan} URL na
+          průchod mapou.
         </p>
         {(scan.status === 'limited' || scan.limitReason) && (
           <ScanLimitNotice reason={scan.limitReason} adminEmail={adminEmail} />
@@ -729,6 +772,12 @@ export default function ScanWorkspace() {
           status: statusLabels[scan.status],
           toolbar,
           controlsDisabled: busy || historical,
+          onExploreSite: exploreSite,
+          exploreDisabledReason: historical
+            ? 'Historický průchod je pouze ke čtení. Prozkoumat web lze v aktuálním průchodu.'
+            : scan.sites.length >= SCAN_LIMITS.sites
+              ? `Běžný sken může zahrnovat nejvýše ${SCAN_LIMITS.sites} weby v jedné mapě.`
+              : undefined,
           pageLimits: Object.fromEntries(
             scan.sites.map((site) => [site.origin, site.maxPages]),
           ),

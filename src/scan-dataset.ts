@@ -77,6 +77,7 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
     source.title = result.title || source.path;
     source.status = result.status;
     source.error = result.error;
+    source.crawlMode = result.crawlMode;
     if (result.status !== 'ok') continue;
     for (const found of result.links) {
       const target = addPage(found.targetUrl, result.sourceUrl);
@@ -108,6 +109,48 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
         observedAt: result.observedAt,
       });
     }
+  }
+  const resultsByUrl = new Map(
+    scan.results.map((result) => [result.sourceUrl, result]),
+  );
+  for (const site of sites.values()) {
+    if (site.scanned) continue;
+    const previewPages = [...pages.values()].filter(
+      (page) => page.siteId === site.id && page.crawlMode === 'preview',
+    );
+    const directLinks = [...links.values()].filter(
+      (link) =>
+        link.target.siteId === site.id && scoped.has(link.source.siteId),
+    );
+    const targets = new Set(directLinks.map((link) => link.target.id));
+    const sources = new Set(directLinks.map((link) => link.source.siteId));
+    let checkedTargets = 0;
+    let failedTargets = 0;
+    for (const target of targets) {
+      let result = resultsByUrl.get(target);
+      const visited = new Set<string>();
+      while (
+        result?.redirect?.kind === 'same_origin' &&
+        !visited.has(result.sourceUrl)
+      ) {
+        visited.add(result.sourceUrl);
+        result = resultsByUrl.get(result.redirect.targetUrl);
+      }
+      if (result?.status === 'ok') checkedTargets++;
+      else if (result) failedTargets++;
+    }
+    site.preview = {
+      attemptedPages: previewPages.length,
+      inspectedPages: previewPages.filter((page) => page.status === 'ok')
+        .length,
+      knownTargets: targets.size,
+      checkedTargets,
+      failedTargets,
+      backlinkCount: [...links.values()].filter(
+        (link) =>
+          link.source.siteId === site.id && sources.has(link.target.siteId),
+      ).length,
+    };
   }
   return {
     sites: [...sites.values()],

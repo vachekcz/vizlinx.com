@@ -32,6 +32,7 @@ import type { GraphDataset, Selection } from './data';
 import {
   demoDataset,
   GraphDataProvider,
+  previewStatusLabel,
   siteUrl,
   useGraphData,
 } from './graph-data';
@@ -50,6 +51,8 @@ export type LiveWorkspace = {
   controlsDisabled?: boolean;
   pageLimits?: Record<string, number>;
   onPageLimitChange?: (id: string, limit: number) => void;
+  onExploreSite?: (id: string) => void;
+  exploreDisabledReason?: string;
 };
 
 export default function App({
@@ -158,11 +161,17 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
   const elapsed = useRef<Record<string, number>>({});
   const helpRef = useRef<HTMLDialogElement>(null);
   const complete = revealedIds.length === links.length;
-  const visibleSites = sites.filter((site) => site.scanned || showExternal);
+  const visibleSites = sites.filter(
+    (site) => site.scanned || site.preview?.attemptedPages || showExternal,
+  );
   const mapSites = live
     ? [
-        ...visibleSites.filter((site) => site.scanned),
-        ...visibleSites.filter((site) => !site.scanned).slice(0, 10),
+        ...visibleSites.filter(
+          (site) => site.scanned || site.preview?.attemptedPages,
+        ),
+        ...visibleSites
+          .filter((site) => !site.scanned && !site.preview?.attemptedPages)
+          .slice(0, 10),
       ]
     : visibleSites;
   const hiddenMapSites = visibleSites.length - mapSites.length;
@@ -225,8 +234,27 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
     setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
   };
   const toggleExternal = () => {
-    if (showExternal)
-      setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
+    if (showExternal && selection) {
+      const selectedLink =
+        selection.type === 'link'
+          ? links.find((link) => link.id === selection.id)
+          : selection.type === 'connection'
+            ? connections.find((connection) => connection.id === selection.id)
+                ?.links[0]
+            : undefined;
+      const selectedSiteIds = selectedLink
+        ? [selectedLink.source.siteId, selectedLink.target.siteId]
+        : selection.type === 'site'
+          ? [selection.id]
+          : [pages.find((page) => page.id === selection.id)?.siteId];
+      if (
+        !selectedSiteIds.every((id) => {
+          const site = sites.find((site) => site.id === id);
+          return site?.scanned || site?.preview?.attemptedPages;
+        })
+      )
+        setSelection(firstSiteId ? { type: 'site', id: firstSiteId } : null);
+    }
     setShowExternal(!showExternal);
   };
   const exportCsv = () => {
@@ -386,7 +414,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   .every((link) => revealedIds.includes(link.id));
                 const state = live
                   ? !site.scanned
-                    ? 'Známý cíl odkazu'
+                    ? previewStatusLabel(site)
                     : paused
                       ? 'Pozastaveno'
                       : `${pages.filter((page) => page.siteId === site.id && page.status === 'ok').length} načteno · ${pages.filter((page) => page.siteId === site.id).length} URL`
@@ -673,8 +701,9 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
               </div>
               {live && view === 'map' && (
                 <p className="empty-note">
-                  Mapa ukazuje nejvýše 10 odkazovaných webů; detail nejvýše 60
-                  URL a 200 vazeb v jednom směru.{' '}
+                  Mapa ukazuje vybrané a kontrolované weby a nejvýše 10 dalších
+                  odkazovaných webů; detail nejvýše 60 URL a 200 vazeb v jednom
+                  směru.{' '}
                   {hiddenMapSites > 0
                     ? `${hiddenMapSites} webů je mimo mapu. `
                     : ''}
@@ -825,7 +854,9 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   <span className="footer-separator">/</span>
                   {showExternal
                     ? 'Včetně neprozkoumaných cílů'
-                    : 'Mezi vybranými weby'}
+                    : live
+                      ? 'Včetně kontrolovaných cílových webů'
+                      : 'Mezi vybranými weby'}
                 </span>
                 <span>
                   <Command size={12} /> Vytvořeno pro zvědavost
@@ -846,6 +877,8 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                 controlsDisabled={live?.controlsDisabled}
                 pageLimits={live?.pageLimits}
                 onPageLimitChange={live?.onPageLimitChange}
+                onExploreSite={live?.onExploreSite}
+                exploreDisabledReason={live?.exploreDisabledReason}
                 onIntervalChange={
                   live
                     ? live.onIntervalChange
