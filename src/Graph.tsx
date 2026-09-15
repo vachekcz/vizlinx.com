@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { KeyboardEvent, PointerEvent } from 'react';
+import type {
+  DOMAttributes,
+  KeyboardEvent,
+  PointerEvent,
+  ReactNode,
+} from 'react';
 import {
   Expand,
   Layers2,
@@ -19,6 +24,27 @@ import {
   isFineConnectionStyle,
 } from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
+import { fitAroundObstacles } from './graph-framing';
+
+export type GraphHighlightTarget = Extract<
+  Selection,
+  { type: 'site' | 'connection' | 'page' }
+>;
+export type GraphHighlightStyle = 'pulse' | 'quiet' | 'focus';
+type GraphHighlight = {
+  target: GraphHighlightTarget;
+  style: GraphHighlightStyle;
+  replayKey: number;
+};
+
+export type GraphControls = {
+  zoom: number;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitToView: () => void;
+};
 
 type Props = PageScanControl & {
   sites: Site[];
@@ -32,10 +58,49 @@ type Props = PageScanControl & {
   running: boolean;
   resetKey: number;
   connectionStyle: ConnectionStyleId;
+  highlight?: GraphHighlight;
+  previewEvents?: (target: GraphHighlightTarget) => DOMAttributes<Element>;
+  renderControls?: (controls: GraphControls) => ReactNode;
+  getFitObstacles?: () => DOMRect[];
 };
 
 type Point = { x: number; y: number };
 const PAGE_CARD = { x: -15, y: -14, width: 138, height: 29 };
+
+function HighlightPath({
+  path,
+  color,
+  style,
+}: {
+  path: string;
+  color: string;
+  style: GraphHighlightStyle;
+}) {
+  return (
+    <g
+      className="graph-highlight-path"
+      pointerEvents="none"
+      aria-hidden="true"
+      fill="none"
+      stroke={color}
+      color={color}
+    >
+      <path d={path} strokeWidth={10} opacity={0.16} />
+      <path d={path} strokeWidth={2.2} opacity={0.8} />
+      {style === 'pulse' && (
+        <path
+          className="graph-highlight-travel"
+          d={path}
+          pathLength={100}
+          strokeWidth={4}
+          strokeLinecap="round"
+          strokeDasharray="12 100"
+          strokeDashoffset={12}
+        />
+      )}
+    </g>
+  );
+}
 
 function pageLinkPath(
   from: Point,
@@ -304,6 +369,10 @@ export default function Graph({
   running,
   resetKey,
   connectionStyle,
+  highlight,
+  previewEvents,
+  renderControls,
+  getFitObstacles,
   onScanPage,
   controlsDisabled,
 }: Props) {
@@ -313,6 +382,44 @@ export default function Graph({
     pageUrl,
     live,
   } = useGraphData();
+  const previewPage =
+    highlight?.target.type === 'page'
+      ? allPages.find(
+          (page) =>
+            page.id === highlight.target.id && expanded.includes(page.siteId),
+        )
+      : undefined;
+  const previewLinks =
+    previewPage || highlight?.target.type === 'connection'
+      ? links.filter((link) =>
+          previewPage
+            ? link.source.id === previewPage.id ||
+              link.target.id === previewPage.id
+            : highlight?.target.type === 'connection' &&
+              `${link.source.siteId}:${link.target.siteId}` ===
+                highlight.target.id,
+        )
+      : [];
+  const previewLinkIds = new Set(previewLinks.map((link) => link.id));
+  const previewConnectionIds = new Set(
+    previewLinks.map((link) => `${link.source.siteId}:${link.target.siteId}`),
+  );
+  const previewSiteIds =
+    highlight?.target.type === 'site'
+      ? [highlight.target.id]
+      : [
+          ...new Set([
+            ...(previewPage ? [previewPage.siteId] : []),
+            ...previewLinks.flatMap((link) => [
+              link.source.siteId,
+              link.target.siteId,
+            ]),
+          ]),
+        ];
+  const highlightKey = highlight
+    ? `${highlight.target.type}:${highlight.target.id}:${highlight.style}:${highlight.replayKey}`
+    : undefined;
+  const dimPreview = highlight?.style === 'focus' && previewSiteIds.length > 0;
   const pageCounts = new Map<string, number>();
   const pages = live
     ? allPages.filter((page) => {
@@ -337,8 +444,11 @@ export default function Graph({
   const pagePosition = (page: Page, site: Site, compact: boolean) =>
     calculatePagePosition(page, site, compact, pages, rowGap);
   const svgRef = useRef<SVGSVGElement>(null);
+  const cameraRef = useRef<SVGGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
+  const [framedKey, setFramedKey] = useState<number | null>(null);
+  const minimumZoom = getFitObstacles ? 0.1 : 0.6;
   const [dragFrame, setDragFrame] = useState<string | null>(null);
   const dragging = dragFrame !== null;
   const [siteBounds, setSiteBounds] = useState<Record<string, SiteBounds>>({});
@@ -618,8 +728,8 @@ export default function Graph({
   }, []);
 
   useEffect(() => {
-    setCamera({ x: 0, y: 0, zoom: 1 });
-  }, [resetKey, compact]);
+    if (!getFitObstacles) setCamera({ x: 0, y: 0, zoom: 1 });
+  }, [resetKey, compact, getFitObstacles]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -634,7 +744,10 @@ export default function Graph({
       setCamera((previous) => {
         const zoom = Math.min(
           2.8,
-          Math.max(0.6, previous.zoom * Math.exp(-event.deltaY * 0.002)),
+          Math.max(
+            Math.min(minimumZoom, previous.zoom),
+            previous.zoom * Math.exp(-event.deltaY * 0.002),
+          ),
         );
         const ratio = zoom / previous.zoom;
         return {
@@ -646,12 +759,15 @@ export default function Graph({
     };
     svg.addEventListener('wheel', onWheel, { passive: false });
     return () => svg.removeEventListener('wheel', onWheel);
-  }, [centerX, centerY]);
+  }, [centerX, centerY, minimumZoom]);
 
   const zoomBy = (factor: number) =>
     setCamera((previous) => ({
       ...previous,
-      zoom: Math.min(2.8, Math.max(0.6, previous.zoom * factor)),
+      zoom: Math.min(
+        2.8,
+        Math.max(Math.min(minimumZoom, previous.zoom), previous.zoom * factor),
+      ),
     }));
   const reset = () => {
     previousLayout.current = null;
@@ -659,6 +775,115 @@ export default function Graph({
     setCamera({ x: 0, y: 0, zoom: 1 });
     onExpandedChange([]);
   };
+  const fitToView = () => {
+    const svg = svgRef.current;
+    const scene = cameraRef.current;
+    const matrix = svg?.getScreenCTM();
+    if (!svg || !scene || !matrix) return;
+    // The group's local bounds include expanded pages and links, without its camera transform.
+    const bounds = scene.getBBox();
+    const frame = svg.getBoundingClientRect();
+    if (
+      !bounds.width ||
+      !bounds.height ||
+      frame.width <= 32 ||
+      frame.height <= 32
+    )
+      return;
+    if (getFitObstacles) {
+      const scale = Math.hypot(matrix.a, matrix.b);
+      const toRect = (box: DOMRect) => ({
+        left: box.x * scale,
+        top: box.y * scale,
+        right: (box.x + box.width) * scale,
+        bottom: (box.y + box.height) * scale,
+      });
+      const nodes = Array.from(
+        scene.querySelectorAll<SVGGElement>('.site-node'),
+      ).map((node) => {
+        const box = toRect(node.getBBox());
+        const id = node
+          .querySelector('[data-drag-site]')
+          ?.getAttribute('data-drag-site');
+        const site = sites.find((item) => item.id === id);
+        if (!site) return box;
+        const extent = boundsFor(site);
+        return {
+          left: Math.min(box.left, (site.x + extent.left) * scale),
+          top: Math.min(box.top, (site.y + extent.top) * scale),
+          right: Math.max(box.right, (site.x + extent.right) * scale),
+          bottom: Math.max(box.bottom, (site.y + extent.bottom) * scale),
+        };
+      });
+      const drawing = toRect(bounds);
+      const placement = fitAroundObstacles(
+        {
+          left: Math.min(drawing.left, ...nodes.map((node) => node.left)),
+          top: Math.min(drawing.top, ...nodes.map((node) => node.top)),
+          right: Math.max(drawing.right, ...nodes.map((node) => node.right)),
+          bottom: Math.max(drawing.bottom, ...nodes.map((node) => node.bottom)),
+        },
+        nodes,
+        {
+          left: frame.left + 32,
+          top: frame.top + 32,
+          right: frame.right - 32,
+          bottom: frame.bottom - 32,
+        },
+        getFitObstacles().map((rect) => ({
+          left: rect.left - 24,
+          top: rect.top - 24,
+          right: rect.right + 24,
+          bottom: rect.bottom + 24,
+        })),
+      );
+      if (!placement) return;
+      const origin = new DOMPoint(placement.x, placement.y).matrixTransform(
+        matrix.inverse(),
+      );
+      setCamera({
+        zoom: placement.zoom,
+        x: origin.x - centerX * (1 - placement.zoom),
+        y: origin.y - centerY * (1 - placement.zoom),
+      });
+      return;
+    }
+    const zoom = Math.min(
+      2.8,
+      Math.max(
+        0.6,
+        Math.min(
+          (frame.width - 32) / Math.hypot(matrix.a, matrix.b) / bounds.width,
+          (frame.height - 32) / Math.hypot(matrix.c, matrix.d) / bounds.height,
+        ),
+      ),
+    );
+    const target = new DOMPoint(
+      frame.left + frame.width / 2,
+      frame.top + frame.height / 2,
+    ).matrixTransform(matrix.inverse());
+    setCamera({
+      zoom,
+      x: target.x - centerX - (bounds.x + bounds.width / 2 - centerX) * zoom,
+      y: target.y - centerY - (bounds.y + bounds.height / 2 - centerY) * zoom,
+    });
+  };
+  useLayoutEffect(() => {
+    if (
+      !getFitObstacles ||
+      framedKey === resetKey ||
+      !fontRevision ||
+      !sites.length
+    )
+      return;
+    // Wait for measured labels and collision layout to settle. Panel changes and
+    // manual navigation never request another automatic fit.
+    const frame = requestAnimationFrame(() => {
+      fitToView();
+      setFramedKey(resetKey);
+    });
+    return () => cancelAnimationFrame(frame);
+  });
   const pointFromEvent = (event: PointerEvent<SVGSVGElement>) => {
     const matrix = event.currentTarget.getScreenCTM();
     return matrix
@@ -741,7 +966,11 @@ export default function Graph({
       )}
       <svg
         ref={svgRef}
+        data-framing-ready={
+          getFitObstacles ? framedKey === resetKey : undefined
+        }
         className={`graph ${dragging ? 'is-dragging' : ''}`}
+        data-highlight-style={highlight?.style}
         viewBox={dragFrame ?? `${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
         aria-label="Interaktivní mapa odkazů mezi weby"
         onClickCapture={(event) => {
@@ -780,18 +1009,26 @@ export default function Graph({
           ))}
         </defs>
         <g
+          ref={cameraRef}
           transform={`translate(${centerX + camera.x} ${centerY + camera.y}) scale(${camera.zoom}) translate(${-centerX} ${-centerY})`}
           data-testid="graph-camera"
         >
           {sites.map((site) => {
             const open = isExpanded(site.id);
+            const previewed = previewSiteIds.includes(site.id);
             const selected =
               selection?.type === 'site' && selection.id === site.id;
             const radius = open
               ? pageLayout(site, compact).radius
               : site.radius;
             return (
-              <g key={site.id} aria-hidden="true" pointerEvents="none">
+              <g
+                key={site.id}
+                aria-hidden="true"
+                pointerEvents="none"
+                data-highlight-site={previewed ? site.id : undefined}
+                className={`graph-cluster ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
+              >
                 <circle
                   cx={site.x}
                   cy={site.y}
@@ -811,10 +1048,36 @@ export default function Graph({
                   fill={site.tint}
                   fillOpacity={open ? 0.87 : 0.95}
                   stroke={site.color}
-                  strokeOpacity={selected ? 0.75 : 0.23}
-                  strokeWidth={selected ? 1.6 : 1}
+                  strokeOpacity={previewed ? 1 : selected ? 0.75 : 0.23}
+                  strokeWidth={previewed ? 3.2 : selected ? 1.6 : 1}
                   strokeDasharray={site.scanned ? undefined : '5 5'}
                 />
+                {previewed && highlight && (
+                  <g key={highlightKey}>
+                    <circle
+                      className="graph-highlight-halo"
+                      cx={site.x}
+                      cy={site.y}
+                      r={radius + 4}
+                      fill="none"
+                      stroke={site.color}
+                      strokeWidth={7}
+                      opacity={0.17}
+                    />
+                    {highlight.style === 'pulse' && (
+                      <circle
+                        className="graph-highlight-pulse"
+                        cx={site.x}
+                        cy={site.y}
+                        r={radius + 3}
+                        fill="none"
+                        stroke={site.color}
+                        strokeWidth={2}
+                        style={{ transformOrigin: `${site.x}px ${site.y}px` }}
+                      />
+                    )}
+                  </g>
+                )}
               </g>
             );
           })}
@@ -838,6 +1101,7 @@ export default function Graph({
             const selected =
               selection?.type === 'connection' &&
               selection.id === connection.id;
+            const previewed = previewConnectionIds.has(connection.id);
             const related =
               selection?.type === 'site' &&
               (selection.id === source.id || selection.id === target.id);
@@ -907,7 +1171,10 @@ export default function Graph({
               <g
                 key={connection.id}
                 data-connection={connection.id}
-                className={`connection ${selected || related ? 'is-related' : ''}`}
+                className={`connection ${selected || related ? 'is-related' : ''} ${(dimPreview || previewPage) && !previewed ? 'graph-preview-muted' : ''}`}
+                data-highlight-connection={
+                  previewed ? connection.id : undefined
+                }
               >
                 {showPages ? (
                   connection.links
@@ -941,6 +1208,10 @@ export default function Graph({
                         (selection?.type === 'page' &&
                           (selection.id === link.source.id ||
                             selection.id === link.target.id));
+                      const linkPreviewed = previewLinkIds.has(link.id);
+                      const emphasized = previewPage
+                        ? linkPreviewed
+                        : active || linkPreviewed;
                       return (
                         <g
                           key={link.id}
@@ -957,15 +1228,27 @@ export default function Graph({
                             )
                           }
                           className="page-edge"
+                          data-highlight-link={
+                            linkPreviewed ? link.id : undefined
+                          }
                         >
+                          {linkPreviewed && highlight && (
+                            <HighlightPath
+                              key={highlightKey}
+                              path={path}
+                              color={source.color}
+                              style={highlight.style}
+                            />
+                          )}
                           <path
                             d={path}
                             stroke={source.color}
-                            strokeWidth={active ? 2.8 : 1.1}
+                            strokeWidth={emphasized ? 2.8 : 1.1}
                             opacity={
-                              active
+                              emphasized
                                 ? 1
-                                : selection?.type === 'page' ||
+                                : previewPage ||
+                                    selection?.type === 'page' ||
                                     selection?.type === 'link'
                                   ? 0.06
                                   : denseSite
@@ -999,6 +1282,14 @@ export default function Graph({
                       )
                     }
                   >
+                    {previewed && highlight && (
+                      <HighlightPath
+                        key={highlightKey}
+                        path={curve}
+                        color={source.color}
+                        style={highlight.style}
+                      />
+                    )}
                     <ConnectionStroke
                       variant={connectionStyle}
                       from={from}
@@ -1006,7 +1297,7 @@ export default function Graph({
                       control={control}
                       color={source.color}
                       count={connection.links.length}
-                      selected={selected || related}
+                      selected={selected || related || previewed}
                       markerId={markerId(source.id)}
                     />
                     {running && (
@@ -1034,7 +1325,11 @@ export default function Graph({
                       height="20"
                       rx="7"
                       fill="var(--surface, #fcfdf9)"
-                      stroke={selected ? source.color : 'var(--line, #e1e6dc)'}
+                      stroke={
+                        selected || previewed
+                          ? source.color
+                          : 'var(--line, #e1e6dc)'
+                      }
                     />
                     <text
                       x={label.x}
@@ -1052,6 +1347,7 @@ export default function Graph({
           })}
           {sites.map((site) => {
             const open = isExpanded(site.id);
+            const previewed = previewSiteIds.includes(site.id);
             const selected =
               selection?.type === 'site' && selection.id === site.id;
             const sitePages = pages.filter((page) => page.siteId === site.id);
@@ -1072,7 +1368,7 @@ export default function Graph({
             return (
               <g
                 key={site.id}
-                className={`site-node ${selected ? 'is-selected' : ''} ${open ? 'is-expanded' : ''}`}
+                className={`site-node ${selected ? 'is-selected' : ''} ${open ? 'is-expanded' : ''} ${dimPreview && !previewed ? 'graph-preview-muted' : ''}`}
               >
                 {!open &&
                   sitePages.slice(0, 24).map((page, index) => {
@@ -1221,12 +1517,16 @@ export default function Graph({
                     return (
                       <g key={page.id}>
                         <g
+                          {...previewEvents?.({ type: 'page', id: page.id })}
                           data-interactive="true"
                           role="button"
                           tabIndex={0}
                           aria-label={`Stránka ${site.domain}${page.path}`}
                           aria-pressed={active}
                           className="page-node"
+                          data-highlight-page={
+                            previewPage?.id === page.id ? page.id : undefined
+                          }
                           data-page-status={page.status}
                           onClick={action}
                           onKeyDown={(event) => activate(event, action)}
@@ -1316,44 +1616,57 @@ export default function Graph({
             <i className="legend-line" /> Směr odkazu
           </span>
         </div>
-        <div className="map-controls">
-          <button
-            className="icon-button"
-            aria-label="Oddálit mapu"
-            onClick={() => zoomBy(1 / 1.2)}
-            disabled={camera.zoom <= 0.6}
-          >
-            <Minus size={16} />
-          </button>
-          <output aria-label="Přiblížení mapy">
-            {Math.round(camera.zoom * 100)} %
-          </output>
-          <button
-            className="icon-button"
-            aria-label="Přiblížit mapu"
-            onClick={() => zoomBy(1.2)}
-            disabled={camera.zoom >= 2.8}
-          >
-            <Plus size={16} />
-          </button>
-          <span className="control-divider" />
-          <button
-            className="icon-button"
-            aria-label="Zobrazit celou mapu"
-            onClick={reset}
-          >
-            <Expand size={16} />
-          </button>
-        </div>
+        {renderControls ? (
+          renderControls({
+            zoom: camera.zoom,
+            canZoomIn: camera.zoom < 2.8,
+            canZoomOut: camera.zoom > minimumZoom,
+            zoomIn: () => zoomBy(1.2),
+            zoomOut: () => zoomBy(1 / 1.2),
+            fitToView,
+          })
+        ) : (
+          <div className="map-controls">
+            <button
+              className="icon-button"
+              aria-label="Oddálit mapu"
+              onClick={() => zoomBy(1 / 1.2)}
+              disabled={camera.zoom <= 0.6}
+            >
+              <Minus size={16} />
+            </button>
+            <output aria-label="Přiblížení mapy">
+              {Math.round(camera.zoom * 100)} %
+            </output>
+            <button
+              className="icon-button"
+              aria-label="Přiblížit mapu"
+              onClick={() => zoomBy(1.2)}
+              disabled={camera.zoom >= 2.8}
+            >
+              <Plus size={16} />
+            </button>
+            <span className="control-divider" />
+            <button
+              className="icon-button"
+              aria-label="Zobrazit celou mapu"
+              onClick={reset}
+            >
+              <Expand size={16} />
+            </button>
+          </div>
+        )}
       </div>
       <div className="map-hint">
         <MousePointer2 size={12} />{' '}
         {denseSite
           ? `Zobrazeny vazby ${denseSite.domain}. Kliknutím vyberete stránku.`
           : `Táhněte domény od sebe. Síla vazeb: ${isFineConnectionStyle(connectionStyle) ? '1–100+' : '1–5+'}. Přesné počty v detailu.`}{' '}
-        <button onClick={reset} aria-label="Obnovit pohled">
-          <RotateCcw size={12} />
-        </button>
+        {!renderControls && (
+          <button onClick={reset} aria-label="Obnovit pohled">
+            <RotateCcw size={12} />
+          </button>
+        )}
       </div>
     </div>
   );

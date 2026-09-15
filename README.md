@@ -16,6 +16,8 @@ Grafické demo doplňuje **funkční serverový skener na `/scan`**: zadání we
 
 **UI galerie:** [vachekcz.github.io/vizlinx.com](https://vachekcz.github.io/vizlinx.com/) — noční screenshoty všech stavů aplikace na desktopu i mobilu, generuje workflow Nightly Screenshots.
 
+**UX studie:** po spuštění `npm run dev` otevřete `/ux`. Galerie nabízí tři kompletní interaktivní návrhy: pracovní plochu (`/ux/1`), mapu s plovoucím ovládáním (`/ux/2`) a analytický přehled (`/ux/3`). Zachovávají Signal/Midnight, ukazují i založení mapy, výsledky, detail, log a historii. Jde o ukázková data bez skutečného skenování; současná aplikace se nemění. [Rozsah a implementace studií](docs/02-frontend.md#routing-a-stav).
+
 **Vzhled:** Signal pro denní režim, Midnight pro noční. Přepínač měsíce/slunce v hlavičce ukládá ruční volbu v prohlížeči; bez ní vzhled sleduje nastavení systému. [Denní demo](https://vizlinx.com/?theme=signal), [noční demo s 20 stránkami](https://vizlinx.com/?theme=midnight&detail=index). [Původních pět mockupů](https://vizlinx.com/palettes/) zůstává jako archiv návrhů.
 
 **Vybrané spojnice: Hedvábí (Silk).** Směr ukazuje větší plný hrot v barvě zdroje s kontrastním obrysem; stejný hrot mají i vazby mezi rozbalenými stránkami. Výchozí mapa používá stejně tenké čáry pro 1–5 vazeb a postupně rostoucí svazky pro `5+`, `10+`, `25+`, `50+` a `100+`. [Ukázka silných vazeb](https://vizlinx.com/?density=scale) obsahuje 230 unikátních dvojic stránek, nejsilnější propojení má 120 vazeb. [Samostatná studie spojnic](https://vizlinx.com/connections/lab/) a [archiv osmi návrhů](https://vizlinx.com/connections/) zůstávají dostupné; výběr experimentálních stylů se zobrazí jen při otevření konkrétního návrhu z archivu.
