@@ -37,7 +37,7 @@ before(async () => {
   ));
 });
 
-test('redirect metadata resolves paths but never follows changed origins or unsafe targets inside fetch', async (t) => {
+test('redirect metadata resolves paths and public site variants without fetching the target', async (t) => {
   const cases = [
     ['../final?q=1#section', 'same_origin', 'https://example.com/final?q=1'],
     ['https://example.com/next', 'same_origin', 'https://example.com/next'],
@@ -47,13 +47,35 @@ test('redirect metadata resolves paths but never follows changed origins or unsa
       'external',
       'https://sub.example.com/landing',
     ],
-    ['http://example.com/landing', 'external', 'http://example.com/landing'],
+    [
+      'http://example.com/landing',
+      'site_variant',
+      'http://example.com/landing',
+    ],
+    [
+      'https://www.example.com/landing',
+      'site_variant',
+      'https://www.example.com/landing',
+    ],
+    [
+      'http://www.example.com/landing',
+      'site_variant',
+      'http://www.example.com/landing',
+    ],
+    [
+      'https://www.www.example.com/landing',
+      'external',
+      'https://www.www.example.com/landing',
+    ],
     [
       'https://example.com:8443/landing',
-      'external',
+      'invalid',
       'https://example.com:8443/landing',
     ],
-    ['http://127.0.0.1/private', 'external', 'http://127.0.0.1/private'],
+    ['http://127.0.0.1/private', 'invalid', 'http://127.0.0.1/private'],
+    ['http://[::1]/private', 'invalid', 'http://[::1]/private'],
+    ['http://service.internal/', 'invalid', 'http://service.internal/'],
+    ['http://localhost/', 'invalid', 'http://localhost/'],
     ['javascript:alert(1)', 'invalid', undefined],
     ['https://user:secret@other.org/', 'invalid', undefined],
     ['', 'invalid', undefined],
@@ -75,10 +97,41 @@ test('redirect metadata resolves paths but never follows changed origins or unsa
     );
     assert.equal(calls, 1);
     assert.equal(result.status, 'redirect_unresolved');
+    assert.equal(result.httpStatus, 302);
     assert.equal(result.redirect.kind, kind);
     assert.equal(result.redirect.targetUrl, targetUrl);
+    if (kind === 'invalid')
+      assert.equal(result.redirect.reason, 'invalid_target');
+    if (kind === 'same_origin' || kind === 'site_variant')
+      assert.equal(result.error, undefined);
     assert.deepEqual(result.links, []);
     assert.deepEqual(result.discoveredUrls, []);
+    mock.mock.restore();
+  }
+});
+
+test('all supported redirect statuses allow HTTPS upgrades and removal of www', async (t) => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const calls = [];
+    const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+      calls.push(url);
+      assert.equal(options.redirect, 'manual');
+      return new Response('', {
+        status,
+        headers: { Location: 'https://example.com/final' },
+      });
+    });
+    const result = await fetchServerPage(
+      'http://www.example.com/',
+      'http://www.example.com',
+    );
+    assert.deepEqual(calls, ['http://www.example.com/']);
+    assert.equal(result.httpStatus, status);
+    assert.deepEqual(result.redirect, {
+      kind: 'site_variant',
+      targetUrl: 'https://example.com/final',
+    });
+    assert.equal(result.error, undefined);
     mock.mock.restore();
   }
 });
@@ -111,6 +164,187 @@ test('unsupported redirect statuses preserve the target with an accurate reason'
   }
 });
 
+test('robots exposes each redirect status and target without following it', async (t) => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const calls = [];
+    const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+      calls.push(url);
+      assert.equal(options.redirect, 'manual');
+      return new Response('', {
+        status,
+        headers: { Location: 'https://www.example.com/policy/robots.txt' },
+      });
+    });
+    assert.deepEqual(await fetchServerRobots('http://example.com'), {
+      body: '',
+      denied: true,
+      delayMs: 0,
+      httpStatus: status,
+      redirect: {
+        kind: 'site_variant',
+        targetUrl: 'https://www.example.com/policy/robots.txt',
+      },
+    });
+    assert.deepEqual(calls, ['http://example.com/robots.txt']);
+    mock.mock.restore();
+  }
+});
+
+test('robots resolves cursor-relative redirects within the original site scope', async (t) => {
+  const cases = [
+    ['../rules.txt', 'same_origin', 'https://www.example.com/rules.txt'],
+    [
+      'http://example.com/rules.txt',
+      'site_variant',
+      'http://example.com/rules.txt',
+    ],
+    [
+      'https://other.org/robots.txt',
+      'external',
+      'https://other.org/robots.txt',
+    ],
+    [
+      'https://www.www.example.com/robots.txt',
+      'external',
+      'https://www.www.example.com/robots.txt',
+    ],
+    [
+      'https://sub.example.com/robots.txt',
+      'external',
+      'https://sub.example.com/robots.txt',
+    ],
+    ['http://127.0.0.1/robots.txt', 'invalid', 'http://127.0.0.1/robots.txt'],
+    [
+      'https://example.com:8443/robots.txt',
+      'invalid',
+      'https://example.com:8443/robots.txt',
+    ],
+    [
+      'https://service.local/robots.txt',
+      'invalid',
+      'https://service.local/robots.txt',
+    ],
+    ['https://user:secret@example.com/robots.txt', 'invalid', undefined],
+    ['javascript:void(0)', 'invalid', undefined],
+    ['', 'invalid', undefined],
+  ];
+  for (const [location, kind, targetUrl] of cases) {
+    const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+      assert.equal(url, 'https://www.example.com/policy/robots.txt');
+      assert.equal(options.redirect, 'manual');
+      return new Response('', { status: 302, headers: { Location: location } });
+    });
+    const policy = await fetchServerRobots(
+      'http://example.com',
+      'https://www.example.com/policy/robots.txt',
+    );
+    assert.equal(mock.mock.callCount(), 1);
+    assert.equal(policy.denied, true);
+    assert.equal(policy.httpStatus, 302);
+    assert.equal(policy.redirect.kind, kind);
+    assert.equal(policy.redirect.targetUrl, targetUrl);
+    if (kind === 'invalid')
+      assert.equal(policy.redirect.reason, 'invalid_target');
+    mock.mock.restore();
+  }
+});
+
+test('robots rejects unsupported redirect statuses and unsafe or unrelated cursors', async (t) => {
+  const mock = t.mock.method(
+    globalThis,
+    'fetch',
+    async () =>
+      new Response(null, { status: 304, headers: { Location: '/policy.txt' } }),
+  );
+  const policy = await fetchServerRobots('https://example.com');
+  assert.equal(policy.httpStatus, 304);
+  assert.deepEqual(policy.redirect, {
+    kind: 'invalid',
+    reason: 'unsupported_status',
+    targetUrl: 'https://example.com/policy.txt',
+  });
+  for (const cursor of [
+    'https://other.org/robots.txt',
+    'https://www.www.example.com/robots.txt',
+    'https://example.com:8443/robots.txt',
+    'http://127.0.0.1/robots.txt',
+    'http://[::1]/robots.txt',
+    'http://service.internal/robots.txt',
+    'https://user:secret@example.com/robots.txt',
+  ]) {
+    assert.deepEqual(await fetchServerRobots('https://example.com', cursor), {
+      body: '',
+      denied: true,
+      delayMs: 0,
+    });
+  }
+  assert.equal(mock.mock.callCount(), 1);
+});
+
+test('robots reads a redirected policy once and retains status and crawl delay', async (t) => {
+  const body = 'User-agent: *\nDisallow: /private\nCrawl-delay: 7';
+  const mock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, 'https://www.example.com/policy.txt');
+    assert.equal(options.redirect, 'manual');
+    return new Response(body);
+  });
+  assert.deepEqual(
+    await fetchServerRobots(
+      'http://example.com',
+      'https://www.example.com/policy.txt',
+    ),
+    {
+      body,
+      denied: false,
+      delayMs: 7000,
+      httpStatus: 200,
+    },
+  );
+  assert.equal(mock.mock.callCount(), 1);
+});
+
+test('robots preserves non-redirect HTTP status and fails closed except for absent files', async (t) => {
+  for (const status of [404, 410, 401, 403, 429, 500]) {
+    const mock = t.mock.method(
+      globalThis,
+      'fetch',
+      async () => new Response('', { status }),
+    );
+    assert.deepEqual(await fetchServerRobots('https://example.com'), {
+      body: '',
+      denied: ![404, 410].includes(status),
+      delayMs: 0,
+      httpStatus: status,
+    });
+    assert.equal(mock.mock.callCount(), 1);
+    mock.mock.restore();
+  }
+});
+
+test('HTTPS failures never fall back to HTTP for pages or robots', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    calls.push(url);
+    assert.equal(options.redirect, 'manual');
+    throw new Error('TLS connection failed');
+  });
+  const page = await fetchServerPage(
+    'https://example.com/',
+    'https://example.com',
+  );
+  assert.equal(page.status, 'network_error');
+  assert.equal(page.redirect, undefined);
+  assert.deepEqual(await fetchServerRobots('https://example.com'), {
+    body: '',
+    denied: true,
+    delayMs: 0,
+  });
+  assert.deepEqual(calls, [
+    'https://example.com/',
+    'https://example.com/robots.txt',
+  ]);
+});
+
 function streamedResponse(chunks, headers = {}) {
   const state = { reads: 0, cancelled: false };
   const response = new Response(
@@ -141,6 +375,7 @@ test('robots rejects an oversized Content-Length before reading the stream', asy
     body: '',
     denied: true,
     delayMs: 0,
+    httpStatus: 200,
   });
   assert.equal(state.reads, 0);
   assert.equal(state.cancelled, true);

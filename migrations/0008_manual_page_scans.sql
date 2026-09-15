@@ -1,0 +1,1 @@
+ALTER TABLE crawl_frontier ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0;

@@ -62,9 +62,9 @@ async function fixture(request) {
     });
   if (url.origin === quotaOrigin) {
     const index = url.pathname === '/' ? 0 : Number(url.pathname.slice(1));
-    assert.ok(Number.isInteger(index) && index >= 0 && index <= 100);
+    assert.ok(Number.isInteger(index) && index >= 0 && index <= 1000);
     return html(
-      `<title>Quota ${index}</title><main>${index < 100 ? `<a href="/${index + 1}">Next page</a>` : 'Last page'}</main>`,
+      `<title>Quota ${index}</title><main>${index < 1000 ? `<a href="/${index + 1}">Next page</a>` : 'Last page'}</main>`,
     );
   }
   if (url.origin === origins[0] && url.pathname === '/pause-root') {
@@ -428,25 +428,25 @@ try {
 
   const quotaId = await createScan(quotaOrigin);
   await expect
-    .poll(async () => (await scanRow(quotaId)).status, { timeout: 60_000 })
+    .poll(async () => (await scanRow(quotaId)).status, { timeout: 180_000 })
     .toBe('limited');
   assert.equal((await scanRow(quotaId)).limit_reason, 'page_limit');
   const quotaRows = (await pageRows(quotaId)).results;
-  assert.equal(quotaRows.length, 100);
+  assert.equal(quotaRows.length, 1000);
   const quotaRequests = fetched.filter(
     (url) => url.startsWith(quotaOrigin) && !url.endsWith('/robots.txt'),
   );
   assert.equal(
     quotaRequests.length,
-    100,
-    'The page budget must be checked before the 101st fetch',
+    1000,
+    'The page budget must be checked before the 1001st fetch',
   );
-  assert.equal(new Set(quotaRequests).size, 100);
-  assert.equal(fetched.includes(`${quotaOrigin}/100`), false);
-  await expect(page.locator('.scan-stats')).toContainText('100 načtených');
+  assert.equal(new Set(quotaRequests).size, 1000);
+  assert.equal(fetched.includes(`${quotaOrigin}/1000`), false);
+  await expect(page.locator('.scan-stats')).toContainText('1000 načtených');
   const banner = page.getByRole('alert').filter({
     has: page.getByRole('heading', {
-      name: 'Dosažen limit 100 stránek na web',
+      name: 'Dosažen limit 1000 stránek na web',
     }),
   });
   await expect(banner).toBeVisible();
@@ -457,7 +457,7 @@ try {
   });
   await page.reload();
   await expect(banner).toBeVisible();
-  await expect(page.locator('.scan-stats')).toContainText('100 načtených');
+  await expect(page.locator('.scan-stats')).toContainText('1000 načtených');
   assert.deepEqual(errors, []);
   const redirectId = await createScan(`${origins[0]}/redirect-start`);
   await expect
@@ -586,7 +586,7 @@ try {
   assert.deepEqual(errors, []);
   assert.deepEqual(apiFailures, []);
   console.log(
-    'Prototype E2E passed: actual UI/Worker/Queues/D1; automatic landing preview with backlinks in graph/table; promotion reuses preview evidence; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 100 page fetches; same-origin redirects followed and external targets recorded without fetching; live rescan of the same map with immutable historical results and logs.',
+    'Prototype E2E passed: actual UI/Worker/Queues/D1; automatic landing preview with backlinks in graph/table; promotion reuses preview evidence; add website and reload persistence; real scan log and its reload persistence; visible fetching/paused activity; pause and resume; exactly 1000 page fetches; same-origin redirects followed and external targets recorded without fetching; live rescan of the same map with immutable historical results and logs.',
   );
 } finally {
   releaseSlowPage?.();

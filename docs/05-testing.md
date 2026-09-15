@@ -2,7 +2,7 @@
 
 > Co se čím testuje, jak to spustit lokálně a které gates běží v CI. Definice pipeline je `.github/workflows/verify-and-deploy.yml`; její deploy část viz [04](./04-deployment.md).
 
-**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
+**Revidováno:** 2026-09-15 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -81,15 +81,17 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 |---|---|
 | `scans.test.mjs` | web + runner API: vlastnictví a izolace návštěvníků, relace a retence, kvóty, párování, idempotentní upload, přidání webu, kontrola `Origin` |
 | `scan-history.test.mjs` | `runs`, `rescan`, archivace v jedné transakci, zastaralé `runId`, kapacita historie, sdílené rozpočty; zachování preview výsledků v archivu a reset kvót i HTTP 429 pro nový průchod |
-| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, redirecty, pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení |
+| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, HTTP/HTTPS/www redirecty a jejich společný rozpočet/pauza, přesměrovaný robots (kurzor, smyčky, limit, denní rozpočet), pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení, dodatečné připojení preview aliasu včetně HTTP 429 a ochrany proti zápisu bez uloženého důkazu |
 | `scan-log.test.mjs` | atomický zápis logu, dedup klíčů, ořez na 500, kaskáda při smazání mapy |
 | `fetch-result.test.mjs` | streamový limit těla, ořez výsledku na 256 KiB, klasifikace robots a HTTP odpovědí |
 
-**Skripty (`scripts/`)** — `test-prototype.mjs` propojí skutečný `dist/` a Worker bundle (s posunem času jen v harnessu) v Miniflare s headless Chromiem: založení mapy, log, přidání webu, pauza uprostřed requestu, přesně 100 stažení, redirecty, rescan s historií. Externí kontrolu ověřuje přes A → B/deep → A: před přidáním B už mapa ukazuje oba směry; po povýšení B zůstávají původní výsledky a B/deep se znovu nestahuje. Archivní scénář zahrnuje i preview výsledek. `test-extension.mjs` chrání historický extension runner (permissions, robots, intervaly, outbox, limity). `benchmark-scan.test.mjs` testuje frontu a výpočty benchmarku bez sítě.
+**Skripty (`scripts/`)** — `test-prototype.mjs` propojí skutečný `dist/` a Worker bundle (s posunem času jen v harnessu) v Miniflare s headless Chromiem: založení mapy, log, přidání webu, pauza uprostřed requestu, přesně 1 000 stažení, redirecty, rescan s historií. Externí kontrolu ověřuje přes A → B/deep → A: před přidáním B už mapa ukazuje oba směry; po povýšení B zůstávají původní výsledky a B/deep se znovu nestahuje. Archivní scénář zahrnuje i preview výsledek. `test-extension.mjs` chrání historický extension runner (permissions, robots, intervaly, outbox, limity). `benchmark-scan.test.mjs` testuje frontu a výpočty benchmarku bez sítě.
 
 **Pravidlo úrovní:** chování Workeru a SQL → `tests-api/`; chování UI pro daný stav API → Playwright s mockem; průchod celým stackem → jeden scénář ve `scripts/test-prototype.mjs`, ne nový Playwright test proti Workeru.
 
 ---
+
+Regrese robots pokrývá přesměrování podle odpovědí aitom.cz na www, povolené veřejné stránky a zakázané cesty. Chyby HTTP i nedokončené řetězce mají `robots_unavailable`; historie zachová selhání a nový běh po obnovení dostupnosti načte pravidla znovu. Prohlížečová sada rozlišuje zákaz a chybu načtení v logu a podrobnostech výsledků.
 
 ## Konvence a testovací data
 
@@ -122,3 +124,7 @@ Artefakty: `browser-test-results` (`test-results/`, vždy) a `site` (`dist/`), k
 - **Agregační gate „CI Passed“ zatím není** — všechno je jeden job, takže případná branch protection musí vyžadovat check `verify` (její nastavení není v repu ověřitelné).
 - **Lokálně žádný pre-push hook** ([10](./10-local-setup.md)); před pushem spusť alespoň `npm run format:check`, `npm run build` a sadu, které se změna týká.
 - `npm test` v CI staví `dist/` přes `webServer` a krok `npm run build` ho staví znovu — dvojí build je známý a přijatý ([06](./06-known-issues.md)).
+
+### Ruční sken a větší weby
+
+`crawler.test.mjs` ověřuje hranici 1 000 stránek na web, nezávislost limitů samostatně vybraných webů, ruční načtení čtvrtého webu, deduplikaci a zákaz rekurze po obnovení. `scans.test.mjs` ověřuje `/pages`, vlastnictví, známou veřejnou URL, povinný aktuální `runId` a rezervace limitu. `scan-workspace.spec.ts` pokrývá ▶ při třech úvodních webech, URL mimo limit zobrazení grafu, čekání, stahování, výsledek, chybu a archiv; `scan-dataset.spec.ts` zachování ručních výsledků a dalších známých URL.

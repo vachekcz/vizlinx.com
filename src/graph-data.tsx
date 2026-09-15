@@ -58,11 +58,15 @@ export function useGraphData() {
 }
 
 export function pageStatusLabel(page: Page) {
+  if (page.scanState === 'fetching') return 'Skenování stránky běží';
+  if (page.scanState === 'queued') return 'Čeká na skenování';
   switch (page.status) {
     case 'ok':
       return page.crawlMode === 'preview'
         ? 'Úspěšně načtená stránka · kontrola cílové URL'
-        : 'Úspěšně načtená stránka';
+        : page.crawlMode === 'manual'
+          ? 'Úspěšně načtená stránka · ruční sken'
+          : 'Úspěšně načtená stránka';
     case 'known':
       return 'Pouze známá URL · zatím nenačteno';
     case 'http_error':
@@ -73,6 +77,8 @@ export function pageStatusLabel(page: Page) {
       return 'HTTP přesměrování';
     case 'robots_denied':
       return 'Zakázáno robots.txt';
+    case 'robots_unavailable':
+      return 'Robots.txt se nepodařilo načíst – skenování zastaveno';
     case 'not_html':
       return 'Obsah není HTML';
     case 'too_large':

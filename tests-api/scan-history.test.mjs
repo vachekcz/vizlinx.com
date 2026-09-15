@@ -16,7 +16,7 @@ describe('scan history', () => {
     origin: 'https://example.com',
     seedUrl: 'https://example.com/start/',
     intervalMs: 7000,
-    maxPages: 100,
+    maxPages: 1000,
     paused: false,
   };
   const result = {
@@ -261,6 +261,206 @@ describe('scan history', () => {
       'The crawler must finish within its bounded frontier',
     );
   }
+
+  test('rescan archives real page and robots redirects with their original site identity and complete log', async () => {
+    const redirectSite = {
+      ...site,
+      origin: 'http://example.com',
+      seedUrl: 'http://example.com/start/',
+    };
+    const upgradedUrl = 'https://example.com/start/';
+    const finalUrl = 'https://www.example.com/final';
+    const robotsUrl = `${redirectSite.origin}/robots.txt`;
+    const robotsTarget = 'https://www.example.com/crawl-policy.txt';
+    const redirects = new Map([
+      [robotsUrl, { target: robotsTarget, status: 302 }],
+      [redirectSite.seedUrl, { target: upgradedUrl, status: 301 }],
+      [upgradedUrl, { target: finalUrl, status: 308 }],
+    ]);
+    const fetched = [];
+    fixtureResponse = (request) => {
+      const url = new URL(request.url);
+      fetched.push(url.href);
+      const redirect = redirects.get(url.href);
+      if (redirect)
+        return new Response(null, {
+          status: redirect.status,
+          headers: { Location: redirect.target },
+        });
+      if (url.href === robotsTarget)
+        return new Response('User-agent: *\nAllow: /');
+      if (url.pathname === '/robots.txt')
+        return new Response('', { status: 404 });
+      assert.equal(url.href, finalUrl, 'Only the redirect target is scanned.');
+      return new Response('<title>Canonical page</title>', {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    };
+    const cookie = await visitor();
+    const scan = await create(cookie, [redirectSite]);
+    const started = await request(`/scans/${scan.id}/start`, {
+      method: 'POST',
+      cookie,
+      body: { runId: scan.runId },
+    });
+    assert.equal(started.status, 200, await started.clone().text());
+    await drainCrawls();
+    assert.deepEqual(fetched, [
+      robotsUrl,
+      robotsTarget,
+      redirectSite.seedUrl,
+      'https://example.com/robots.txt',
+      upgradedUrl,
+      'https://www.example.com/robots.txt',
+      finalUrl,
+    ]);
+    const original = await snapshot(cookie, scan.id);
+    assert.equal(original.status, 'completed');
+    assert.deepEqual(original.sites, [redirectSite]);
+    assert.deepEqual(
+      original.results.map((page) => ({
+        sourceUrl: page.sourceUrl,
+        siteOrigin: page.siteOrigin,
+        status: page.status,
+        httpStatus: page.httpStatus,
+        redirect: page.redirect,
+        crawlMode: page.crawlMode,
+      })),
+      [
+        {
+          sourceUrl: redirectSite.seedUrl,
+          siteOrigin: undefined,
+          status: 'redirect_unresolved',
+          httpStatus: 301,
+          redirect: { kind: 'site_variant', targetUrl: upgradedUrl },
+          crawlMode: undefined,
+        },
+        {
+          sourceUrl: upgradedUrl,
+          siteOrigin: redirectSite.origin,
+          status: 'redirect_unresolved',
+          httpStatus: 308,
+          redirect: { kind: 'site_variant', targetUrl: finalUrl },
+          crawlMode: undefined,
+        },
+        {
+          sourceUrl: finalUrl,
+          siteOrigin: redirectSite.origin,
+          status: 'ok',
+          httpStatus: 200,
+          redirect: undefined,
+          crawlMode: undefined,
+        },
+      ],
+    );
+    const logResponse = await request(`/scans/${scan.id}/log`, { cookie });
+    assert.equal(logResponse.status, 200);
+    const originalLog = await logResponse.json();
+    assert.equal(originalLog.truncated, false);
+    assert.deepEqual(
+      originalLog.events
+        .filter((entry) => entry.redirect)
+        .map((entry) => ({
+          type: entry.type,
+          origin: entry.origin,
+          url: entry.url,
+          status: entry.status,
+          httpStatus: entry.httpStatus,
+          redirect: entry.redirect,
+        })),
+      [...redirects].map(([url, { target, status }]) => ({
+        type: url === robotsUrl ? 'robots_checked' : 'page_finished',
+        origin: redirectSite.origin,
+        url,
+        status: 'redirect_unresolved',
+        httpStatus: status,
+        redirect: { kind: 'site_variant', targetUrl: target },
+      })),
+    );
+    const policyEvent = originalLog.events.find(
+      (entry) => entry.type === 'robots_checked' && entry.url === robotsTarget,
+    );
+    assert.equal(policyEvent.status, 'ok');
+    assert.equal(policyEvent.httpStatus, 200);
+    const finalEvent = originalLog.events.find(
+      (entry) => entry.type === 'page_finished' && entry.url === finalUrl,
+    );
+    assert.equal(finalEvent.status, 'ok');
+    assert.equal(finalEvent.httpStatus, 200);
+
+    const current = await restart(cookie, original);
+    assert.notEqual(current.runId, original.runId);
+    assert.equal(current.pageCount, 0);
+    assert.deepEqual(current.results, []);
+    const archived = await snapshot(cookie, scan.id, original.runId);
+    assert.deepEqual(archived.results, original.results);
+    assert.deepEqual(archived.sites, original.sites);
+    assert.equal(archived.status, 'completed');
+    const archiveLogResponse = await request(
+      `/scans/${scan.id}/runs/${original.runId}/log`,
+      { cookie },
+    );
+    assert.equal(archiveLogResponse.status, 200);
+    assert.deepEqual(await archiveLogResponse.json(), originalLog);
+    const currentLogResponse = await request(`/scans/${scan.id}/log`, {
+      cookie,
+    });
+    assert.equal(currentLogResponse.status, 200);
+    const currentLog = await currentLogResponse.json();
+    assert.equal(currentLog.truncated, false);
+    assert.deepEqual(
+      currentLog.events.map((entry) => entry.type),
+      ['scan_started'],
+    );
+    assert.ok(
+      currentLog.events.every((entry) => !entry.url && !entry.redirect),
+      'A fresh run must not inherit page or robots redirect steps.',
+    );
+  });
+
+  test('rescan preserves robots loading failures in history and reads recovered rules in the new run', async () => {
+    fixtureResponse = () => new Response('Unavailable', { status: 503 });
+    const cookie = await visitor();
+    const scan = await create(cookie);
+    const started = await request(`/scans/${scan.id}/start`, {
+      method: 'POST',
+      cookie,
+      body: { runId: scan.runId },
+    });
+    assert.equal(started.status, 200);
+    await drainCrawls();
+    const original = await snapshot(cookie, scan.id);
+    assert.equal(original.results[0].status, 'robots_unavailable');
+    const originalLog = await (
+      await request(`/scans/${scan.id}/log`, { cookie })
+    ).json();
+    const robotsEvent = originalLog.events.find(
+      (entry) => entry.type === 'robots_checked',
+    );
+    assert.equal(robotsEvent.status, 'robots_unavailable');
+    assert.equal(robotsEvent.httpStatus, 503);
+    fixtureResponse = (request) =>
+      new URL(request.url).pathname === '/robots.txt'
+        ? new Response('User-agent: *\nAllow: /')
+        : new Response('<title>Recovered</title>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+    await restart(cookie, original);
+    await drainCrawls();
+    assert.equal((await snapshot(cookie, scan.id)).results[0].status, 'ok');
+    assert.deepEqual(
+      (await snapshot(cookie, scan.id, original.runId)).results,
+      original.results,
+    );
+    assert.deepEqual(
+      await (
+        await request(`/scans/${scan.id}/runs/${original.runId}/log`, {
+          cookie,
+        })
+      ).json(),
+      originalLog,
+    );
+  });
 
   test('API promotion reuses landing evidence, expands saved links and archives preview metadata on a fresh rescan', async () => {
     const second = {

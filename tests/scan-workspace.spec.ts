@@ -10,7 +10,7 @@ const site: ScanSite = {
   origin: 'https://example.com',
   seedUrl: 'https://example.com/start',
   intervalMs: 3000,
-  maxPages: 100,
+  maxPages: 1000,
   paused: false,
 };
 const snapshot = (
@@ -34,6 +34,8 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
     created: [] as { sites: ScanSite[] }[],
     additions: [] as { site: ScanSite }[],
     addFailure: 0,
+    pageRequests: [] as { url: string; runId?: string }[],
+    pageFailure: 0,
     patches: [] as { status?: string; sites?: ScanSite[] }[],
     createFailure: 0,
     sessionFailure: 0,
@@ -55,7 +57,7 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
     const send = (body: unknown, status = 200) =>
       route.fulfill({ status, json: body });
     if (path === '/config')
-      return send({ adminEmail: state.adminEmail, maxPagesPerSite: 100 });
+      return send({ adminEmail: state.adminEmail, maxPagesPerSite: 1000 });
     if (path === '/session')
       return send(
         state.sessionFailure ? { error: 'Unavailable' } : { ok: true },
@@ -77,11 +79,22 @@ async function mockApi(page: Page, initial: ScanSnapshot[] = []) {
       maps.set(scan.id, scan);
       return send(scan, 201);
     }
-    const match = path.match(/^\/scans\/([^/]+)(?:\/(start|sites))?$/);
+    const match = path.match(/^\/scans\/([^/]+)(?:\/(start|sites|pages))?$/);
     const scan = match ? maps.get(match[1]) : undefined;
     if (!scan) return send({ error: 'Not found' }, 404);
     if (request.method() === 'GET' && state.snapshotFailure)
       return send({ error: 'Unavailable' }, state.snapshotFailure);
+    if (match?.[2] === 'pages' && request.method() === 'POST') {
+      const body = request.postDataJSON() as { url: string; runId?: string };
+      state.pageRequests.push(body);
+      if (state.pageFailure)
+        return send({ error: 'Page scan failed' }, state.pageFailure);
+      scan.pendingPages = [
+        ...new Set([...(scan.pendingPages ?? []), body.url]),
+      ];
+      scan.status = 'running';
+      return send(scan);
+    }
     if (match?.[2] === 'sites' && request.method() === 'POST') {
       const body = request.postDataJSON() as { site: ScanSite };
       state.additions.push(body);
@@ -159,14 +172,14 @@ test('validates and normalizes origins and starts a server scan without an exten
           origin: 'https://example.com',
           seedUrl: 'https://example.com/start',
           intervalMs: 5000,
-          maxPages: 100,
+          maxPages: 1000,
           paused: false,
         },
         {
           origin: 'https://second.org',
           seedUrl: 'https://second.org/path',
           intervalMs: 5000,
-          maxPages: 100,
+          maxPages: 1000,
           paused: false,
         },
       ],
@@ -629,7 +642,7 @@ test('promotes an inspected target and starts its normal scan while retaining re
         origin: 'https://second.org',
         seedUrl: 'https://second.org/',
         intervalMs: 3000,
-        maxPages: 100,
+        maxPages: 1000,
         paused: false,
       },
     },
@@ -786,7 +799,7 @@ test('adds a web to a completed map without resetting selection or position and 
         origin: 'https://second.org',
         seedUrl: 'https://second.org/start',
         intervalMs: 7000,
-        maxPages: 100,
+        maxPages: 1000,
         paused: false,
       },
     },
@@ -843,7 +856,10 @@ test('rejects invalid and duplicate added origins before sending and explains th
     page.getByRole('button', { name: 'Přidat web', exact: true }),
   ).toBeDisabled();
   await expect(
-    page.getByText('Limit prototypu: 3 weby v jedné mapě.', { exact: true }),
+    page.getByText(
+      'Běžný sken: nejvýše 3 weby. Další nalezené stránky můžeš skenovat jednotlivě přes ▶.',
+      { exact: true },
+    ),
   ).toBeVisible();
   expect(api.maps.get(scan.id)?.sites).toHaveLength(3);
   expect(api.additions).toHaveLength(1);
@@ -991,7 +1007,7 @@ test('shows a prominent fixed page limit with preserved results and configured a
   await page.goto(`/scan?id=${scan.id}`);
   const banner = page.getByRole('alert');
   await expect(
-    banner.getByRole('heading', { name: 'Dosažen limit 100 stránek na web' }),
+    banner.getByRole('heading', { name: 'Dosažen limit 1000 stránek na web' }),
   ).toBeVisible();
   await expect(banner).toContainText('Pro vyšší limit kontaktuj správce.');
   await expect(banner).toContainText('Dosavadní výsledky zůstávají uložené');
@@ -1041,7 +1057,7 @@ for (const [reason, title] of [
       page.getByRole('alert').getByRole('heading', { name: title }),
     ).toBeVisible();
     await expect(page.getByRole('alert')).not.toContainText(
-      'Dosažen limit 100 stránek',
+      'Dosažen limit 1000 stránek',
     );
     await expect(
       page.getByRole('link', { name: 'Kontaktovat správce' }),
@@ -1100,7 +1116,7 @@ test('retains the page-limit warning after adding another origin and resumes the
   await expect(
     page
       .getByRole('alert')
-      .getByRole('heading', { name: 'Dosažen limit 100 stránek na web' }),
+      .getByRole('heading', { name: 'Dosažen limit 1000 stránek na web' }),
   ).toBeVisible();
   await expect(page.getByTestId('link-count')).toHaveText('1');
   await page
@@ -1162,7 +1178,19 @@ for (const reason of ['time_limit', 'scan_storage_limit'] as const) {
         exact: true,
       }),
     ).toBeDisabled();
+    const pageScan = page.getByRole('button', {
+      name: `Proskenovat ${site.seedUrl}`,
+      exact: true,
+    });
+    await expect(pageScan).toBeDisabled();
+    await expect(pageScan).toHaveAttribute(
+      'title',
+      reason === 'time_limit'
+        ? 'Tento průchod dosáhl časového limitu. Spusť nový sken.'
+        : 'Tato mapa dosáhla limitu velikosti. Spusť nový sken.',
+    );
     expect(api.startRequests).toHaveLength(0);
+    expect(api.pageRequests).toHaveLength(0);
   });
 }
 
@@ -1280,6 +1308,273 @@ test('explains blocked redirect targets in the saved log and avoids claiming a s
     redirect.redirect!.targetUrl!,
   );
 });
+
+for (const archived of [false, true]) {
+  test(`keeps redirected website counts and detailed redirect logs in the ${archived ? 'archived' : 'current'} run`, async ({
+    page,
+  }) => {
+    const id = '00000000-0000-4000-8000-000000000096';
+    const runId = '00000000-0000-4000-8000-000000000196';
+    const redirected: PageResult = {
+      ...savedResult,
+      links: [],
+      status: 'redirect_unresolved',
+      httpStatus: 301,
+      redirect: {
+        kind: 'site_variant',
+        targetUrl: 'https://www.example.com/final',
+      },
+    };
+    const final: PageResult = {
+      ...savedResult,
+      sourceUrl: 'https://www.example.com/final',
+      siteOrigin: site.origin,
+      links: [],
+    };
+    const scan = snapshot(id, {
+      runId,
+      runNumber: 1,
+      runCreatedAt: savedResult.observedAt,
+      archived,
+      status: 'completed',
+      results: [redirected, final],
+      pageCount: 2,
+    });
+    const api = await mockApi(page, [scan]);
+    await page.route(`**${API_PREFIX}/scans/${id}/runs**`, async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/runs'))
+        return route.fulfill({ json: { runs: [scan], limit: 10 } });
+      if (!path.endsWith('/log')) return route.fulfill({ json: scan });
+      return route.fulfill({
+        json: {
+          truncated: false,
+          events: [
+            {
+              id: 1,
+              at: savedResult.observedAt,
+              type: 'page_finished',
+              level: 'info',
+              origin: site.origin,
+              url: redirected.sourceUrl,
+              httpStatus: 301,
+              status: redirected.status,
+              redirect: redirected.redirect,
+            },
+            {
+              id: 2,
+              at: savedResult.observedAt,
+              type: 'robots_checked',
+              level: 'info',
+              origin: site.origin,
+              url: `${site.origin}/robots.txt`,
+              httpStatus: 308,
+              redirect: {
+                kind: 'site_variant',
+                targetUrl: 'https://www.example.com/robots.txt',
+              },
+            },
+            {
+              id: 3,
+              at: savedResult.observedAt,
+              type: 'robots_checked',
+              level: 'warning',
+              origin: site.origin,
+              url: 'https://www.example.com/robots-loop',
+              httpStatus: 302,
+              redirect: {
+                kind: 'invalid',
+                reason: 'redirect_loop',
+                targetUrl: `${site.origin}/robots.txt`,
+              },
+            },
+            {
+              id: 4,
+              at: savedResult.observedAt,
+              type: 'robots_checked',
+              level: 'warning',
+              origin: site.origin,
+              url: 'https://www.example.com/robots-limit',
+              httpStatus: 302,
+              redirect: {
+                kind: 'invalid',
+                reason: 'redirect_limit',
+                targetUrl: 'https://www.example.com/robots-next',
+              },
+            },
+          ],
+        },
+      });
+    });
+    await page.goto(`/scan?id=${id}${archived ? `&run=${runId}` : ''}`);
+    await expect(page.locator('.site-list-row')).toHaveCount(1);
+    await expect(page.locator('.site-list-row')).toContainText(
+      '1 načteno · 2 URL',
+    );
+    await expect(page.locator('.scan-stats')).toContainText(
+      '1 načtených · 0 neúspěšných / vynechaných',
+    );
+    await expect(page.locator('.scan-issues')).toHaveCount(0);
+    await page
+      .getByRole('button', { name: 'Doména example.com', exact: true })
+      .click();
+    const pause = page.getByRole('button', {
+      name: 'Pozastavit skenování webu',
+      exact: true,
+    });
+    if (archived) await expect(pause).toHaveCount(0);
+    else {
+      await pause.click();
+      expect(api.patches.at(-1)?.sites).toEqual([{ ...site, paused: true }]);
+    }
+    await page
+      .getByRole('button', { name: 'Průběh skenu', exact: true })
+      .click();
+    const panel = page.getByRole('dialog');
+    const pageEvent = panel
+      .locator('li')
+      .filter({ hasText: redirected.sourceUrl });
+    await expect(pageEvent).toContainText('HTTP 301');
+    await expect(pageEvent).not.toContainText('nenásledováno');
+    for (const url of [redirected.sourceUrl, final.sourceUrl]) {
+      const link = pageEvent.getByRole('link', {
+        name: `Otevřít ${url} v nové kartě`,
+        exact: true,
+      });
+      await expect(link).toHaveAttribute('href', url);
+      await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+    const robotsEvent = panel.locator('li').filter({ hasText: 'HTTP 308' });
+    await expect(robotsEvent).toContainText(
+      'Robots.txt · Přesměrování na HTTP/HTTPS nebo www variantu webu',
+    );
+    await expect(robotsEvent).toContainText(`${site.origin}/robots.txt`);
+    await expect(robotsEvent).toContainText(
+      'Cíl přesměrování: https://www.example.com/robots.txt',
+    );
+    await expect(panel).toContainText(
+      'Robots.txt · Přesměrování se zacyklilo – zastaveno',
+    );
+    await expect(panel).toContainText(
+      'Robots.txt · Dosažen limit přesměrování – zastaveno',
+    );
+    await page.reload();
+    await page
+      .getByRole('button', { name: 'Průběh skenu', exact: true })
+      .click();
+    await expect(page.getByRole('dialog')).toContainText(
+      'Cíl přesměrování: https://www.example.com/final',
+    );
+  });
+}
+
+for (const status of ['robots_unavailable', 'robots_denied'] as const) {
+  test(`distinguishes ${status} from a successful robots check and preserves it after reload`, async ({
+    page,
+  }) => {
+    const id = '00000000-0000-4000-8000-000000000096';
+    const result: PageResult = {
+      ...savedResult,
+      status,
+      httpStatus: null,
+      links: [],
+    };
+    const unavailable = status === 'robots_unavailable';
+    const failureLabel =
+      'Robots.txt se nepodařilo načíst – skenování zastaveno';
+    await mockApi(page, [
+      snapshot(id, { status: 'completed', results: [result], pageCount: 1 }),
+    ]);
+    await page.route(`**${API_PREFIX}/scans/${id}/log`, (route) =>
+      route.fulfill({
+        json: {
+          truncated: false,
+          events: [
+            {
+              id: 1,
+              type: 'robots_checked',
+              at: result.observedAt,
+              level: 'info',
+              url: 'https://other.org/robots.txt',
+              status: 'ok',
+            },
+            {
+              id: 2,
+              type: 'robots_checked',
+              at: result.observedAt,
+              level: unavailable ? 'error' : 'warning',
+              url: `${site.origin}/robots.txt`,
+              status,
+            },
+            {
+              id: 3,
+              type: 'page_finished',
+              at: result.observedAt,
+              level: unavailable ? 'error' : 'warning',
+              url: result.sourceUrl,
+              status,
+            },
+            ...(unavailable
+              ? [
+                  {
+                    id: 4,
+                    type: 'robots_checked',
+                    at: result.observedAt,
+                    level: 'error',
+                    url: 'https://www.example.com/robots-loop',
+                    status,
+                    redirect: {
+                      kind: 'invalid',
+                      reason: 'redirect_loop',
+                      targetUrl: `${site.origin}/robots.txt`,
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+      }),
+    );
+    await page.goto(`/scan?id=${id}`);
+    await expect(page.getByTestId('scan-activity')).toContainText(
+      'Sken skončil bez načtených stránek',
+    );
+    await page
+      .getByText('Podrobnosti neúplných výsledků', { exact: true })
+      .click();
+    await expect(page.locator('.scan-issues')).toContainText(
+      unavailable ? failureLabel.toLowerCase() : 'zakázáno robots.txt',
+    );
+    const trigger = page.getByRole('button', { name: /^Průběh skenu/ });
+    if (unavailable) await expect(trigger).toContainText('1 chyba');
+    await trigger.click();
+    const panel = page.getByRole('dialog', { name: 'Průběh skenu' });
+    await expect(panel).toContainText('Zkontrolována pravidla robots.txt');
+    await expect(panel).toContainText(
+      unavailable ? failureLabel : 'Robots.txt nepovoluje skenování',
+    );
+    await expect(panel).toContainText(
+      unavailable ? failureLabel : 'Skenování zakázáno v robots.txt',
+    );
+    if (unavailable) {
+      await expect(panel).not.toContainText('nepovoluje skenování');
+      await expect(panel).not.toContainText('zakázáno');
+      await expect(panel).toContainText(
+        `${failureLabel} · Přesměrování se zacyklilo – zastaveno`,
+      );
+      await panel.getByLabel('Jen chyby').check();
+      await expect(panel).toContainText(failureLabel);
+      await expect(panel).not.toContainText(
+        'Zkontrolována pravidla robots.txt',
+      );
+    }
+    await page.reload();
+    await trigger.click();
+    await expect(page.getByRole('dialog')).toContainText(
+      unavailable ? failureLabel : 'Robots.txt nepovoluje skenování',
+    );
+  });
+}
 
 test('opens saved log, filters by origin and errors, restores focus and does not poll while closed', async ({
   page,
@@ -1805,4 +2100,309 @@ test('recovers a failed history load and allows rescanning without a page reload
     'Čeká na zpracování',
   );
   expect(state.rescanBodies).toHaveLength(1);
+});
+
+test('scans a discovered page beyond the graph cap with three selected sites and preserves the map', async ({
+  page,
+}) => {
+  const runId = '00000000-0000-4000-8000-000000000191';
+  const targetUrl = 'https://second.org/page-80';
+  const scan = snapshot('00000000-0000-4000-8000-000000000190', {
+    runId,
+    status: 'completed',
+    sites: [
+      site,
+      ...['fourth.org', 'fifth.org'].map((domain) => ({
+        ...site,
+        origin: `https://${domain}`,
+        seedUrl: `https://${domain}/`,
+      })),
+    ],
+    results: [
+      {
+        ...savedResult,
+        links: Array.from({ length: 81 }, (_, index) => ({
+          ...savedResult.links[0],
+          targetUrl: `https://second.org/page-${index}`,
+        })),
+      },
+    ],
+    pageCount: 1,
+  });
+  const api = await mockApi(page, [scan]);
+  await page.clock.install();
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména second.org', exact: true })
+    .press('Enter');
+  const inspector = page.getByRole('complementary', { name: 'Detail výběru' });
+  await expect(
+    inspector.getByRole('button', { name: 'Prozkoumat web', exact: true }),
+  ).toBeDisabled();
+  const list = inspector.getByRole('region', { name: 'Známé stránky webu' });
+  await expect(list.locator('li')).toHaveCount(20);
+  await list
+    .getByRole('button', { name: 'Další stránky', exact: true })
+    .click();
+  await expect(list).toContainText('21–40 z 81');
+  await list.getByLabel('Hledat stránku webu').fill('page-80');
+  await expect(list.locator('li')).toHaveCount(1);
+  await list
+    .getByRole('button', { name: `Proskenovat ${targetUrl}`, exact: true })
+    .click();
+  await expect(
+    list.getByRole('button', {
+      name: `Čeká na skenování ${targetUrl}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  expect(api.pageRequests).toEqual([{ url: targetUrl, runId }]);
+  expect(api.additions).toHaveLength(0);
+  expect(api.startRequests).toHaveLength(0);
+  expect(api.maps.get(scan.id)!.sites).toHaveLength(3);
+  await expect(page.getByTestId('link-count')).toHaveText('81');
+
+  const stored = api.maps.get(scan.id)!;
+  stored.activity = {
+    phase: 'fetching_page',
+    crawlMode: 'manual',
+    url: targetUrl,
+    updatedAt: scan.updatedAt,
+  };
+  await page.clock.fastForward(3100);
+  await expect(
+    list.getByRole('button', {
+      name: `Skenování stránky běží ${targetUrl}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  stored.results.push({
+    ...previewResult,
+    sourceUrl: targetUrl,
+    crawlMode: 'manual',
+  });
+  stored.pendingPages = [];
+  stored.status = 'completed';
+  await page.clock.fastForward(3100);
+  await expect(list).toContainText('Úspěšně načtená stránka · ruční sken');
+  await expect(
+    list.getByRole('button', { name: `Proskenovat ${targetUrl}`, exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByTestId('link-count')).toHaveText('83');
+  await page.getByLabel('Další odkazované weby').uncheck();
+  await expect(
+    page.getByRole('button', { name: 'Doména second.org', exact: true }),
+  ).toBeVisible();
+});
+
+test('offers keyboard page scan in the graph and reports request errors without losing results', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000192', {
+    status: 'completed',
+    results: [savedResult],
+    pageCount: 1,
+  });
+  const api = await mockApi(page, [scan]);
+  api.pageFailure = 503;
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména second.org', exact: true })
+    .press('Enter');
+  const inspector = page.getByRole('complementary', { name: 'Detail výběru' });
+  await inspector
+    .getByRole('button', { name: 'Zobrazit známé cílové URL', exact: true })
+    .click();
+  const graphPlay = page
+    .getByRole('button', {
+      name: 'Proskenovat https://second.org/',
+      exact: true,
+    })
+    .filter({ has: page.locator('rect') });
+  await expect(graphPlay).toBeVisible();
+  await graphPlay.press('Enter');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await expect(graphPlay).not.toHaveAttribute('aria-disabled', 'true');
+  expect(api.pageRequests).toHaveLength(1);
+  api.pageFailure = 0;
+  await graphPlay.press('Space');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('.graph-page-scan')).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  await page.locator('.graph-page-scan').press('Enter');
+  expect(api.pageRequests).toHaveLength(2);
+});
+
+test('disables individual page scans in archived snapshots', async ({
+  page,
+}) => {
+  const scan = snapshot('00000000-0000-4000-8000-000000000193', {
+    archived: true,
+    status: 'completed',
+    results: [savedResult],
+    pageCount: 1,
+  });
+  const api = await mockApi(page, [scan]);
+  await page.goto(`/scan?id=${scan.id}`);
+  await page
+    .getByRole('button', { name: 'Doména second.org', exact: true })
+    .press('Enter');
+  const inspector = page.getByRole('complementary', { name: 'Detail výběru' });
+  await expect(
+    inspector.getByRole('button', {
+      name: 'Proskenovat https://second.org/',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await inspector
+    .getByRole('button', { name: 'Zobrazit známé cílové URL', exact: true })
+    .click();
+  await expect(page.locator('.graph-page-scan')).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
+  await page.locator('.graph-page-scan').press('Enter');
+  expect(api.pageRequests).toHaveLength(0);
+});
+
+for (const scope of ['map', 'site'] as const) {
+  test(`requires resuming a paused ${scope} before manually scanning a page`, async ({
+    page,
+  }) => {
+    const scan = snapshot('00000000-0000-4000-8000-000000000194', {
+      status: scope === 'map' ? 'paused' : 'completed',
+      sites: [{ ...site, paused: scope === 'site' }],
+    });
+    const api = await mockApi(page, [scan]);
+    await page.goto(`/scan?id=${scan.id}`);
+    const play = page.getByRole('button', {
+      name: `Proskenovat ${site.seedUrl}`,
+      exact: true,
+    });
+    await expect(play).toBeDisabled();
+    await expect(play).toHaveAttribute(
+      'title',
+      scope === 'map'
+        ? 'Nejprve pokračuj ve skenování mapy.'
+        : 'Nejprve pokračuj ve skenování tohoto webu.',
+    );
+    expect(api.pageRequests).toHaveLength(0);
+  });
+}
+
+test('scans a confirmed www alias under its paused owner and retains exact manual URLs', async ({
+  page,
+}) => {
+  const runId = '00000000-0000-4000-8000-000000000197';
+  const homeUrl = 'https://www.example.com/home';
+  const manualUrl = 'https://www.example.com/manual';
+  const scan = snapshot('00000000-0000-4000-8000-000000000198', {
+    runId,
+    status: 'completed',
+    sites: [
+      { ...site, paused: true },
+      ...['fourth.org', 'fifth.org'].map((domain) => ({
+        ...site,
+        origin: `https://${domain}`,
+        seedUrl: `https://${domain}/`,
+      })),
+    ],
+    results: [
+      {
+        ...savedResult,
+        status: 'redirect_unresolved',
+        httpStatus: 301,
+        redirect: { kind: 'site_variant', targetUrl: homeUrl },
+        links: [],
+      },
+      {
+        ...savedResult,
+        sourceUrl: homeUrl,
+        siteOrigin: site.origin,
+        links: [{ ...savedResult.links[0], targetUrl: manualUrl }],
+      },
+    ],
+    pageCount: 2,
+  });
+  const api = await mockApi(page, [scan]);
+  await page.clock.install();
+  await page.goto(`/scan?id=${scan.id}`);
+  const inspector = page.getByRole('complementary', { name: 'Detail výběru' });
+  const list = inspector.getByRole('region', { name: 'Známé stránky webu' });
+  await list.getByLabel('Hledat stránku webu').fill('/manual');
+  const play = list.getByRole('button', {
+    name: `Proskenovat ${manualUrl}`,
+    exact: true,
+  });
+  await expect(play).toBeDisabled();
+  await expect(play).toHaveAttribute(
+    'title',
+    'Nejprve pokračuj ve skenování tohoto webu.',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Doména www.example.com', exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator('.scan-stats')).toContainText(
+    '1 načtených · 0 neúspěšných / vynechaných',
+  );
+  await inspector
+    .getByRole('button', { name: 'Pokračovat ve skenování webu', exact: true })
+    .click();
+  expect(api.patches.at(-1)?.sites?.[0]).toEqual({ ...site, paused: false });
+  await expect(play).toBeEnabled();
+  await play.click();
+  expect(api.pageRequests).toEqual([{ url: manualUrl, runId }]);
+  await expect(
+    list.getByRole('button', {
+      name: `Čeká na skenování ${manualUrl}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  const stored = api.maps.get(scan.id)!;
+  stored.activity = {
+    phase: 'fetching_page',
+    crawlMode: 'manual',
+    origin: site.origin,
+    url: manualUrl,
+    updatedAt: scan.updatedAt,
+  };
+  await page.clock.fastForward(3100);
+  await expect(
+    list.getByRole('button', {
+      name: `Skenování stránky běží ${manualUrl}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  stored.results.push({
+    ...savedResult,
+    sourceUrl: manualUrl,
+    siteOrigin: site.origin,
+    crawlMode: 'manual',
+  });
+  stored.pendingPages = [];
+  stored.status = 'completed';
+  await page.clock.fastForward(3100);
+  await expect(list).toContainText('Úspěšně načtená stránka · ruční sken');
+  await expect(
+    list.getByRole('link', {
+      name: `Otevřít ${manualUrl} v nové kartě`,
+      exact: true,
+    }),
+  ).toHaveAttribute('href', manualUrl);
+  await expect(
+    page.getByRole('button', { name: 'Doména www.example.com', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Doména example.com', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId('link-count')).toHaveText('1');
+  await expect(page.locator('.scan-stats')).toContainText(
+    '2 načtených · 0 neúspěšných / vynechaných',
+  );
+  await expect(page.locator('.scan-issues')).toHaveCount(0);
+  expect(stored.sites).toHaveLength(3);
+  expect(api.additions).toHaveLength(0);
 });

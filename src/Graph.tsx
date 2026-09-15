@@ -14,6 +14,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { GraphExternalLink } from './ExternalLink';
+import { GraphPageScanButton, type PageScanControl } from './PageScanButton';
 import ArrowHead from './ArrowHead';
 import { pageStatusLabel, siteUrl, useGraphData } from './graph-data';
 import type { Link, Page, Selection, Site } from './data';
@@ -45,7 +46,7 @@ export type GraphControls = {
   fitToView: () => void;
 };
 
-type Props = {
+type Props = PageScanControl & {
   sites: Site[];
   links: Link[];
   selection: Selection | null;
@@ -372,6 +373,8 @@ export default function Graph({
   previewEvents,
   renderControls,
   getFitObstacles,
+  onScanPage,
+  controlsDisabled,
 }: Props) {
   const {
     pages: allPages,
@@ -1568,11 +1571,19 @@ export default function Graph({
                             }
                             className="page-label"
                           >
-                            {page.path.length > 13
-                              ? `${page.path.slice(0, 12)}…`
+                            {page.path.length >
+                            (onScanPage && page.status === 'known' ? 8 : 13)
+                              ? `${page.path.slice(0, onScanPage && page.status === 'known' ? 7 : 12)}…`
                               : page.path}
                           </text>
                         </g>
+                        <GraphPageScanButton
+                          page={page}
+                          onScanPage={onScanPage}
+                          controlsDisabled={controlsDisabled}
+                          x={position.x + 61}
+                          y={position.y - 13}
+                        />
                         <GraphExternalLink
                           url={pageUrl(page)}
                           x={position.x + (touchTargets ? 93 : 95)}

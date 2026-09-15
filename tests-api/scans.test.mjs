@@ -630,7 +630,7 @@ test('ten-scan limit and bounded bodies prevent unbounded visitor storage', asyn
       await request('/scans', {
         method: 'POST',
         cookie,
-        body: { sites: [{ ...site, maxPages: 101 }] },
+        body: { sites: [{ ...site, maxPages: 1001 }] },
       })
     ).status,
     400,
@@ -1185,7 +1185,7 @@ test('server start requires ownership and same origin, fixes the page cap, and r
   assert.equal(response.status, 200, await response.clone().text());
   const started = await response.json();
   assert.equal(started.status, 'running');
-  assert.equal(started.sites[0].maxPages, 100);
+  assert.equal(started.sites[0].maxPages, 1000);
   const checkpoint = await db
     .prepare('SELECT crawl_generation, crawl_tick FROM scans WHERE id = ?')
     .bind(scan.id)
@@ -1231,7 +1231,7 @@ test('server start requires ownership and same origin, fixes the page cap, and r
     body: { status: 'paused', sites: [{ ...site, maxPages: 1 }] },
   });
   assert.equal(paused.status, 200);
-  assert.equal((await paused.json()).sites[0].maxPages, 100);
+  assert.equal((await paused.json()).sites[0].maxPages, 1000);
 });
 
 test('running settings preserve the run deadline and start quota while resumes consume it', async () => {
@@ -1349,7 +1349,7 @@ test('public scanner configuration exposes only the contact and fixed page cap',
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     adminEmail: null,
-    maxPagesPerSite: 100,
+    maxPagesPerSite: 1000,
   });
 });
 
@@ -1503,5 +1503,94 @@ test('scan activity and control events persist without logging rejected changes'
         .first()
     ).count,
     0,
+  );
+});
+
+test('manual page requests require owner, same origin, current run and a known public URL', async () => {
+  const alice = await visitor();
+  const bob = await visitor();
+  const scan = await create(alice);
+  const path = `/scans/${scan.id}/pages`;
+  const target = 'https://outside.org/';
+  const submit = (body, overrides = {}) =>
+    request(path, { method: 'POST', cookie: alice, body, ...overrides });
+  const body = { url: target, runId: scan.runId };
+  assert.equal((await submit(body, { cookie: undefined })).status, 401);
+  assert.equal((await submit(body, { cookie: bob })).status, 404);
+  assert.equal(
+    (await submit(body, { origin: 'https://attacker.org' })).status,
+    403,
+  );
+  assert.equal(
+    (await submit(body)).status,
+    409,
+    'Legacy maps must use their supported execution mode',
+  );
+  await db
+    .prepare(
+      "UPDATE scans SET execution_mode = 'server', crawl_ready = 1, status = 'completed' WHERE id = ?",
+    )
+    .bind(scan.id)
+    .run();
+  const serialized = JSON.stringify(page());
+  await db
+    .prepare(
+      'INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    .bind(
+      scan.id,
+      site.seedUrl,
+      site.origin,
+      'fixture',
+      serialized,
+      serialized.length,
+    )
+    .run();
+  assert.equal((await submit({ url: target })).status, 400);
+  assert.equal(
+    (await submit({ ...body, runId: crypto.randomUUID() })).status,
+    409,
+  );
+  for (const url of [
+    'https://unknown.org/',
+    'http://127.0.0.1/private',
+    'not a URL',
+  ]) {
+    assert.equal((await submit({ ...body, url })).status, 400);
+  }
+  assert.equal(queuedCrawls.length, 0);
+  const response = await submit(body);
+  assert.equal(response.status, 200, await response.clone().text());
+  const snapshot = await response.json();
+  assert.equal(snapshot.id, scan.id);
+  assert.equal(snapshot.runId, scan.runId);
+  assert.deepEqual(snapshot.results, [page()]);
+  assert.ok(snapshot.pendingPages.includes(target));
+  assert.equal(snapshot.sites.length, 1);
+  const generation = await db
+    .prepare('SELECT crawl_generation FROM scans WHERE id = ?')
+    .bind(scan.id)
+    .first();
+  assert.equal((await submit(body)).status, 200);
+  assert.deepEqual(
+    await db
+      .prepare('SELECT crawl_generation FROM scans WHERE id = ?')
+      .bind(scan.id)
+      .first(),
+    generation,
+  );
+  assert.equal(
+    queuedCrawls.length,
+    1,
+    'Repeated manual admission must share existing queue work',
+  );
+  const reloaded = await (
+    await request(`/scans/${scan.id}`, { cookie: alice })
+  ).json();
+  assert.ok(reloaded.pendingPages.includes(target));
+  assert.equal(
+    outboundRequests,
+    0,
+    'The HTTP endpoint only queues crawler work',
   );
 });

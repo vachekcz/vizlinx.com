@@ -22,6 +22,7 @@ const pageLabels: Record<PageStatus, string> = {
   network_error: 'Stránku se nepodařilo načíst',
   redirect_unresolved: 'Přesměrování – zadej cílovou URL',
   robots_denied: 'Skenování zakázáno v robots.txt',
+  robots_unavailable: 'Robots.txt se nepodařilo načíst – skenování zastaveno',
   not_html: 'Vynecháno – není HTML',
   too_large: 'Stránka překročila limit velikosti',
 };
@@ -34,8 +35,13 @@ const limitLabels = {
 export function redirectLabel(redirect: ScanRedirect): string {
   if (redirect.kind === 'invalid' && redirect.reason === 'unsupported_status')
     return 'Nepodporovaný stav přesměrování – nenásledováno';
+  if (redirect.kind === 'invalid' && redirect.reason === 'redirect_loop')
+    return 'Přesměrování se zacyklilo – zastaveno';
+  if (redirect.kind === 'invalid' && redirect.reason === 'redirect_limit')
+    return 'Dosažen limit přesměrování – zastaveno';
   return {
     same_origin: 'Přesměrování v rámci webu',
+    site_variant: 'Přesměrování na HTTP/HTTPS nebo www variantu webu',
     external: 'Přesměrování mimo web – nenásledováno',
     invalid: 'Přesměrování bez platného HTTP(S) cíle – nenásledováno',
   }[redirect.kind];
@@ -55,6 +61,12 @@ function eventLabel(event: ScanLogEvent) {
     case 'settings_changed':
       return 'Změněno nastavení skenu';
     case 'robots_checked':
+      if (event.status === 'robots_unavailable')
+        return event.redirect
+          ? `${pageLabels.robots_unavailable} · ${redirectLabel(event.redirect)}`
+          : pageLabels.robots_unavailable;
+      if (event.redirect)
+        return `Robots.txt · ${redirectLabel(event.redirect)}`;
       return event.status === 'robots_denied'
         ? 'Robots.txt nepovoluje skenování'
         : 'Zkontrolována pravidla robots.txt';
@@ -66,7 +78,9 @@ function eventLabel(event: ScanLogEvent) {
           : 'Stránka zpracována';
       return event.crawlMode === 'preview'
         ? `Kontrola cílové URL · ${label}`
-        : label;
+        : event.crawlMode === 'manual'
+          ? `Ruční sken stránky · ${label}`
+          : label;
     }
     case 'scan_completed':
       return 'Známá fronta je dokončená';
@@ -119,7 +133,9 @@ export function ScanActivityStatus({
       title =
         activity.crawlMode === 'preview'
           ? 'Kontroluji cílovou stránku odkazu'
-          : 'Načítám stránku';
+          : activity.crawlMode === 'manual'
+            ? 'Skenuji vybranou stránku'
+            : 'Načítám stránku';
     else if (activity?.phase === 'waiting') {
       const next = Date.parse(activity.nextRequestAt ?? '');
       const seconds = Number.isFinite(next)
@@ -453,7 +469,9 @@ export default function ScanLogPanel({
   const [logErrors, setLogErrors] = useState(0);
   const resultErrors = scan.results.filter(
     (result) =>
-      result.status === 'http_error' || result.status === 'network_error',
+      result.status === 'http_error' ||
+      result.status === 'network_error' ||
+      result.status === 'robots_unavailable',
   ).length;
   const errors = Math.max(resultErrors, logErrors);
   return (
