@@ -2,8 +2,10 @@ import robotsParser from 'robots-parser';
 import {
   normalizeScanUrl,
   normalizeLinkUrl,
+  isSiteVariant,
   SCAN_LIMITS,
   type PageResult,
+  type ScanRedirect,
 } from '../shared/scan';
 import { extractHtml } from '../extension/extract';
 import {
@@ -14,7 +16,13 @@ import {
 } from '../shared/fetch-result';
 
 export const ROBOT_AGENT = 'VizlinxBot';
-export type StoredRobots = { body: string; denied: boolean; delayMs: number };
+export type StoredRobots = {
+  body: string;
+  denied: boolean;
+  delayMs: number;
+  httpStatus?: number;
+  redirect?: ScanRedirect;
+};
 
 // Use only the public Workers fetch API, never a private network/service binding.
 // Redirect targets are queued separately so every hop retains scope and budgets.
@@ -33,6 +41,40 @@ async function publicFetch(value: string, origin: string): Promise<Response> {
   });
 }
 
+function classifyRedirect(
+  response: Response,
+  sourceUrl: string,
+  scopeOrigin: string,
+): ScanRedirect {
+  const location = response.headers.get('location');
+  const targetUrl = location?.trim()
+    ? normalizeLinkUrl(location, sourceUrl)
+    : null;
+  const supported = [301, 302, 303, 307, 308].includes(response.status);
+  const invalid = (reason: 'unsupported_status' | 'invalid_target') =>
+    ({
+      kind: 'invalid',
+      reason,
+      ...(targetUrl ? { targetUrl } : {}),
+    }) satisfies ScanRedirect;
+  if (!supported) return invalid('unsupported_status');
+  if (!targetUrl) return invalid('invalid_target');
+  try {
+    normalizeScanUrl(targetUrl);
+  } catch {
+    return invalid('invalid_target');
+  }
+  return {
+    kind:
+      new URL(targetUrl).origin === new URL(sourceUrl).origin
+        ? 'same_origin'
+        : isSiteVariant(scopeOrigin, targetUrl)
+          ? 'site_variant'
+          : 'external',
+    targetUrl,
+  };
+}
+
 export function robotsAllows(
   policy: StoredRobots,
   origin: string,
@@ -47,15 +89,26 @@ export function robotsAllows(
   );
 }
 
-export async function fetchServerRobots(origin: string): Promise<StoredRobots> {
+export async function fetchServerRobots(
+  origin: string,
+  url = `${origin}/robots.txt`,
+): Promise<StoredRobots> {
   const denied: StoredRobots = { body: '', denied: true, delayMs: 0 };
   try {
-    const response = await publicFetch(`${origin}/robots.txt`, origin);
+    if (!isSiteVariant(origin, url)) return denied;
+    const sourceUrl = normalizeScanUrl(url);
+    const response = await publicFetch(sourceUrl, new URL(sourceUrl).origin);
+    denied.httpStatus = response.status;
+    if (response.status >= 300 && response.status < 400) {
+      denied.redirect = classifyRedirect(response, sourceUrl, origin);
+      await response.body?.cancel();
+      return denied;
+    }
     // An absent robots file allows crawling. Authentication failures, rate limits,
-    // redirects and unavailable policies fail closed for this prototype.
+    // and unavailable policies fail closed. Redirects need another queue tick.
     if (response.status === 404 || response.status === 410) {
       await response.body?.cancel();
-      return { body: '', denied: false, delayMs: 0 };
+      return { ...denied, denied: false };
     }
     if (!response.ok) {
       await response.body?.cancel();
@@ -68,6 +121,7 @@ export async function fetchServerRobots(origin: string): Promise<StoredRobots> {
       body,
       denied: false,
       delayMs: Number.isFinite(delay) && delay >= 0 ? delay : 0,
+      httpStatus: response.status,
     };
   } catch {
     return denied;
@@ -84,32 +138,17 @@ export async function fetchServerPage(
     result.httpStatus = response.status;
     if (response.status >= 300 && response.status < 400) {
       result.status = 'redirect_unresolved';
-      const location = response.headers.get('location');
-      const targetUrl = location?.trim()
-        ? normalizeLinkUrl(location, sourceUrl)
-        : null;
-      const supported = [301, 302, 303, 307, 308].includes(response.status);
-      result.redirect =
-        !supported || !targetUrl
-          ? {
-              kind: 'invalid',
-              reason: !supported ? 'unsupported_status' : 'invalid_target',
-              ...(targetUrl ? { targetUrl } : {}),
-            }
-          : {
-              kind:
-                new URL(targetUrl).origin === origin
-                  ? 'same_origin'
-                  : 'external',
-              targetUrl,
-            };
-      if (result.redirect.kind !== 'same_origin')
+      result.redirect = classifyRedirect(response, sourceUrl, origin);
+      if (
+        result.redirect.kind !== 'same_origin' &&
+        result.redirect.kind !== 'site_variant'
+      )
         result.error =
           result.redirect.kind === 'external'
-            ? 'Redirect leaves the source origin and was not followed.'
-            : !supported
+            ? 'Redirect leaves the source site and was not followed.'
+            : result.redirect.reason === 'unsupported_status'
               ? `Unsupported redirect status HTTP ${response.status} was not followed.`
-              : 'Redirect has no supported HTTP(S) target and was not followed.';
+              : 'Redirect has no supported public HTTP(S) target and was not followed.';
     } else if (!response.ok) {
       result.status = 'http_error';
       result.error = `HTTP ${response.status}`;

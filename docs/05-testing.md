@@ -2,7 +2,7 @@
 
 > Co se čím testuje, jak to spustit lokálně a které gates běží v CI. Definice pipeline je `.github/workflows/verify-and-deploy.yml`; její deploy část viz [04](./04-deployment.md).
 
-**Revidováno:** 2026-09-14 · **Platí pro:** aktuální kód v repozitáři
+**Revidováno:** 2026-09-15 · **Platí pro:** aktuální kód v repozitáři
 
 ## Obsah
 
@@ -76,7 +76,7 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 |---|---|
 | `scans.test.mjs` | web + runner API: vlastnictví a izolace návštěvníků, relace a retence, kvóty, párování, idempotentní upload, přidání webu, kontrola `Origin` |
 | `scan-history.test.mjs` | `runs`, `rescan`, archivace v jedné transakci, zastaralé `runId`, kapacita historie, sdílené rozpočty; zachování preview výsledků v archivu a reset kvót i HTTP 429 pro nový průchod |
-| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, redirecty, pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení |
+| `crawler.test.mjs` | `startServerScan` / `consumeCrawlBatch`: frontier, robots, brány originů, denní rozpočet, limity stránek, bajtů a času, lease a duplicitní zprávy, HTTP/HTTPS/www redirecty a jejich společný rozpočet/pauza, přesměrovaný robots (kurzor, smyčky, limit, denní rozpočet), pozdní odpovědi po pauze; automatické externí kontroly bez rozvíjení HTML odkazů, kvóty 10/100, HTTP 429, obnova velké mapy bez příliš velkého D1 parametru a povýšení webu bez opakovaného stažení, dodatečné připojení preview aliasu včetně HTTP 429 a ochrany proti zápisu bez uloženého důkazu |
 | `scan-log.test.mjs` | atomický zápis logu, dedup klíčů, ořez na 500, kaskáda při smazání mapy |
 | `fetch-result.test.mjs` | streamový limit těla, ořez výsledku na 256 KiB, klasifikace robots a HTTP odpovědí |
 

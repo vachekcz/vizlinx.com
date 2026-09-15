@@ -34,8 +34,13 @@ const limitLabels = {
 export function redirectLabel(redirect: ScanRedirect): string {
   if (redirect.kind === 'invalid' && redirect.reason === 'unsupported_status')
     return 'Nepodporovaný stav přesměrování – nenásledováno';
+  if (redirect.kind === 'invalid' && redirect.reason === 'redirect_loop')
+    return 'Přesměrování se zacyklilo – zastaveno';
+  if (redirect.kind === 'invalid' && redirect.reason === 'redirect_limit')
+    return 'Dosažen limit přesměrování – zastaveno';
   return {
     same_origin: 'Přesměrování v rámci webu',
+    site_variant: 'Přesměrování na HTTP/HTTPS nebo www variantu webu',
     external: 'Přesměrování mimo web – nenásledováno',
     invalid: 'Přesměrování bez platného HTTP(S) cíle – nenásledováno',
   }[redirect.kind];
@@ -55,6 +60,8 @@ function eventLabel(event: ScanLogEvent) {
     case 'settings_changed':
       return 'Změněno nastavení skenu';
     case 'robots_checked':
+      if (event.redirect)
+        return `Robots.txt · ${redirectLabel(event.redirect)}`;
       return event.status === 'robots_denied'
         ? 'Robots.txt nepovoluje skenování'
         : 'Zkontrolována pravidla robots.txt';

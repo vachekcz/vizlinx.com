@@ -1,6 +1,7 @@
 import { normalizeLinkUrl } from '../shared/scan';
 import type { ScanSnapshot } from '../shared/scan';
 import type { GraphDataset, Link, Page, Site } from './data';
+import { resolveScanResult } from './scan-results';
 
 function hash(value: string) {
   let result = 2166136261;
@@ -14,6 +15,29 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
   const pages = new Map<string, Page>();
   const links = new Map<string, Link>();
   const scoped = new Set(scan.sites.map((site) => site.origin));
+  const owners = new Map<string, string>();
+  const ownerOf = (origin: string): string => {
+    let owner = origin;
+    while (owners.has(owner)) owner = owners.get(owner)!;
+    return owner;
+  };
+  const assignOwner = (origin: string, owner: string) => {
+    const root = ownerOf(origin);
+    const target = ownerOf(owner);
+    if (root !== target && !scoped.has(root)) owners.set(root, target);
+  };
+  // Server evidence joins aliases; explicitly selected origins stay independent.
+  for (const result of scan.results) {
+    if (result.siteOrigin)
+      assignOwner(new URL(result.sourceUrl).origin, result.siteOrigin);
+  }
+  for (const result of scan.results) {
+    if (result.redirect?.kind === 'site_variant')
+      assignOwner(
+        new URL(result.redirect.targetUrl).origin,
+        result.siteOrigin ?? new URL(result.sourceUrl).origin,
+      );
+  }
   const addSite = (origin: string) => {
     if (sites.has(origin)) return;
     const url = new URL(origin);
@@ -53,10 +77,11 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
     const existing = pages.get(normalized);
     if (existing) return existing;
     const url = new URL(normalized);
-    addSite(url.origin);
+    const owner = ownerOf(url.origin);
+    addSite(owner);
     const page: Page = {
       id: normalized,
-      siteId: url.origin,
+      siteId: owner,
       path: `${url.pathname}${url.search}`,
       title: `${url.pathname}${url.search}`,
       url: normalized,
@@ -127,15 +152,8 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
     let checkedTargets = 0;
     let failedTargets = 0;
     for (const target of targets) {
-      let result = resultsByUrl.get(target);
-      const visited = new Set<string>();
-      while (
-        result?.redirect?.kind === 'same_origin' &&
-        !visited.has(result.sourceUrl)
-      ) {
-        visited.add(result.sourceUrl);
-        result = resultsByUrl.get(result.redirect.targetUrl);
-      }
+      const initial = resultsByUrl.get(target);
+      const result = initial && resolveScanResult(initial, resultsByUrl);
       if (result?.status === 'ok') checkedTargets++;
       else if (result) failedTargets++;
     }

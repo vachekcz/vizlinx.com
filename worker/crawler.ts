@@ -1,5 +1,7 @@
 import {
   normalizeScanUrl,
+  isSiteVariant,
+  isFollowableRedirect,
   SCAN_LIMITS,
   type PageResult,
   type ScanSite,
@@ -62,12 +64,34 @@ function leaseBindings(lease: Lease): [string, number, string, number] {
   ];
 }
 
-function safeUrls(urls: string[], origin: string): string[] {
+type CrawlOwner = { url: string; origin: string; is_preview: number };
+
+// Frontier origins identify the budget owner; URLs retain the network origin.
+function originOwners(
+  sites: ScanSite[],
+  entries: CrawlOwner[],
+): Map<string, string> {
+  const owners = new Map(sites.map((site) => [site.origin, site.origin]));
+  for (const entry of entries) {
+    const actual = new URL(entry.url).origin;
+    if (!owners.has(actual) && isSiteVariant(entry.origin, actual))
+      owners.set(actual, entry.origin);
+  }
+  return owners;
+}
+
+function safeUrls(
+  urls: string[],
+  origin: string,
+  owners = new Map<string, string>(),
+): string[] {
   const unique = new Set<string>();
   for (const value of urls) {
+    if (unique.size >= FRONTIER_SIZE) break;
     try {
       const url = normalizeScanUrl(value);
-      if (new URL(url).origin === origin) unique.add(url);
+      if ((owners.get(new URL(url).origin) ?? new URL(url).origin) === origin)
+        unique.add(url);
     } catch {
       // A discovered URL is untrusted, even when imported from a legacy scan.
     }
@@ -76,11 +100,93 @@ function safeUrls(urls: string[], origin: string): string[] {
 }
 
 function redirectTargets(result: PageResult, origin: string): string[] {
-  return result.redirect?.kind === 'same_origin' &&
-    result.redirect.targetUrl &&
-    new URL(result.sourceUrl).origin === origin
+  return isFollowableRedirect(result.redirect) &&
+    (result.siteOrigin ?? new URL(result.sourceUrl).origin) === origin &&
+    isSiteVariant(origin, result.redirect.targetUrl)
     ? [result.redirect.targetUrl]
     : [];
+}
+
+function allowRedirectOrigin(
+  result: PageResult,
+  owners: Map<string, string>,
+  sites: ScanSite[],
+): { from: string; to: string } | null {
+  const owner =
+    owners.get(new URL(result.sourceUrl).origin) ??
+    result.siteOrigin ??
+    new URL(result.sourceUrl).origin;
+  if (
+    !isFollowableRedirect(result.redirect) ||
+    !isSiteVariant(owner, result.redirect.targetUrl)
+  )
+    return null;
+  const actual = new URL(result.redirect.targetUrl).origin;
+  const previous = owners.get(actual);
+  if (previous === owner || sites.some((site) => site.origin === previous))
+    return null;
+  owners.set(actual, owner);
+  if (!previous) return null;
+  for (const [alias, current] of owners)
+    if (current === previous) owners.set(alias, owner);
+  return { from: previous, to: owner };
+}
+
+function transferOwnerStatements(
+  env: Env,
+  guard: { scanId: string; generation: number; token?: string },
+  transfer: { from: string; to: string },
+  sites: ScanSite[],
+  sourceUrl: string,
+): D1PreparedStatement[] {
+  // Keep preview reservations and historical result metadata unchanged.
+  const proof = `EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?2
+    AND status = 'running' AND execution_mode = 'server'
+    AND (?5 IS NULL OR crawl_lease_token = ?5) AND created_at > ?6)
+    AND EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?7)`;
+  const bindings = [
+    guard.scanId,
+    guard.generation,
+    transfer.from,
+    transfer.to,
+    guard.token ?? null,
+    Date.now() - RETENTION_MS,
+    sourceUrl,
+  ];
+  const throttled = `EXISTS (SELECT 1 FROM crawl_robots WHERE scan_id = ?1 AND origin = ?3 AND preview_throttled = 1)`;
+  const preview = !sites.some((site) => site.origin === transfer.to);
+  return [
+    env.DB.prepare(
+      `UPDATE crawl_frontier SET origin = ?4
+      WHERE scan_id = ?1 AND origin = ?3 AND ${proof}`,
+    ).bind(...bindings),
+    preview
+      ? env.DB.prepare(
+          `UPDATE crawl_robots SET preview_throttled = 1
+        WHERE scan_id = ?1 AND origin = ?4 AND preview_throttled = 0 AND ${proof} AND ${throttled}`,
+        ).bind(...bindings)
+      : env.DB.prepare(
+          `UPDATE scans SET sites_json = (
+          SELECT json_group_array(json(CASE WHEN json_extract(value, '$.origin') = ?4
+            THEN json_set(value, '$.paused', json('true')) ELSE value END)) FROM json_each(sites_json))
+        WHERE id = ?1 AND ${proof} AND ${throttled}
+        AND EXISTS (SELECT 1 FROM json_each(sites_json) WHERE json_extract(value, '$.origin') = ?4 AND json_extract(value, '$.paused') = 0)`,
+        ).bind(...bindings),
+    ...scanLogStatements(
+      env,
+      guard.scanId,
+      `throttled:alias:${transfer.from}:${transfer.to}`,
+      {
+        at: new Date().toISOString(),
+        type: 'site_throttled',
+        level: 'warning',
+        origin: transfer.to,
+        httpStatus: 429,
+        ...(preview ? { crawlMode: 'preview' as const } : {}),
+      },
+      { sql: 'changes() = 1', bindings: [] },
+    ),
+  ];
 }
 
 function addFrontier(
@@ -89,6 +195,7 @@ function addFrontier(
   origin: string,
   urls: string[],
   generation: number,
+  owners = new Map<string, string>(),
 ) {
   return env.DB.prepare(
     `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin)
@@ -100,7 +207,7 @@ function addFrontier(
   ).bind(
     id,
     origin,
-    JSON.stringify(safeUrls(urls, origin)),
+    JSON.stringify(safeUrls(urls, origin, owners)),
     generation,
     FRONTIER_SIZE,
   );
@@ -112,7 +219,8 @@ function previewFrontierStatements(
   urls: string[],
   sites: ScanSite[],
   sourceUrl: string | null = null,
-  existing?: { url: string; origin: string; is_preview: number }[],
+  existing?: CrawlOwner[],
+  owners = new Map<string, string>(),
 ): D1PreparedStatement[] {
   const scoped = new Set(sites.map((site) => site.origin));
   const known = new Set(existing?.map((entry) => entry.url));
@@ -127,15 +235,13 @@ function previewFrontierStatements(
   for (const value of urls) {
     // A resumed map can contain megabytes of links. Preselect only the remaining
     // slots before binding JSON; SQL still enforces the limits atomically.
-    if (existing && remaining <= 0) break;
+    if (remaining <= 0) break;
     try {
       const url = normalizeScanUrl(value);
-      const origin = new URL(url).origin;
+      const actualOrigin = new URL(url).origin;
+      const origin = owners.get(actualOrigin) ?? actualOrigin;
       if (scoped.has(origin) || known.has(url) || candidates.has(url)) continue;
-      if (
-        existing &&
-        (previewCounts.get(origin) ?? 0) >= SCAN_LIMITS.previewPagesPerSite
-      )
+      if ((previewCounts.get(origin) ?? 0) >= SCAN_LIMITS.previewPagesPerSite)
         continue;
       candidates.set(url, { url, origin });
       previewCounts.set(origin, (previewCounts.get(origin) ?? 0) + 1);
@@ -332,7 +438,7 @@ export async function startServerScan(
       ),
       env.DB.prepare(
         `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin, state, is_preview)
-        SELECT scan_id, source_url, source_origin, 'done',
+        SELECT scan_id, source_url, COALESCE(json_extract(result_json, '$.siteOrigin'), source_origin), 'done',
           CASE WHEN json_extract(result_json, '$.crawlMode') = 'preview' THEN 1 ELSE 0 END
         FROM page_results WHERE scan_id = ?1
         AND EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?2)`,
@@ -361,9 +467,37 @@ export async function startServerScan(
     const savedResults = saved.results.map(
       ({ result_json }) => JSON.parse(result_json) as PageResult,
     );
+    const existing = (
+      await env.DB.prepare(
+        'SELECT url, origin, is_preview FROM crawl_frontier WHERE scan_id = ?1',
+      )
+        .bind(scanId)
+        .all<CrawlOwner>()
+    ).results;
+    const owners = originOwners(scanSites, existing);
+    for (const result of savedResults) {
+      const transfer = allowRedirectOrigin(result, owners, scanSites);
+      if (transfer) {
+        await env.DB.batch(
+          transferOwnerStatements(
+            env,
+            { scanId, generation: updated.crawl_generation },
+            transfer,
+            scanSites,
+            result.sourceUrl,
+          ),
+        );
+        for (const entry of existing)
+          if (entry.origin === transfer.from) entry.origin = transfer.to;
+      }
+    }
     const scoped = new Set(scanSites.map((site) => site.origin));
     const fullResults = savedResults.filter((result) =>
-      scoped.has(new URL(result.sourceUrl).origin),
+      scoped.has(
+        owners.get(new URL(result.sourceUrl).origin) ??
+          result.siteOrigin ??
+          new URL(result.sourceUrl).origin,
+      ),
     );
     for (const site of scanSites) {
       const discovered = fullResults.flatMap((result) => {
@@ -380,12 +514,20 @@ export async function startServerScan(
           site.origin,
           discovered,
           updated.crawl_generation,
+          owners,
         ).run();
     }
     const previewUrls = savedResults.flatMap((result) =>
-      scoped.has(new URL(result.sourceUrl).origin)
+      scoped.has(
+        owners.get(new URL(result.sourceUrl).origin) ??
+          result.siteOrigin ??
+          new URL(result.sourceUrl).origin,
+      )
         ? result.links.map((link) => link.targetUrl)
-        : redirectTargets(result, new URL(result.sourceUrl).origin),
+        : redirectTargets(
+            result,
+            result.siteOrigin ?? new URL(result.sourceUrl).origin,
+          ),
     );
     const previewStatements = previewFrontierStatements(
       env,
@@ -393,13 +535,8 @@ export async function startServerScan(
       previewUrls,
       scanSites,
       null,
-      (
-        await env.DB.prepare(
-          'SELECT url, origin, is_preview FROM crawl_frontier WHERE scan_id = ?1',
-        )
-          .bind(scanId)
-          .all<{ url: string; origin: string; is_preview: number }>()
-      ).results,
+      existing,
+      owners,
     );
     if (previewStatements.length) await env.DB.batch(previewStatements);
     const ready = await env.DB.prepare(
@@ -524,10 +661,41 @@ async function storeResult(
   lease: Lease,
   result: PageResult,
   sites: ScanSite[],
+  candidate: FrontierRow,
+  frontier: FrontierRow[],
 ): Promise<void> {
-  const origin = new URL(result.sourceUrl).origin;
+  const origin = candidate.origin;
+  const actualOrigin = new URL(result.sourceUrl).origin;
+  if (origin !== actualOrigin) result = { ...result, siteOrigin: origin };
+  if (
+    isFollowableRedirect(result.redirect) &&
+    !isSiteVariant(origin, result.redirect.targetUrl)
+  ) {
+    result = {
+      ...result,
+      redirect: { kind: 'external', targetUrl: result.redirect.targetUrl },
+      error: 'Redirect leaves the scan site and was not followed.',
+    };
+  }
+  const owners = originOwners(sites, frontier);
+  const transfer = allowRedirectOrigin(result, owners, sites);
   const preview = !sites.some((site) => site.origin === origin);
   if (preview) result = { ...result, crawlMode: 'preview' };
+  const promotedResults: PageResult[] =
+    transfer && !preview
+      ? (
+          await env.DB.prepare(
+            `SELECT p.result_json FROM page_results p JOIN crawl_frontier f
+        ON f.scan_id = p.scan_id AND f.url = p.source_url WHERE p.scan_id = ?1 AND f.origin = ?2`,
+          )
+            .bind(lease.scanId, transfer.from)
+            .all<{ result_json: string }>()
+        ).results.map(
+          ({ result_json }) =>
+            ({ ...JSON.parse(result_json), siteOrigin: origin }) as PageResult,
+        )
+      : [];
+  const fullResults = preview ? [] : [result, ...promotedResults];
   const json = JSON.stringify(result);
   const encoded = new TextEncoder().encode(json);
   const hash = Array.from(
@@ -538,18 +706,21 @@ async function storeResult(
     env.DB.prepare(
       `INSERT INTO page_results (scan_id, source_url, source_origin, result_hash, result_json, result_bytes)
       SELECT ?1, ?5, ?6, ?7, ?8, ?9 WHERE EXISTS (${activeSql})
-      AND (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1 AND source_origin = ?6) < ?10
+      AND (SELECT COUNT(*) FROM page_results p JOIN crawl_frontier f
+        ON f.scan_id = p.scan_id AND f.url = p.source_url
+        WHERE p.scan_id = ?1 AND f.origin = ?12) < ?10
       AND (SELECT COALESCE(SUM(result_bytes), 0) FROM page_results WHERE scan_id = ?1) + ?9 <= ?11
       ON CONFLICT(scan_id, source_url) DO NOTHING`,
     ).bind(
       ...leaseBindings(lease),
       result.sourceUrl,
-      origin,
+      actualOrigin,
       hash,
       json,
       encoded.byteLength,
       preview ? SCAN_LIMITS.previewPagesPerSite : SCAN_LIMITS.pagesPerSite,
       MAX_SCAN_BYTES,
+      origin,
     ),
     ...scanLogStatements(
       env,
@@ -561,7 +732,7 @@ async function storeResult(
         ...(preview ? { crawlMode: 'preview' as const } : {}),
         level: ['http_error', 'network_error'].includes(result.status)
           ? 'error'
-          : result.status === 'ok' || result.redirect?.kind === 'same_origin'
+          : result.status === 'ok' || isFollowableRedirect(result.redirect)
             ? 'info'
             : 'warning',
         origin,
@@ -620,8 +791,11 @@ async function storeResult(
           ),
         ]
       : []),
+    ...(transfer
+      ? transferOwnerStatements(env, lease, transfer, sites, result.sourceUrl)
+      : []),
     // The result, completed frontier entry and newly discovered links commit together.
-    ...(preview ? [] : sites).map((site) =>
+    ...sites.map((site) =>
       env.DB.prepare(
         `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin)
       SELECT ?1, value, ?5 FROM json_each(?6) WHERE EXISTS (${activeSql})
@@ -635,11 +809,15 @@ async function storeResult(
         JSON.stringify(
           safeUrls(
             [
-              ...redirectTargets(result, site.origin),
-              ...result.discoveredUrls,
-              ...result.links.map((link) => link.targetUrl),
+              ...redirectTargets(result, origin),
+              ...fullResults.flatMap((saved) => [
+                ...redirectTargets(saved, origin),
+                ...saved.discoveredUrls,
+                ...saved.links.map((link) => link.targetUrl),
+              ]),
             ],
             site.origin,
+            owners,
           ),
         ),
         result.sourceUrl,
@@ -651,9 +829,17 @@ async function storeResult(
       lease,
       preview
         ? redirectTargets(result, origin)
-        : result.links.map((link) => link.targetUrl),
+        : fullResults.flatMap((saved) =>
+            saved.links.map((link) => link.targetUrl),
+          ),
       sites,
       result.sourceUrl,
+      frontier.map((entry) =>
+        transfer && entry.origin === transfer.from
+          ? { ...entry, origin: transfer.to }
+          : entry,
+      ),
+      owners,
     ),
     env.DB.prepare(
       `SELECT EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?5) AS stored
@@ -783,14 +969,12 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
       ? !scopedSite.paused
       : entry.is_preview === 1 && !entry.preview_throttled;
   };
-  const counts = new Map(
-    scanSites.map((site) => [
-      site.origin,
-      frontier.filter(
-        (entry) => entry.origin === site.origin && entry.state !== 'pending',
-      ).length,
-    ]),
-  );
+  const counts = new Map<string, number>();
+  for (const entry of frontier) {
+    if (entry.state !== 'pending')
+      counts.set(entry.origin, (counts.get(entry.origin) ?? 0) + 1);
+  }
+
   const candidate =
     frontier.find(
       (entry) => entry.state === 'attempted' && isEligible(entry),
@@ -798,12 +982,15 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     frontier.find(
       (entry) =>
         entry.state === 'pending' &&
-        (counts.get(entry.origin) ?? 0) < SCAN_LIMITS.pagesPerSite &&
+        (counts.get(entry.origin) ?? 0) <
+          (scanSites.some((site) => site.origin === entry.origin)
+            ? SCAN_LIMITS.pagesPerSite
+            : SCAN_LIMITS.previewPagesPerSite) &&
         isEligible(entry),
     );
   if (!candidate) {
-    const limited = [...counts.values()].some(
-      (count) => count >= SCAN_LIMITS.pagesPerSite,
+    const limited = scanSites.some(
+      (site) => (counts.get(site.origin) ?? 0) >= SCAN_LIMITS.pagesPerSite,
     );
     const hasPausedWork = frontier.some(
       (entry) =>
@@ -830,6 +1017,8 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         'The previous request was interrupted. It was not retried.',
       ),
       scanSites,
+      candidate,
+      frontier,
     );
     await checkpoint(env, lease);
     return;
@@ -842,20 +1031,33 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     origin: candidate.origin,
     intervalMs: 3000,
   };
+  const networkOrigin = new URL(candidate.url).origin;
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO crawl_robots (scan_id, origin)
+    SELECT ?1, ?5 WHERE EXISTS (${activeSql})`,
+  )
+    .bind(...leaseBindings(lease), networkOrigin)
+    .run();
   const robotsRow = await env.DB.prepare(
     'SELECT state, policy_json FROM crawl_robots WHERE scan_id = ?1 AND origin = ?2',
   )
-    .bind(body.scanId, site.origin)
+    .bind(body.scanId, networkOrigin)
     .first<{ state: string; policy_json: string | null }>();
   if (!robotsRow) throw new Error('Robots checkpoint is missing.');
-  let policy: StoredRobots = robotsRow.policy_json
-    ? (JSON.parse(robotsRow.policy_json) as StoredRobots)
+  type RobotsCheckpoint = StoredRobots & {
+    nextUrl?: string;
+    visitedUrls?: string[];
+  };
+  let policy: RobotsCheckpoint = robotsRow.policy_json
+    ? (JSON.parse(robotsRow.policy_json) as RobotsCheckpoint)
     : { body: '', denied: true, delayMs: 0 };
   if (robotsRow.state === 'pending') {
+    const robotsUrl = policy.nextUrl ?? `${networkOrigin}/robots.txt`;
+    const robotsOrigin = new URL(robotsUrl).origin;
     const wait = await reserveOrigin(
       env,
       lease,
-      site.origin,
+      robotsOrigin,
       Math.max(1000, site.intervalMs),
     );
     if (wait) {
@@ -863,7 +1065,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         env,
         lease,
         Math.min(wait, Math.max(0, lease.startedAt + RUN_MS - Date.now())),
-        site.origin,
+        robotsOrigin,
         preview,
       );
       return;
@@ -873,40 +1075,71 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
       `UPDATE crawl_robots SET state = 'attempted'
       WHERE scan_id = ?1 AND origin = ?5 AND state = 'pending' AND EXISTS (${activeSql}) RETURNING origin`,
     )
-      .bind(...leaseBindings(lease), site.origin)
+      .bind(...leaseBindings(lease), networkOrigin)
       .first();
     if (!claimed) return;
     await setActivity(env, lease, {
       phase: 'fetching_robots',
       ...(preview ? { crawlMode: 'preview' as const } : {}),
       origin: site.origin,
-      url: `${site.origin}/robots.txt`,
+      url: robotsUrl,
     });
-    policy = await fetchServerRobots(site.origin);
+    const visitedUrls = [...(policy.visitedUrls ?? []), robotsUrl];
+    policy = await fetchServerRobots(networkOrigin, robotsUrl);
+    if (isFollowableRedirect(policy.redirect)) {
+      const targetUrl = policy.redirect.targetUrl;
+      const reason = visitedUrls.includes(targetUrl)
+        ? 'redirect_loop'
+        : visitedUrls.length > 5
+          ? 'redirect_limit'
+          : null;
+      policy = reason
+        ? { ...policy, redirect: { kind: 'invalid', targetUrl, reason } }
+        : { ...policy, nextUrl: targetUrl, visitedUrls };
+    }
+    const continuing = !!policy.nextUrl;
     await env.DB.batch([
       env.DB.prepare(
-        `UPDATE crawl_robots SET state = 'done', policy_json = ?6
+        `UPDATE crawl_robots SET state = ?7, policy_json = ?6
         WHERE scan_id = ?1 AND origin = ?5 AND EXISTS (${activeSql})`,
-      ).bind(...leaseBindings(lease), site.origin, JSON.stringify(policy)),
+      ).bind(
+        ...leaseBindings(lease),
+        networkOrigin,
+        JSON.stringify(policy),
+        continuing ? 'pending' : 'done',
+      ),
       ...scanLogStatements(
         env,
         lease.scanId,
-        `robots:${site.origin}`,
+        `robots:${networkOrigin}:${robotsUrl}`,
         {
           at: new Date().toISOString(),
           type: 'robots_checked',
           ...(preview ? { crawlMode: 'preview' as const } : {}),
-          level: policy.denied ? 'warning' : 'info',
+          level: policy.denied && !continuing ? 'warning' : 'info',
           origin: site.origin,
-          url: `${site.origin}/robots.txt`,
-          status: policy.denied ? 'robots_denied' : 'ok',
+          url: robotsUrl,
+          status: continuing
+            ? 'redirect_unresolved'
+            : policy.denied
+              ? 'robots_denied'
+              : 'ok',
+          ...(policy.httpStatus !== undefined
+            ? { httpStatus: policy.httpStatus }
+            : {}),
+          ...(policy.redirect ? { redirect: policy.redirect } : {}),
         },
         { sql: 'changes() = 1', bindings: [] },
       ),
       env.DB.prepare(
-        `UPDATE crawl_origin_gates SET next_allowed_at = MAX(next_allowed_at, ?6)
-        WHERE origin = ?5 AND EXISTS (${activeSql})`,
-      ).bind(...leaseBindings(lease), site.origin, Date.now() + policy.delayMs),
+        `UPDATE crawl_origin_gates SET next_allowed_at = MAX(next_allowed_at, ?7)
+        WHERE origin IN (?5, ?6) AND EXISTS (${activeSql})`,
+      ).bind(
+        ...leaseBindings(lease),
+        robotsOrigin,
+        networkOrigin,
+        Date.now() + policy.delayMs,
+      ),
     ]);
     await checkpoint(
       env,
@@ -920,11 +1153,11 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     );
     return;
   }
-  if (robotsAllows(policy, site.origin, candidate.url)) {
+  if (robotsAllows(policy, networkOrigin, candidate.url)) {
     const wait = await reserveOrigin(
       env,
       lease,
-      site.origin,
+      networkOrigin,
       Math.max(1000, site.intervalMs, policy.delayMs),
     );
     if (wait) {
@@ -952,14 +1185,14 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     origin: site.origin,
     url: candidate.url,
   });
-  const result = robotsAllows(policy, site.origin, candidate.url)
-    ? await fetchServerPage(candidate.url, site.origin)
+  const result = robotsAllows(policy, networkOrigin, candidate.url)
+    ? await fetchServerPage(candidate.url, networkOrigin)
     : emptyResult(
         candidate.url,
         'robots_denied',
         'Crawling is not allowed by the site robots policy.',
       );
-  await storeResult(env, lease, result, scanSites);
+  await storeResult(env, lease, result, scanSites, candidate, frontier);
   await checkpoint(env, lease);
 }
 
