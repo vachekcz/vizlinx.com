@@ -39,6 +39,8 @@ import type { GraphHighlightTarget } from '../Graph';
 import HoverStudies, { useHoverStudies } from './HoverStudies';
 import type { PreviewEvents } from './HoverStudies';
 import ExternalLink from '../ExternalLink';
+import StudyLogDialog from './StudyLogDialog';
+import type { StudyScanIssue } from './StudyLogDialog';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
 import type { Connection, GraphDataset, Link, Selection, Site } from '../data';
 import { useTheme } from '../themes';
@@ -82,12 +84,6 @@ type DetailStep = {
   selection: Selection;
   scrollTop: number;
   focusTarget: string | null;
-};
-type StudyScanIssue = {
-  siteId: string;
-  url: string;
-  message: string;
-  level: 'error' | 'warning';
 };
 const tabs: {
   id: Exclude<View, 'new'>;
@@ -370,10 +366,11 @@ function Study({
             siteId: page.siteId,
             url: pageUrl(page),
             message: [
-              'HTTP 404 · stránka nenalezena',
+              'Stránka nenalezena',
               'Chyba sítě · vypršel čas načítání',
               'Vynecháno · zakázáno robots.txt',
             ][index],
+            httpStatus: index === 0 ? 404 : undefined,
             level: index === 2 ? 'warning' : 'error',
           }))
       : [];
@@ -1484,7 +1481,28 @@ function Study({
           )}
         </>
       )}
-      {logOpen && (
+      {variant === 2 && (
+        <StudyLogDialog
+          key={`${archived ? 'archive' : 'current'}-${archivedRun ?? run}-${domains.join(',')}`}
+          open={logOpen}
+          sites={scanned}
+          links={currentLinks}
+          state={archived ? 'completed' : state}
+          run={archivedRun ?? run}
+          archived={archived}
+          activeSiteIds={activeSites.filter((id) => !pausedSites.includes(id))}
+          countLabel={formatPageCount(loadedPageIds.size)}
+          issues={scanIssues}
+          onClose={() => setLogOpen(false)}
+          onComplete={() => {
+            setState('completed');
+            setActiveSites([]);
+            setPausedSites([]);
+            setToast('Ukázkový sken dokončen. Výsledky jsou připravené.');
+          }}
+        />
+      )}
+      {variant !== 2 && logOpen && (
         <LogDialog
           sites={scanned}
           state={archived ? 'completed' : state}

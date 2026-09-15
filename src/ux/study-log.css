@@ -1,0 +1,228 @@
+.ux.ux-study-log {
+  width: min(720px, calc(100% - 32px));
+  max-width: none;
+  height: min(660px, calc(100dvh - 40px));
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+  background: var(--surface);
+}
+.ux.ux-study-log[open] {
+  display: flex;
+  flex-direction: column;
+}
+.ux-study-log-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 24px 24px 16px;
+}
+.ux-study-log .ux-study-log-header h2 {
+  font-size: 25px;
+  margin-top: 3px;
+}
+.ux-study-log-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+  font-size: 11px;
+}
+.ux-study-log-status > svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.ux-study-log-controls {
+  flex: 0 0 auto;
+  padding: 0 24px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.ux-study-log-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 11px;
+  margin-bottom: 16px;
+}
+.ux-study-log-summary b {
+  font-weight: 650;
+  color: var(--ink);
+}
+.ux-study-log-filters {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 12px;
+}
+.ux-study-log-filters select {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1;
+  height: 36px;
+}
+.ux-study-log-filters label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.ux-study-log-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.ux-study-log-events {
+  height: 100%;
+  padding: 0 24px;
+  margin: 0;
+  list-style: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+}
+.ux-study-log-events > li:not(.ux-empty) {
+  display: grid;
+  grid-template-columns: 54px 16px minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.ux-study-log-events time {
+  padding-top: 2px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.ux-study-log-event-icon {
+  display: flex;
+  padding-top: 2px;
+  color: var(--accent);
+}
+.ux-study-log-events .is-error .ux-study-log-event-icon {
+  color: var(--site-journal);
+}
+.ux-study-log-events .is-warning .ux-study-log-event-icon {
+  color: var(--site-objects);
+}
+.ux-study-log-event-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12px;
+}
+.ux-study-log-event-heading strong {
+  font-weight: 650;
+}
+.ux-study-log-event-heading > span {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ux-study-log-url {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ux-study-log-url > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-top: 3px;
+}
+.ux-study-log-url > svg {
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+.ux-study-log-url .external-link {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+.ux-study-log-url .external-link:hover,
+.ux-study-log-url .external-link:focus-visible {
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.ux-study-log-url .external-link svg {
+  width: 12px;
+  height: 12px;
+}
+.ux-study-log-latest {
+  position: absolute;
+  top: 9px;
+  right: 24px;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--ux-shadow);
+  font-size: 11px;
+}
+.ux-study-log-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+}
+.ux-study-log-footer p {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+}
+.ux-study-log-footer .ux-button {
+  font-size: 11px;
+}
+@media (max-width: 600px) {
+  .ux.ux-study-log {
+    width: calc(100% - 20px);
+    height: min(660px, calc(100dvh - 24px));
+    max-height: calc(100dvh - 24px);
+  }
+  .ux-study-log-header {
+    padding: 18px 16px 12px;
+  }
+  .ux-study-log .ux-study-log-header h2 {
+    font-size: 23px;
+  }
+  .ux-study-log-controls {
+    padding: 0 16px 12px;
+  }
+  .ux-study-log-summary {
+    gap: 2px 12px;
+    margin-bottom: 12px;
+  }
+  .ux-study-log-filters {
+    gap: 12px;
+  }
+  .ux-study-log-events {
+    padding: 0 12px;
+  }
+  .ux-study-log-events > li:not(.ux-empty) {
+    grid-template-columns: 47px 14px minmax(0, 1fr);
+    gap: 6px;
+  }
+  .ux-study-log-events time {
+    font-size: 9px;
+  }
+  .ux-study-log-latest {
+    right: 16px;
+  }
+  .ux-study-log-footer {
+    padding: 12px 16px;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
