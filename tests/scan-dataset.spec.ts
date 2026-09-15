@@ -375,7 +375,9 @@ test('does not turn the internal discovery queue or non-web links into graph edg
     ]),
   );
   expect(data.links).toHaveLength(0);
-  expect(data.pages.some((page) => page.path === '/queued')).toBe(false);
+  expect(data.pages.find((page) => page.path === '/queued')?.status).toBe(
+    'known',
+  );
   expect(data.sites).toHaveLength(2);
 });
 
@@ -662,22 +664,32 @@ test('limits live map detail while preserving every discovered link in table and
   await expect(page.getByTestId('link-count')).toHaveText('252');
   await expect(page.locator('.site-node')).toHaveCount(12);
   await expect(
-    page.getByText('Dalších 3 odkazovaných webů najdete v tabulce.'),
+    page.getByText('Dalších 3 odkazovaných webů najdete v seznamu a tabulce.'),
   ).toBeAttached();
   const external = page.getByRole('button', {
     name: 'Doména external.cz',
     exact: true,
   });
   await expect(page.locator('.sidebar-section-label > span').last()).toHaveText(
-    '12',
+    '15',
   );
   if (testInfo.project.name === 'desktop') {
     await page.getByLabel('Hledat doménu v seznamu').fill('other-11.cz');
     await expect(
-      page.getByText('Žádná doména neodpovídá hledání.', { exact: true }),
+      page.locator('.site-list').getByRole('button', { name: /other-11.cz/ }),
     ).toBeVisible();
     await page.getByLabel('Hledat doménu v seznamu').fill('');
   }
+  await page
+    .getByLabel('Vybrat web v mapě')
+    .selectOption('https://other-11.cz');
+  await expect(page.locator('.inspector h2')).toHaveText('other-11.cz');
+  await expect(
+    page.locator('.inspector').getByRole('button', {
+      name: 'Proskenovat https://other-11.cz/',
+      exact: true,
+    }),
+  ).toBeEnabled();
   const center = await external.locator('circle').evaluate((circle) => ({
     x: Number(circle.getAttribute('cx')),
     y: Number(circle.getAttribute('cy')),
@@ -857,3 +869,106 @@ test('balances crowded live domains by default and preserves manual placement as
   await expectSiteSpacing(page);
   await expectBalancedLiveLayout(page);
 });
+
+test('keeps pending manual aliases with their owner while honoring explicitly selected variants', () => {
+  const owner = 'https://alpha.cz';
+  const alias = 'https://www.alpha.cz';
+  const scan: ScanSnapshot = {
+    ...snapshot([
+      result({
+        status: 'redirect_unresolved',
+        redirect: { kind: 'site_variant', targetUrl: `${alias}/home` },
+      }),
+      result({ sourceUrl: `${alias}/home`, siteOrigin: owner }),
+    ]),
+    pendingPages: [`${alias}/manual`],
+  };
+  scan.sites[0].paused = true;
+  const queued = scanToDataset(scan);
+  expect(
+    queued.pages.find((page) => page.url === `${alias}/manual`),
+  ).toMatchObject({
+    id: `${alias}/manual`,
+    siteId: owner,
+    status: 'known',
+    scanState: 'queued',
+    scanDisabledReason: 'Nejprve pokračuj ve skenování tohoto webu.',
+  });
+  expect(queued.sites.map((site) => site.id)).not.toContain(alias);
+  scan.sites.push({
+    ...scan.sites[0],
+    origin: alias,
+    seedUrl: `${alias}/`,
+    paused: false,
+  });
+  const separate = scanToDataset(scan);
+  expect(
+    separate.pages.find((page) => page.url === `${alias}/manual`),
+  ).toMatchObject({
+    siteId: alias,
+    scanState: 'queued',
+    scanDisabledReason: undefined,
+  });
+});
+
+for (const selectedRedirectFirst of [false, true]) {
+  test(`joins manual redirect aliases to the selected owner when its redirect is ${selectedRedirectFirst ? 'first' : 'last'}`, () => {
+    const selectedOrigin = 'http://example.com';
+    const targetOrigin = 'https://www.example.com';
+    const manualOrigin = 'https://example.com';
+    const selectedRedirect = result({
+      sourceUrl: `${selectedOrigin}/start`,
+      status: 'redirect_unresolved',
+      redirect: { kind: 'site_variant', targetUrl: `${targetOrigin}/landing` },
+    });
+    const manualRedirect = result({
+      sourceUrl: `${manualOrigin}/manual`,
+      crawlMode: 'manual',
+      status: 'redirect_unresolved',
+      redirect: { kind: 'site_variant', targetUrl: `${targetOrigin}/landing` },
+    });
+    const scan = snapshot(
+      selectedRedirectFirst
+        ? [selectedRedirect, manualRedirect]
+        : [manualRedirect, selectedRedirect],
+    );
+    scan.sites = [
+      {
+        ...scan.sites[0],
+        origin: selectedOrigin,
+        seedUrl: selectedRedirect.sourceUrl,
+        paused: true,
+      },
+    ];
+    scan.pendingPages = [`${targetOrigin}/landing`, `${manualOrigin}/pending`];
+    const data = scanToDataset(scan);
+    expect(data.sites.map((site) => site.id)).toEqual([selectedOrigin]);
+    expect(data.pages.every((page) => page.siteId === selectedOrigin)).toBe(
+      true,
+    );
+    expect(
+      data.pages.find((page) => page.url === manualRedirect.sourceUrl),
+    ).toMatchObject({ crawlMode: 'manual', siteId: selectedOrigin });
+    expect(
+      data.pages.find((page) => page.url === `${manualOrigin}/pending`),
+    ).toMatchObject({
+      scanState: 'queued',
+      scanDisabledReason: 'Nejprve pokračuj ve skenování tohoto webu.',
+    });
+
+    scan.sites.push({
+      ...scan.sites[0],
+      origin: manualOrigin,
+      seedUrl: `${manualOrigin}/`,
+    });
+    const separate = scanToDataset(scan);
+    expect(separate.sites.map((site) => site.id)).toEqual([
+      selectedOrigin,
+      manualOrigin,
+    ]);
+    expect(
+      separate.pages.find((page) => page.url === manualRedirect.sourceUrl)
+        ?.siteId,
+    ).toBe(manualOrigin);
+  });
+}

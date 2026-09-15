@@ -336,6 +336,20 @@ export default function ScanWorkspace() {
       setRefreshRevision((revision) => revision + 1);
     }
   };
+  const scanPage = (url: string) => {
+    void action(async () => {
+      if (!scan || historical) return;
+      setScan(
+        await api<ScanSnapshot>(`/scans/${scan.id}/pages`, {
+          method: 'POST',
+          body: JSON.stringify({ url, runId: scan.runId }),
+        }),
+      );
+      setNotice(
+        'Stránka byla zařazena ke skenování. Nalezené odkazy se doplní do této mapy.',
+      );
+    });
+  };
   const start = () => {
     void action(async () => {
       if (!scan || historical) return;
@@ -644,7 +658,8 @@ export default function ScanWorkspace() {
         <ScanActivityStatus scan={scan} refreshError={refreshError} />
         {scan.sites.length >= SCAN_LIMITS.sites && (
           <p className="scan-note">
-            Limit prototypu: {SCAN_LIMITS.sites} weby v jedné mapě.
+            Běžný sken: nejvýše {SCAN_LIMITS.sites} weby. Další nalezené stránky
+            můžeš skenovat jednotlivě přes ▶.
           </p>
         )}
         {addingSite && !historical && (
@@ -783,6 +798,7 @@ export default function ScanWorkspace() {
           toolbar,
           controlsDisabled: busy || historical,
           onExploreSite: exploreSite,
+          onScanPage: scanPage,
           exploreDisabledReason: historical
             ? 'Historický průchod je pouze ke čtení. Prozkoumat web lze v aktuálním průchodu.'
             : scan.sites.length >= SCAN_LIMITS.sites

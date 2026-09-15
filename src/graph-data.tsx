@@ -58,11 +58,15 @@ export function useGraphData() {
 }
 
 export function pageStatusLabel(page: Page) {
+  if (page.scanState === 'fetching') return 'Skenování stránky běží';
+  if (page.scanState === 'queued') return 'Čeká na skenování';
   switch (page.status) {
     case 'ok':
       return page.crawlMode === 'preview'
         ? 'Úspěšně načtená stránka · kontrola cílové URL'
-        : 'Úspěšně načtená stránka';
+        : page.crawlMode === 'manual'
+          ? 'Úspěšně načtená stránka · ruční sken'
+          : 'Úspěšně načtená stránka';
     case 'known':
       return 'Pouze známá URL · zatím nenačteno';
     case 'http_error':

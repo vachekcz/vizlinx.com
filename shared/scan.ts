@@ -2,7 +2,7 @@ export const API_PREFIX = '/api/v1';
 export const SCAN_LIMITS = {
   sites: 3,
   runsPerMap: 10,
-  pagesPerSite: 100,
+  pagesPerSite: 1000,
   previewPagesPerSite: 10,
   previewPagesPerScan: 100,
   linksPerPage: 500,
@@ -56,7 +56,7 @@ export type PageResult = {
   sourceUrl: string;
   // Server crawl owner; the actual request URL keeps its original origin.
   siteOrigin?: string;
-  crawlMode?: 'preview';
+  crawlMode?: 'preview' | 'manual';
   title: string;
   observedAt: string;
   status: PageStatus;
@@ -98,7 +98,7 @@ export type ScanRunSummary = ScanSummary & {
 };
 export type ScanHistory = { runs: ScanRunSummary[]; limit: number };
 export type ScanActivity = {
-  crawlMode?: 'preview';
+  crawlMode?: 'preview' | 'manual';
   phase:
     | 'queued'
     | 'fetching_robots'
@@ -116,7 +116,7 @@ export type ScanActivity = {
 };
 export type ScanLogEvent = {
   id: number;
-  crawlMode?: 'preview';
+  crawlMode?: 'preview' | 'manual';
   at: string;
   type:
     | 'scan_started'
@@ -141,6 +141,7 @@ export type ScanLogEvent = {
 export type ScanLogResponse = { events: ScanLogEvent[]; truncated: boolean };
 export type ScanSnapshot = ScanSummary & {
   results: PageResult[];
+  pendingPages?: string[];
   activity?: ScanActivity;
 };
 export type RunnerSession = { token: string; scan: ScanSnapshot };

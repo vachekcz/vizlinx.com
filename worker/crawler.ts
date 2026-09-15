@@ -20,7 +20,7 @@ import {
 
 const DAY_MS = 86_400_000;
 const RETENTION_MS = 30 * DAY_MS;
-const RUN_MS = 15 * 60_000;
+const RUN_MS = 4 * 60 * 60_000;
 const LEASE_MS = 120_000;
 export const DAILY_REQUESTS = 10_000;
 const MAX_SCAN_BYTES = 4 * 1024 * 1024;
@@ -48,6 +48,7 @@ type FrontierRow = {
   origin: string;
   state: string;
   is_preview: number;
+  is_manual: number;
   preview_throttled: number;
 };
 
@@ -126,7 +127,9 @@ function allowRedirectOrigin(
   if (previous === owner || sites.some((site) => site.origin === previous))
     return null;
   owners.set(actual, owner);
-  if (!previous) return null;
+  // Admission may have added a manual page on this origin since the tick read
+  // its frontier. The conditional transfer also catches those new rows.
+  if (!previous) return { from: actual, to: owner };
   for (const [alias, current] of owners)
     if (current === previous) owners.set(alias, owner);
   return { from: previous, to: owner };
@@ -197,20 +200,27 @@ function addFrontier(
   generation: number,
   owners = new Map<string, string>(),
 ) {
-  return env.DB.prepare(
-    `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin)
+  const candidates = safeUrls(urls, origin, owners);
+  const statements: D1PreparedStatement[] = [];
+  for (let offset = 0; offset < candidates.length; offset += 200) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin)
     SELECT ?1, value, ?2 FROM json_each(?3)
     WHERE EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?4 AND status = 'running')
       AND NOT EXISTS (SELECT 1 FROM crawl_frontier WHERE scan_id = ?1 AND url = value)
     ORDER BY CAST(key AS INTEGER)
     LIMIT MAX(0, ?5 - (SELECT COUNT(*) FROM crawl_frontier WHERE scan_id = ?1 AND origin = ?2))`,
-  ).bind(
-    id,
-    origin,
-    JSON.stringify(safeUrls(urls, origin, owners)),
-    generation,
-    FRONTIER_SIZE,
-  );
+      ).bind(
+        id,
+        origin,
+        JSON.stringify(candidates.slice(offset, offset + 200)),
+        generation,
+        FRONTIER_SIZE,
+      ),
+    );
+  }
+  return statements;
 }
 
 function previewFrontierStatements(
@@ -318,6 +328,214 @@ async function enqueueCurrent(
   )
     .bind(row.id, row.crawl_generation, row.crawl_tick)
     .run();
+}
+
+export async function enqueueManualPage(
+  env: Env,
+  scanId: string,
+  value: unknown,
+  expectedGeneration: number,
+): Promise<void> {
+  if (env.CRAWLER_ENABLED !== 'true')
+    throw new ApiError(503, 'Server scanning is temporarily disabled.');
+  let url: string;
+  try {
+    if (typeof value !== 'string') throw new Error('Invalid URL.');
+    url = normalizeScanUrl(value);
+  } catch {
+    throw new ApiError(400, 'A public HTTP(S) page URL is required.');
+  }
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    'SELECT * FROM scans WHERE id = ?1 AND created_at > ?2',
+  )
+    .bind(scanId, now - RETENTION_MS)
+    .first<ScanRow>();
+  if (!row) throw new ApiError(404, 'Scan not found.');
+  if (row.crawl_generation !== expectedGeneration)
+    throw new ApiError(409, 'The scan changed. Reload before scanning a page.');
+  if (row.status === 'paused')
+    throw new ApiError(409, 'Resume the scan before scanning a page.');
+  if (row.execution_mode !== 'server' || !row.crawl_ready)
+    throw new ApiError(
+      409,
+      'Start the server scan before scanning individual pages.',
+    );
+  const alreadyFetching = async () =>
+    Boolean(
+      await env.DB.prepare(
+        `SELECT 1 FROM crawl_frontier f JOIN scans s ON s.id = f.scan_id
+    WHERE f.scan_id = ?1 AND f.url = ?2 AND f.state = 'attempted'
+      AND s.status = 'running' AND s.crawl_generation = ?3`,
+      )
+        .bind(scanId, url, expectedGeneration)
+        .first(),
+    );
+  if (await alreadyFetching()) return;
+  const saved = await env.DB.prepare(
+    'SELECT result_json FROM page_results WHERE scan_id = ?1',
+  )
+    .bind(scanId)
+    .all<{ result_json: string }>();
+  const results = saved.results.map(
+    (entry) => JSON.parse(entry.result_json) as PageResult,
+  );
+  if (results.some((result) => result.sourceUrl === url)) return;
+  const actualOrigin = new URL(url).origin;
+  const scanSites = JSON.parse(row.sites_json) as ScanSite[];
+  const entries = (
+    await env.DB.prepare(
+      'SELECT url, origin, is_preview FROM crawl_frontier WHERE scan_id = ?1',
+    )
+      .bind(scanId)
+      .all<CrawlOwner>()
+  ).results;
+  const owners = originOwners(scanSites, entries);
+  for (const result of results) allowRedirectOrigin(result, owners, scanSites);
+  const origin = owners.get(actualOrigin) ?? actualOrigin;
+  const known =
+    scanSites.some((site) => site.seedUrl === url) ||
+    results.some((result) =>
+      safeUrls(
+        [
+          ...result.discoveredUrls,
+          ...result.links.map((link) => link.targetUrl),
+          ...(result.redirect?.targetUrl ? [result.redirect.targetUrl] : []),
+        ],
+        origin,
+        owners,
+      ).includes(url),
+    );
+  if (!known)
+    throw new ApiError(400, 'The page has not been discovered in this scan.');
+  if (
+    ['time_limit', 'scan_storage_limit'].includes(row.limit_reason ?? '') ||
+    (row.status === 'running' && now - (row.crawl_started_at ?? now) >= RUN_MS)
+  )
+    throw new ApiError(429, 'This scan reached its safety limit.');
+  if (scanSites.some((site) => site.origin === origin && site.paused))
+    throw new ApiError(409, 'Resume this site before scanning a page.');
+  const throttled = await env.DB.prepare(
+    'SELECT preview_throttled FROM crawl_robots WHERE scan_id = ?1 AND origin = ?2',
+  )
+    .bind(scanId, origin)
+    .first<{ preview_throttled: number }>();
+  if (
+    throttled?.preview_throttled &&
+    !scanSites.some((site) => site.origin === origin)
+  )
+    throw new ApiError(
+      429,
+      'This site paused scanning after an HTTP 429 response.',
+    );
+  const budget = await env.DB.prepare(
+    'SELECT request_count FROM crawl_daily_budget WHERE day = ?1',
+  )
+    .bind(Math.floor(now / DAY_MS))
+    .first<{ request_count: number }>();
+  if ((budget?.request_count ?? 0) >= DAILY_REQUESTS)
+    throw new ApiError(
+      429,
+      'The daily scanning budget is exhausted. Try again tomorrow.',
+    );
+
+  // Adding work to a running scan preserves its lease and in-flight response.
+  // Generation and the observed results guard keep redirect ownership current
+  // if an in-flight response confirms another alias during admission.
+  const guard = `SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?2
+    AND execution_mode = 'server' AND crawl_ready = 1 AND created_at > ?3
+    AND (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1) = ?8
+    AND COALESCE(limit_reason, '') NOT IN ('time_limit', 'scan_storage_limit') AND status != 'paused'
+    AND NOT EXISTS (SELECT 1 FROM json_each(sites_json) WHERE json_extract(value, '$.origin') = ?5 AND json_extract(value, '$.paused') = 1)
+    AND (EXISTS (SELECT 1 FROM json_each(sites_json) WHERE json_extract(value, '$.origin') = ?5)
+      OR NOT EXISTS (SELECT 1 FROM crawl_robots WHERE scan_id = ?1 AND origin = ?5 AND preview_throttled = 1))`;
+  const bindings = [
+    scanId,
+    expectedGeneration,
+    now - RETENTION_MS,
+    url,
+    origin,
+  ];
+  const admitted = await env.DB.batch<ScanRow>([
+    env.DB.prepare(
+      `INSERT INTO crawl_frontier (scan_id, url, origin, is_manual)
+      SELECT ?1, ?4, ?5, 1 WHERE EXISTS (${guard})
+        AND NOT EXISTS (SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?4)
+        AND (SELECT COALESCE(SUM(result_bytes), 0) FROM page_results WHERE scan_id = ?1) < ?7
+        AND ((SELECT COUNT(*) FROM (
+          SELECT p.source_url AS url FROM page_results p LEFT JOIN crawl_frontier f
+            ON f.scan_id = p.scan_id AND f.url = p.source_url
+          WHERE p.scan_id = ?1 AND COALESCE(f.origin, json_extract(p.result_json, '$.siteOrigin'), p.source_origin) = ?5
+          UNION SELECT url FROM crawl_frontier WHERE scan_id = ?1 AND origin = ?5 AND (state != 'pending' OR is_manual = 1)
+        )) < ?6 OR EXISTS (SELECT 1 FROM crawl_frontier WHERE scan_id = ?1 AND url = ?4 AND is_manual = 1))
+      ON CONFLICT(scan_id, url) DO UPDATE SET is_manual = 1
+        WHERE state = 'pending' AND is_manual = 0`,
+    ).bind(
+      ...bindings,
+      SCAN_LIMITS.pagesPerSite,
+      MAX_SCAN_BYTES,
+      results.length,
+    ),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO crawl_robots (scan_id, origin)
+      SELECT ?1, ?5 WHERE EXISTS (${guard})
+      AND EXISTS (SELECT 1 FROM crawl_frontier WHERE scan_id = ?1 AND url = ?4 AND is_manual = 1)`,
+    ).bind(...bindings, null, null, results.length),
+    env.DB.prepare(
+      `UPDATE scans SET status = 'running', limit_reason = NULL, updated_at = ?6,
+        crawl_generation = crawl_generation + CASE WHEN status = 'running' THEN 0 ELSE 1 END,
+        crawl_tick = CASE WHEN status = 'running' THEN crawl_tick ELSE 0 END,
+        crawl_enqueued_tick = CASE WHEN status = 'running' THEN crawl_enqueued_tick ELSE -1 END,
+        crawl_started_at = CASE WHEN status = 'running' THEN crawl_started_at ELSE ?6 END,
+        crawl_lease_token = CASE WHEN status = 'running' THEN crawl_lease_token ELSE NULL END,
+        crawl_lease_until = CASE WHEN status = 'running' THEN crawl_lease_until ELSE NULL END,
+        heartbeat_at = CASE WHEN status = 'running' THEN heartbeat_at ELSE ?6 END,
+        activity_json = CASE WHEN status = 'running' THEN activity_json ELSE ?7 END
+      WHERE id = ?1 AND EXISTS (${guard})
+        AND EXISTS (SELECT 1 FROM crawl_frontier WHERE scan_id = ?1 AND url = ?4 AND origin = ?5 AND is_manual = 1 AND state != 'done')
+      RETURNING *`,
+    ).bind(
+      ...bindings,
+      now,
+      JSON.stringify({
+        phase: 'queued',
+        crawlMode: 'manual',
+        url,
+        origin,
+        updatedAt: new Date(now).toISOString(),
+      }),
+      results.length,
+    ),
+  ]);
+  const updated = admitted[2].results[0];
+  if (!updated) {
+    const current = await env.DB.prepare(
+      'SELECT crawl_generation, (SELECT COUNT(*) FROM page_results WHERE scan_id = ?1) AS result_count FROM scans WHERE id = ?1',
+    )
+      .bind(scanId)
+      .first<{ crawl_generation: number; result_count: number }>();
+    if (current?.crawl_generation !== expectedGeneration)
+      throw new ApiError(
+        409,
+        'The scan changed. Reload before scanning a page.',
+      );
+    if (await alreadyFetching()) return;
+    if (
+      await env.DB.prepare(
+        'SELECT 1 FROM page_results WHERE scan_id = ?1 AND source_url = ?2',
+      )
+        .bind(scanId, url)
+        .first()
+    )
+      return;
+    if (current?.result_count !== results.length)
+      throw new ApiError(
+        409,
+        'The scan changed. Reload before scanning a page.',
+      );
+    throw new ApiError(429, 'The page or storage limit has been reached.');
+  }
+  await enqueueCurrent(env, updated);
 }
 
 export async function startServerScan(
@@ -437,9 +655,10 @@ export async function startServerScan(
         Math.floor(now / DAY_MS) - 1,
       ),
       env.DB.prepare(
-        `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin, state, is_preview)
+        `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin, state, is_preview, is_manual)
         SELECT scan_id, source_url, COALESCE(json_extract(result_json, '$.siteOrigin'), source_origin), 'done',
-          CASE WHEN json_extract(result_json, '$.crawlMode') = 'preview' THEN 1 ELSE 0 END
+          CASE WHEN json_extract(result_json, '$.crawlMode') = 'preview' THEN 1 ELSE 0 END,
+          CASE WHEN json_extract(result_json, '$.crawlMode') = 'manual' THEN 1 ELSE 0 END
         FROM page_results WHERE scan_id = ?1
         AND EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?2)`,
       ).bind(scanId, updated.crawl_generation),
@@ -449,7 +668,7 @@ export async function startServerScan(
         SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM scans WHERE id = ?1 AND crawl_generation = ?3)`,
         ).bind(scanId, site.origin, updated.crawl_generation),
       ),
-      ...scanSites.map((site) =>
+      ...scanSites.flatMap((site) =>
         addFrontier(
           env,
           scanId,
@@ -492,12 +711,14 @@ export async function startServerScan(
       }
     }
     const scoped = new Set(scanSites.map((site) => site.origin));
-    const fullResults = savedResults.filter((result) =>
-      scoped.has(
-        owners.get(new URL(result.sourceUrl).origin) ??
-          result.siteOrigin ??
-          new URL(result.sourceUrl).origin,
-      ),
+    const fullResults = savedResults.filter(
+      (result) =>
+        result.crawlMode !== 'manual' &&
+        scoped.has(
+          owners.get(new URL(result.sourceUrl).origin) ??
+            result.siteOrigin ??
+            new URL(result.sourceUrl).origin,
+        ),
     );
     for (const site of scanSites) {
       const discovered = fullResults.flatMap((result) => {
@@ -508,27 +729,30 @@ export async function startServerScan(
         ];
       });
       if (discovered.length)
-        await addFrontier(
+        for (const statement of addFrontier(
           env,
           scanId,
           site.origin,
           discovered,
           updated.crawl_generation,
           owners,
-        ).run();
+        ))
+          await statement.run();
     }
-    const previewUrls = savedResults.flatMap((result) =>
-      scoped.has(
-        owners.get(new URL(result.sourceUrl).origin) ??
-          result.siteOrigin ??
-          new URL(result.sourceUrl).origin,
-      )
-        ? result.links.map((link) => link.targetUrl)
-        : redirectTargets(
-            result,
-            result.siteOrigin ?? new URL(result.sourceUrl).origin,
-          ),
-    );
+    const previewUrls = savedResults
+      .filter((result) => result.crawlMode !== 'manual')
+      .flatMap((result) =>
+        scoped.has(
+          owners.get(new URL(result.sourceUrl).origin) ??
+            result.siteOrigin ??
+            new URL(result.sourceUrl).origin,
+        )
+          ? result.links.map((link) => link.targetUrl)
+          : redirectTargets(
+              result,
+              result.siteOrigin ?? new URL(result.sourceUrl).origin,
+            ),
+      );
     const previewStatements = previewFrontierStatements(
       env,
       { scanId, generation: updated.crawl_generation, token: null },
@@ -582,17 +806,26 @@ async function finish(
 ): Promise<void> {
   const now = Date.now();
   const phase = paused ? 'paused' : reason ? 'limited' : 'completed';
-  await env.DB.batch([
+  const [finished] = await env.DB.batch([
     env.DB.prepare(
       `UPDATE scans SET status = ?5, limit_reason = ?6,
       crawl_lease_token = NULL, crawl_lease_until = NULL, heartbeat_at = ?7, updated_at = ?7,
-      activity_json = ?8 WHERE EXISTS (${activeSql}) AND id = ?1`,
+      activity_json = ?8 WHERE EXISTS (${activeSql}) AND id = ?1
+      AND (?10 = 1 OR ?6 IS NOT NULL AND ?6 != 'page_limit' OR NOT EXISTS (
+        SELECT 1 FROM crawl_frontier f JOIN crawl_robots r ON r.scan_id = f.scan_id AND r.origin = f.origin
+        WHERE f.scan_id = ?1 AND f.is_manual = 1 AND f.state != 'done'
+          AND (EXISTS (SELECT 1 FROM json_each(scans.sites_json) WHERE json_extract(value, '$.origin') = f.origin AND json_extract(value, '$.paused') = 0)
+            OR (r.preview_throttled = 0 AND NOT EXISTS (SELECT 1 FROM json_each(scans.sites_json) WHERE json_extract(value, '$.origin') = f.origin)))
+          AND (SELECT COUNT(*) FROM crawl_frontier c WHERE c.scan_id = ?1 AND c.origin = f.origin AND c.state != 'pending') < ?9
+      ))`,
     ).bind(
       ...leaseBindings(lease),
       phase,
       reason,
       now,
       JSON.stringify({ phase, updatedAt: new Date(now).toISOString() }),
+      SCAN_LIMITS.pagesPerSite,
+      env.CRAWLER_ENABLED !== 'true' ? 1 : 0,
     ),
     ...scanLogStatements(
       env,
@@ -611,6 +844,8 @@ async function finish(
       { sql: 'changes() = 1', bindings: [] },
     ),
   ]);
+  if (!finished.meta.changes && (!reason || reason === 'page_limit'))
+    await checkpoint(env, lease);
 }
 
 async function setActivity(
@@ -634,13 +869,18 @@ async function checkpoint(
   delayMs = 0,
   origin?: string,
   preview = false,
+  manual = false,
 ): Promise<void> {
   const now = Date.now();
   const activity: ScanActivity = {
     phase: delayMs > 0 ? 'waiting' : 'queued',
     updatedAt: new Date(now).toISOString(),
     ...(origin ? { origin } : {}),
-    ...(preview ? { crawlMode: 'preview' as const } : {}),
+    ...(manual
+      ? { crawlMode: 'manual' as const }
+      : preview
+        ? { crawlMode: 'preview' as const }
+        : {}),
     ...(delayMs > 0
       ? { nextRequestAt: new Date(now + delayMs).toISOString() }
       : {}),
@@ -665,6 +905,7 @@ async function storeResult(
   frontier: FrontierRow[],
 ): Promise<void> {
   const origin = candidate.origin;
+  const manual = candidate.is_manual === 1;
   const actualOrigin = new URL(result.sourceUrl).origin;
   if (origin !== actualOrigin) result = { ...result, siteOrigin: origin };
   if (
@@ -678,9 +919,27 @@ async function storeResult(
     };
   }
   const owners = originOwners(sites, frontier);
+  if (isFollowableRedirect(result.redirect)) {
+    // Manual redirects provide alias evidence without queuing their targets.
+    // Recover that evidence before attaching a previously known alias group.
+    const saved = await env.DB.prepare(
+      `SELECT result_json FROM page_results WHERE scan_id = ?1
+      AND json_extract(result_json, '$.crawlMode') = 'manual'
+      AND json_extract(result_json, '$.redirect.kind') IN ('same_origin', 'site_variant')`,
+    )
+      .bind(lease.scanId)
+      .all<{ result_json: string }>();
+    for (const entry of saved.results)
+      allowRedirectOrigin(
+        JSON.parse(entry.result_json) as PageResult,
+        owners,
+        sites,
+      );
+  }
   const transfer = allowRedirectOrigin(result, owners, sites);
   const preview = !sites.some((site) => site.origin === origin);
-  if (preview) result = { ...result, crawlMode: 'preview' };
+  if (manual) result = { ...result, crawlMode: 'manual' };
+  else if (preview) result = { ...result, crawlMode: 'preview' };
   const promotedResults: PageResult[] =
     transfer && !preview
       ? (
@@ -695,7 +954,12 @@ async function storeResult(
             ({ ...JSON.parse(result_json), siteOrigin: origin }) as PageResult,
         )
       : [];
-  const fullResults = preview ? [] : [result, ...promotedResults];
+  const fullResults =
+    preview || manual
+      ? []
+      : [result, ...promotedResults].filter(
+          (saved) => saved.crawlMode !== 'manual',
+        );
   const json = JSON.stringify(result);
   const encoded = new TextEncoder().encode(json);
   const hash = Array.from(
@@ -718,7 +982,7 @@ async function storeResult(
       hash,
       json,
       encoded.byteLength,
-      preview ? SCAN_LIMITS.previewPagesPerSite : SCAN_LIMITS.pagesPerSite,
+      SCAN_LIMITS.pagesPerSite,
       MAX_SCAN_BYTES,
       origin,
     ),
@@ -729,7 +993,11 @@ async function storeResult(
       {
         at: new Date().toISOString(),
         type: 'page_finished',
-        ...(preview ? { crawlMode: 'preview' as const } : {}),
+        ...(manual
+          ? { crawlMode: 'manual' as const }
+          : preview
+            ? { crawlMode: 'preview' as const }
+            : {}),
         level: ['http_error', 'network_error', 'robots_unavailable'].includes(
           result.status,
         )
@@ -783,7 +1051,11 @@ async function storeResult(
             {
               at: new Date().toISOString(),
               type: 'site_throttled',
-              ...(preview ? { crawlMode: 'preview' as const } : {}),
+              ...(manual
+                ? { crawlMode: 'manual' as const }
+                : preview
+                  ? { crawlMode: 'preview' as const }
+                  : {}),
               level: 'warning',
               origin,
               url: result.sourceUrl,
@@ -797,7 +1069,7 @@ async function storeResult(
       ? transferOwnerStatements(env, lease, transfer, sites, result.sourceUrl)
       : []),
     // The result, completed frontier entry and newly discovered links commit together.
-    ...sites.map((site) =>
+    ...(manual ? [] : sites).map((site) =>
       env.DB.prepare(
         `INSERT OR IGNORE INTO crawl_frontier (scan_id, url, origin)
       SELECT ?1, value, ?5 FROM json_each(?6) WHERE EXISTS (${activeSql})
@@ -829,11 +1101,13 @@ async function storeResult(
     ...previewFrontierStatements(
       env,
       lease,
-      preview
-        ? redirectTargets(result, origin)
-        : fullResults.flatMap((saved) =>
-            saved.links.map((link) => link.targetUrl),
-          ),
+      manual
+        ? []
+        : preview
+          ? redirectTargets(result, origin)
+          : fullResults.flatMap((saved) =>
+              saved.links.map((link) => link.targetUrl),
+            ),
       sites,
       result.sourceUrl,
       frontier.map((entry) =>
@@ -955,11 +1229,11 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
   const scanSites = JSON.parse(row.sites_json) as ScanSite[];
   const frontier = (
     await env.DB.prepare(
-      `SELECT f.url, f.origin, f.state, f.is_preview,
+      `SELECT f.url, f.origin, f.state, f.is_preview, f.is_manual,
         COALESCE(r.preview_throttled, 0) AS preview_throttled
       FROM crawl_frontier f LEFT JOIN crawl_robots r
         ON r.scan_id = f.scan_id AND r.origin = f.origin
-      WHERE f.scan_id = ?1 ORDER BY f.rowid`,
+      WHERE f.scan_id = ?1 ORDER BY f.is_manual DESC, f.rowid`,
     )
       .bind(body.scanId)
       .all<FrontierRow>()
@@ -969,14 +1243,20 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     const scopedSite = scanSites.find((site) => site.origin === entry.origin);
     return scopedSite
       ? !scopedSite.paused
-      : entry.is_preview === 1 && !entry.preview_throttled;
+      : (entry.is_preview === 1 || entry.is_manual === 1) &&
+          !entry.preview_throttled;
   };
   const counts = new Map<string, number>();
+  const previewCounts = new Map<string, number>();
   for (const entry of frontier) {
-    if (entry.state !== 'pending')
-      counts.set(entry.origin, (counts.get(entry.origin) ?? 0) + 1);
+    if (entry.state === 'pending') continue;
+    counts.set(entry.origin, (counts.get(entry.origin) ?? 0) + 1);
+    if (entry.is_preview)
+      previewCounts.set(
+        entry.origin,
+        (previewCounts.get(entry.origin) ?? 0) + 1,
+      );
   }
-
   const candidate =
     frontier.find(
       (entry) => entry.state === 'attempted' && isEligible(entry),
@@ -984,16 +1264,23 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     frontier.find(
       (entry) =>
         entry.state === 'pending' &&
-        (counts.get(entry.origin) ?? 0) <
-          (scanSites.some((site) => site.origin === entry.origin)
-            ? SCAN_LIMITS.pagesPerSite
-            : SCAN_LIMITS.previewPagesPerSite) &&
-        isEligible(entry),
+        isEligible(entry) &&
+        (counts.get(entry.origin) ?? 0) < SCAN_LIMITS.pagesPerSite &&
+        (entry.is_manual === 1 ||
+          scanSites.some((site) => site.origin === entry.origin) ||
+          (previewCounts.get(entry.origin) ?? 0) <
+            SCAN_LIMITS.previewPagesPerSite),
     );
   if (!candidate) {
-    const limited = scanSites.some(
-      (site) => (counts.get(site.origin) ?? 0) >= SCAN_LIMITS.pagesPerSite,
-    );
+    const limited =
+      scanSites.some(
+        (site) => (counts.get(site.origin) ?? 0) >= SCAN_LIMITS.pagesPerSite,
+      ) ||
+      frontier.some(
+        (entry) =>
+          entry.is_manual === 1 &&
+          (counts.get(entry.origin) ?? 0) >= SCAN_LIMITS.pagesPerSite,
+      );
     const hasPausedWork = frontier.some(
       (entry) =>
         entry.state === 'pending' &&
@@ -1029,6 +1316,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     (site) => site.origin === candidate.origin,
   );
   const preview = !scopedSite;
+  let manual = candidate.is_manual === 1;
   const site = scopedSite ?? {
     origin: candidate.origin,
     intervalMs: 3000,
@@ -1069,6 +1357,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         Math.min(wait, Math.max(0, lease.startedAt + RUN_MS - Date.now())),
         robotsOrigin,
         preview,
+        manual,
       );
       return;
     }
@@ -1082,7 +1371,11 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     if (!claimed) return;
     await setActivity(env, lease, {
       phase: 'fetching_robots',
-      ...(preview ? { crawlMode: 'preview' as const } : {}),
+      ...(manual
+        ? { crawlMode: 'manual' as const }
+        : preview
+          ? { crawlMode: 'preview' as const }
+          : {}),
       origin: site.origin,
       url: robotsUrl,
     });
@@ -1117,7 +1410,11 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         {
           at: new Date().toISOString(),
           type: 'robots_checked',
-          ...(preview ? { crawlMode: 'preview' as const } : {}),
+          ...(manual
+            ? { crawlMode: 'manual' as const }
+            : preview
+              ? { crawlMode: 'preview' as const }
+              : {}),
           level: policy.denied && !continuing ? 'error' : 'info',
           origin: site.origin,
           url: robotsUrl,
@@ -1152,6 +1449,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
       ),
       site.origin,
       preview,
+      manual,
     );
     return;
   }
@@ -1169,6 +1467,7 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
         Math.min(wait, Math.max(0, lease.startedAt + RUN_MS - Date.now())),
         site.origin,
         preview,
+        manual,
       );
       return;
     }
@@ -1176,14 +1475,30 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
   }
   const claimed = await env.DB.prepare(
     `UPDATE crawl_frontier SET state = 'attempted'
-    WHERE scan_id = ?1 AND url = ?5 AND state = 'pending' AND EXISTS (${activeSql}) RETURNING url`,
+    WHERE scan_id = ?1 AND url = ?5 AND state = 'pending' AND EXISTS (${activeSql})
+    AND (SELECT COUNT(*) FROM crawl_frontier WHERE scan_id = ?1 AND origin = ?6
+      AND url != ?5 AND (state != 'pending' OR is_manual = 1)) < ?7
+    RETURNING url, is_manual`,
   )
-    .bind(...leaseBindings(lease), candidate.url)
-    .first();
-  if (!claimed) return;
+    .bind(
+      ...leaseBindings(lease),
+      candidate.url,
+      candidate.origin,
+      SCAN_LIMITS.pagesPerSite,
+    )
+    .first<{ url: string; is_manual: number }>();
+  if (!claimed) {
+    await checkpoint(env, lease);
+    return;
+  }
+  manual = claimed.is_manual === 1;
   await setActivity(env, lease, {
     phase: 'fetching_page',
-    ...(preview ? { crawlMode: 'preview' as const } : {}),
+    ...(manual
+      ? { crawlMode: 'manual' as const }
+      : preview
+        ? { crawlMode: 'preview' as const }
+        : {}),
     origin: site.origin,
     url: candidate.url,
   });
@@ -1196,7 +1511,14 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
           ? 'Crawling stopped because the site robots policy could not be loaded.'
           : 'Crawling is not allowed by the site robots policy.',
       );
-  await storeResult(env, lease, result, scanSites, candidate, frontier);
+  await storeResult(
+    env,
+    lease,
+    result,
+    scanSites,
+    { ...candidate, is_manual: manual ? 1 : 0 },
+    frontier,
+  );
   await checkpoint(env, lease);
 }
 

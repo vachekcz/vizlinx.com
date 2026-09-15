@@ -12,13 +12,14 @@ import {
   X,
 } from 'lucide-react';
 import ExternalLink from './ExternalLink';
+import PageScanButton, { type PageScanControl } from './PageScanButton';
 import {
   pageStatusLabel,
   previewStatusLabel,
   siteUrl,
   useGraphData,
 } from './graph-data';
-import type { Link, Selection, Site } from './data';
+import type { Link, Page, Selection, Site } from './data';
 
 const observationFormatter = new Intl.DateTimeFormat('cs-CZ', {
   dateStyle: 'medium',
@@ -43,7 +44,7 @@ export function SiteMark({
   );
 }
 
-type Props = {
+type Props = PageScanControl & {
   selection: Selection;
   links: Link[];
   expanded: string[];
@@ -165,7 +166,10 @@ function PageLimitControl({
   );
 }
 
-function LinkDetails({ link }: { link: Link }) {
+function LinkDetails({
+  link,
+  ...scanControl
+}: { link: Link } & PageScanControl) {
   const { getSite, pageUrl, live } = useGraphData();
   return (
     <div className="link-details">
@@ -197,6 +201,7 @@ function LinkDetails({ link }: { link: Link }) {
           <ExternalLink url={pageUrl(link.target)} />
         </div>
       </div>
+      <PageScanButton page={link.target} {...scanControl} />
       <dl className="metadata">
         <div>
           <dt>Umístění</dt>
@@ -296,6 +301,82 @@ function LinkList({
   );
 }
 
+function KnownPages({
+  pages,
+  onSelect,
+  ...scanControl
+}: PageScanControl & {
+  pages: Page[];
+  onSelect: Props['onSelect'];
+}) {
+  const [search, setSearch] = useState('');
+  const [offset, setOffset] = useState(0);
+  const pageSize = 20;
+  const filtered = pages.filter((page) =>
+    `${page.url} ${page.title}`.toLowerCase().includes(search.toLowerCase()),
+  );
+  return (
+    <section className="known-pages" aria-label="Známé stránky webu">
+      <div className="detail-section-heading">
+        <h3>Známé stránky</h3>
+        <span>{pages.length}</span>
+      </div>
+      <input
+        aria-label="Hledat stránku webu"
+        placeholder="Najít URL nebo název…"
+        value={search}
+        onChange={(event) => {
+          setSearch(event.target.value);
+          setOffset(0);
+        }}
+      />
+      <ul>
+        {filtered.slice(offset, offset + pageSize).map((page) => (
+          <li key={page.id}>
+            <div className="external-url">
+              <button
+                className="known-page-select"
+                onClick={() => onSelect({ type: 'page', id: page.id })}
+                title={page.url}
+              >
+                {page.path}
+              </button>
+              <ExternalLink url={page.url!} />
+            </div>
+            <small>{pageStatusLabel(page)}</small>
+            <PageScanButton page={page} {...scanControl} />
+          </li>
+        ))}
+      </ul>
+      {!filtered.length && (
+        <p className="empty-note">Žádná stránka neodpovídá hledání.</p>
+      )}
+      {filtered.length > pageSize && (
+        <div className="known-pages-pagination">
+          <button
+            className="outline-button"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - pageSize))}
+          >
+            Předchozí stránky
+          </button>
+          <span>
+            {offset + 1}–{Math.min(offset + pageSize, filtered.length)} z{' '}
+            {filtered.length}
+          </span>
+          <button
+            className="outline-button"
+            disabled={offset + pageSize >= filtered.length}
+            onClick={() => setOffset(offset + pageSize)}
+          >
+            Další stránky
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Inspector({
   selection,
   links,
@@ -311,10 +392,18 @@ export default function Inspector({
   pageLimits = {},
   onPageLimitChange,
   onExploreSite,
+  onScanPage,
   exploreDisabledReason,
 }: Props) {
-  const { aggregateConnections, getSite, getPage, pageUrl, pages, live } =
-    useGraphData();
+  const {
+    aggregateConnections,
+    getSite,
+    getPage,
+    pageUrl,
+    pages,
+    sites,
+    live,
+  } = useGraphData();
   const connections = aggregateConnections(links);
   const site = selection.type === 'site' ? getSite(selection.id) : null;
   const page = selection.type === 'page' ? getPage(selection.id) : null;
@@ -347,6 +436,26 @@ export default function Inspector({
           <X size={16} />
         </button>
       </div>
+      {live && (
+        <label className="inspector-site-picker">
+          Vybrat web
+          <select
+            aria-label="Vybrat web v mapě"
+            value={site?.id ?? page?.siteId ?? ''}
+            onChange={(event) => {
+              if (event.target.value)
+                onSelect({ type: 'site', id: event.target.value });
+            }}
+          >
+            <option value="">Vyber web…</option>
+            {sites.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.origin ?? item.domain}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {site && (
         <>
           <div className="site-profile">
@@ -372,9 +481,9 @@ export default function Inspector({
               {site.preview?.attemptedPages ? (
                 <>
                   <p>
-                    Zkontrolováno {site.preview.checkedTargets} z{' '}
-                    {site.preview.knownTargets} známých cílových URL z vybraných
-                    webů.
+                    {site.preview.knownTargets > 0
+                      ? `Zkontrolováno ${site.preview.checkedTargets} z ${site.preview.knownTargets} známých cílových URL z vybraných webů.`
+                      : `Prozkoumáno ${site.preview.inspectedPages} jednotlivých stránek tohoto webu.`}
                   </p>
                   {site.preview.failedTargets > 0 && (
                     <p className="empty-note">
@@ -382,13 +491,14 @@ export default function Inspector({
                       URL. Podrobnosti jsou u jednotlivých stránek.
                     </p>
                   )}
-                  {site.preview.inspectedPages > 0 && (
-                    <p>
-                      {site.preview.backlinkCount > 0
-                        ? `Nalezené odkazy zpět na odkazující vybrané weby: ${site.preview.backlinkCount}.`
-                        : 'Na zkontrolovaných stránkách jsme odkaz zpět na odkazující vybrané weby nenašli.'}
-                    </p>
-                  )}
+                  {site.preview.inspectedPages > 0 &&
+                    site.preview.knownTargets > 0 && (
+                      <p>
+                        {site.preview.backlinkCount > 0
+                          ? `Nalezené odkazy zpět na odkazující vybrané weby: ${site.preview.backlinkCount}.`
+                          : 'Na zkontrolovaných stránkách jsme odkaz zpět na odkazující vybrané weby nenašli.'}
+                      </p>
+                    )}
                   <p className="empty-note">
                     Jde pouze o kontrolu cílových stránek, nikoli celého webu.
                   </p>
@@ -457,6 +567,15 @@ export default function Inspector({
                 : 'Zobrazit známé cílové URL'}
             <ArrowUpRight size={16} />
           </button>
+          {live && (
+            <KnownPages
+              key={`known-pages-${site.id}`}
+              pages={pages.filter((item) => item.siteId === site.id)}
+              onSelect={onSelect}
+              onScanPage={onScanPage}
+              controlsDisabled={controlsDisabled}
+            />
+          )}
           {site.scanned && onIntervalChange && (
             <IntervalControl
               key={site.id}
@@ -577,6 +696,14 @@ export default function Inspector({
                   : 'Pouze známý cíl odkazu'}
             </span>
           </div>
+          <PageScanButton
+            page={page}
+            onScanPage={onScanPage}
+            controlsDisabled={controlsDisabled}
+          />
+          {page.scanDisabledReason && page.status === 'known' && (
+            <p className="empty-note">{page.scanDisabledReason}</p>
+          )}
           {page.error && <p className="empty-note">{page.error}</p>}
           <div className="detail-section-heading">
             <h3>Vazby této stránky</h3>
@@ -651,7 +778,11 @@ export default function Inspector({
           >
             ← Všechny vazby mezi weby
           </button>
-          <LinkDetails link={link} />
+          <LinkDetails
+            link={link}
+            onScanPage={onScanPage}
+            controlsDisabled={controlsDisabled}
+          />
         </>
       )}
       {!site && !page && !connection && !link && (

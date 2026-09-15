@@ -30,7 +30,9 @@ export type Page = {
   url?: string;
   status?: PageStatus | 'known';
   error?: string;
-  crawlMode?: 'preview';
+  crawlMode?: 'preview' | 'manual';
+  scanState?: 'queued' | 'fetching';
+  scanDisabledReason?: string;
 };
 export type Link = {
   id: string;

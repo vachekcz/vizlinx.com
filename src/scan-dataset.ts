@@ -15,6 +15,15 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
   const pages = new Map<string, Page>();
   const links = new Map<string, Link>();
   const scoped = new Set(scan.sites.map((site) => site.origin));
+  const scanDisabledReason = scan.archived
+    ? 'Historický průchod je pouze ke čtení.'
+    : scan.limitReason === 'time_limit'
+      ? 'Tento průchod dosáhl časového limitu. Spusť nový sken.'
+      : scan.limitReason === 'scan_storage_limit'
+        ? 'Tato mapa dosáhla limitu velikosti. Spusť nový sken.'
+        : scan.status === 'paused'
+          ? 'Nejprve pokračuj ve skenování mapy.'
+          : undefined;
   const owners = new Map<string, string>();
   const ownerOf = (origin: string): string => {
     let owner = origin;
@@ -24,7 +33,9 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
   const assignOwner = (origin: string, owner: string) => {
     const root = ownerOf(origin);
     const target = ownerOf(owner);
-    if (root !== target && !scoped.has(root)) owners.set(root, target);
+    if (root === target) return;
+    if (!scoped.has(root)) owners.set(root, target);
+    else if (!scoped.has(target)) owners.set(target, root);
   };
   // Server evidence joins aliases; explicitly selected origins stay independent.
   for (const result of scan.results) {
@@ -86,6 +97,11 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
       title: `${url.pathname}${url.search}`,
       url: normalized,
       status: 'known',
+      scanDisabledReason:
+        scanDisabledReason ??
+        (scan.sites.some((site) => site.origin === owner && site.paused)
+          ? 'Nejprve pokračuj ve skenování tohoto webu.'
+          : undefined),
     };
     pages.set(normalized, page);
     return page;
@@ -94,6 +110,18 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
     addSite(site.origin);
     addPage(site.seedUrl);
   }
+  for (const url of scan.pendingPages ?? []) {
+    const page = addPage(url);
+    if (page) page.scanState = 'queued';
+  }
+  if (
+    scan.status === 'running' &&
+    scan.activity?.phase === 'fetching_page' &&
+    scan.activity.url
+  ) {
+    const page = addPage(scan.activity.url);
+    if (page) page.scanState = 'fetching';
+  }
   const observedSources = new Set<string>();
   for (const result of scan.results) {
     const source = addPage(result.sourceUrl);
@@ -101,9 +129,13 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
     observedSources.add(source.id);
     source.title = result.title || source.path;
     source.status = result.status;
+    source.scanState = undefined;
     source.error = result.error;
     source.crawlMode = result.crawlMode;
+    if (result.redirect?.targetUrl)
+      addPage(result.redirect.targetUrl, result.sourceUrl);
     if (result.status !== 'ok') continue;
+    for (const url of result.discoveredUrls) addPage(url, result.sourceUrl);
     for (const found of result.links) {
       const target = addPage(found.targetUrl, result.sourceUrl);
       if (!target || source.siteId === target.siteId) continue;
@@ -141,7 +173,9 @@ export function scanToDataset(scan: ScanSnapshot): GraphDataset {
   for (const site of sites.values()) {
     if (site.scanned) continue;
     const previewPages = [...pages.values()].filter(
-      (page) => page.siteId === site.id && page.crawlMode === 'preview',
+      (page) =>
+        page.siteId === site.id &&
+        (page.crawlMode === 'preview' || page.crawlMode === 'manual'),
     );
     const directLinks = [...links.values()].filter(
       (link) =>

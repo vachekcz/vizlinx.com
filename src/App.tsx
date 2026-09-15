@@ -52,6 +52,7 @@ export type LiveWorkspace = {
   pageLimits?: Record<string, number>;
   onPageLimitChange?: (id: string, limit: number) => void;
   onExploreSite?: (id: string) => void;
+  onScanPage?: (url: string) => void;
   exploreDisabledReason?: string;
 };
 
@@ -383,12 +384,13 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
           </nav>
           {hiddenMapSites > 0 && (
             <p className="empty-note">
-              Dalších {hiddenMapSites} odkazovaných webů najdete v tabulce.
+              Dalších {hiddenMapSites} odkazovaných webů najdete v seznamu a
+              tabulce.
             </p>
           )}
           <div className="sidebar-section-label">
             <span>WEBY V MAPĚ</span>
-            <span>{mapSites.length.toString().padStart(2, '0')}</span>
+            <span>{visibleSites.length.toString().padStart(2, '0')}</span>
           </div>
           <label className="search-field">
             <Search size={15} />
@@ -401,7 +403,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
             <span>⌕</span>
           </label>
           <div className="site-list">
-            {mapSites
+            {visibleSites
               .filter((site) =>
                 `${site.domain} ${site.name}`
                   .toLowerCase()
@@ -473,7 +475,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   </div>
                 );
               })}
-            {!mapSites.some((site) =>
+            {!visibleSites.some((site) =>
               `${site.domain} ${site.name}`
                 .toLowerCase()
                 .includes(siteSearch.toLowerCase()),
@@ -727,6 +729,8 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                   running={running}
                   resetKey={resetKey}
                   connectionStyle={connectionStyle}
+                  onScanPage={live?.onScanPage}
+                  controlsDisabled={live?.controlsDisabled}
                 />
               ) : (
                 <div className="table-view">
@@ -878,6 +882,7 @@ function Workspace({ live }: { live?: LiveWorkspace }) {
                 pageLimits={live?.pageLimits}
                 onPageLimitChange={live?.onPageLimitChange}
                 onExploreSite={live?.onExploreSite}
+                onScanPage={live?.onScanPage}
                 exploreDisabledReason={live?.exploreDisabledReason}
                 onIntervalChange={
                   live
