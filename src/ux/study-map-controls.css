@@ -1,0 +1,88 @@
+.ux .ux-map-controls {
+  position: relative;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: 9px;
+}
+.ux-map-control {
+  display: flex;
+}
+.ux-immersive:not(.has-sheet) .map-bottom {
+  z-index: 5;
+}
+.ux .ux-map-controls .icon-button {
+  width: 34px;
+  height: 34px;
+  color: var(--ink);
+  border-radius: 5px;
+}
+.ux .ux-map-controls .icon-button:hover:not(:disabled),
+.ux .ux-map-controls .icon-button:focus-visible {
+  color: var(--accent);
+  background: var(--raised);
+}
+.ux .ux-map-controls .icon-button:disabled {
+  opacity: 0.35;
+}
+.ux .ux-map-controls output {
+  min-width: 43px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.ux-map-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+  width: min(248px, calc(100vw - 40px));
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--ux-shadow);
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.5;
+  visibility: hidden;
+  pointer-events: none;
+}
+.ux-map-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 9px;
+}
+.ux-map-tooltip strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+  font-weight: 650;
+}
+.ux-map-tooltip > span {
+  color: var(--muted);
+}
+.ux-map-control.is-tooltip-open > .ux-map-tooltip {
+  visibility: visible;
+  pointer-events: auto;
+}
+@media (pointer: coarse) {
+  .ux .ux-map-controls .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+}
+@media (max-width: 760px) {
+  .ux-immersive .ux-floating-detail {
+    bottom: 210px;
+  }
+}
+@media (max-width: 360px) {
+  .ux-immersive .ux-floating-detail {
+    bottom: 215px;
+  }
+}

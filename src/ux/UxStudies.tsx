@@ -40,6 +40,7 @@ import HoverStudies, { useHoverStudies } from './HoverStudies';
 import type { PreviewEvents } from './HoverStudies';
 import ExternalLink from '../ExternalLink';
 import StudyLogDialog from './StudyLogDialog';
+import StudyMapControls from './StudyMapControls';
 import type { StudyScanIssue } from './StudyLogDialog';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
 import type { Connection, GraphDataset, Link, Selection, Site } from '../data';
@@ -685,6 +686,20 @@ function Study({
         connectionStyle="silk"
         highlight={view === 'map' ? graphHighlight : undefined}
         previewEvents={variant === 2 ? hoverStudy.previewEvents : undefined}
+        renderControls={
+          variant === 2
+            ? (controls) => (
+                <StudyMapControls
+                  {...controls}
+                  onRestoreLayout={() => {
+                    setResetKey((previous) => previous + 1);
+                    setExpanded([]);
+                    closeDetail();
+                  }}
+                />
+              )
+            : undefined
+        }
       />
     </div>
   );
@@ -1180,20 +1195,7 @@ function Study({
                 </button>
                 {siteList}
               </aside>
-              <div className="ux-floating-options">
-                {externalToggle}
-                <button
-                  className="ux-icon"
-                  onClick={() => {
-                    setResetKey((previous) => previous + 1);
-                    setExpanded([]);
-                    closeDetail();
-                  }}
-                  aria-label="Obnovit rozložení mapy"
-                >
-                  <Maximize2 size={16} />
-                </button>
-              </div>
+              <div className="ux-floating-options">{externalToggle}</div>
               {view === 'map' && detail && (
                 <div className="ux-floating-detail" ref={floatingDetailRef}>
                   {detail}

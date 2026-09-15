@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { DOMAttributes, KeyboardEvent, PointerEvent } from 'react';
+import type {
+  DOMAttributes,
+  KeyboardEvent,
+  PointerEvent,
+  ReactNode,
+} from 'react';
 import {
   Expand,
   Layers2,
@@ -30,6 +35,15 @@ type GraphHighlight = {
   replayKey: number;
 };
 
+export type GraphControls = {
+  zoom: number;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitToView: () => void;
+};
+
 type Props = {
   sites: Site[];
   links: Link[];
@@ -44,6 +58,7 @@ type Props = {
   connectionStyle: ConnectionStyleId;
   highlight?: GraphHighlight;
   previewEvents?: (target: GraphHighlightTarget) => DOMAttributes<Element>;
+  renderControls?: (controls: GraphControls) => ReactNode;
 };
 
 type Point = { x: number; y: number };
@@ -353,6 +368,7 @@ export default function Graph({
   connectionStyle,
   highlight,
   previewEvents,
+  renderControls,
 }: Props) {
   const {
     pages: allPages,
@@ -422,6 +438,7 @@ export default function Graph({
   const pagePosition = (page: Page, site: Site, compact: boolean) =>
     calculatePagePosition(page, site, compact, pages, rowGap);
   const svgRef = useRef<SVGSVGElement>(null);
+  const cameraRef = useRef<SVGGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
   const [dragFrame, setDragFrame] = useState<string | null>(null);
@@ -744,6 +761,41 @@ export default function Graph({
     setCamera({ x: 0, y: 0, zoom: 1 });
     onExpandedChange([]);
   };
+  const fitToView = () => {
+    const svg = svgRef.current;
+    const scene = cameraRef.current;
+    const matrix = svg?.getScreenCTM();
+    if (!svg || !scene || !matrix) return;
+    // The group's local bounds include expanded pages and links, without its camera transform.
+    const bounds = scene.getBBox();
+    const frame = svg.getBoundingClientRect();
+    if (
+      !bounds.width ||
+      !bounds.height ||
+      frame.width <= 32 ||
+      frame.height <= 32
+    )
+      return;
+    const zoom = Math.min(
+      2.8,
+      Math.max(
+        0.6,
+        Math.min(
+          (frame.width - 32) / Math.hypot(matrix.a, matrix.b) / bounds.width,
+          (frame.height - 32) / Math.hypot(matrix.c, matrix.d) / bounds.height,
+        ),
+      ),
+    );
+    const target = new DOMPoint(
+      frame.left + frame.width / 2,
+      frame.top + frame.height / 2,
+    ).matrixTransform(matrix.inverse());
+    setCamera({
+      zoom,
+      x: target.x - centerX - (bounds.x + bounds.width / 2 - centerX) * zoom,
+      y: target.y - centerY - (bounds.y + bounds.height / 2 - centerY) * zoom,
+    });
+  };
   const pointFromEvent = (event: PointerEvent<SVGSVGElement>) => {
     const matrix = event.currentTarget.getScreenCTM();
     return matrix
@@ -866,6 +918,7 @@ export default function Graph({
           ))}
         </defs>
         <g
+          ref={cameraRef}
           transform={`translate(${centerX + camera.x} ${centerY + camera.y}) scale(${camera.zoom}) translate(${-centerX} ${-centerY})`}
           data-testid="graph-camera"
         >
@@ -1464,44 +1517,57 @@ export default function Graph({
             <i className="legend-line" /> Směr odkazu
           </span>
         </div>
-        <div className="map-controls">
-          <button
-            className="icon-button"
-            aria-label="Oddálit mapu"
-            onClick={() => zoomBy(1 / 1.2)}
-            disabled={camera.zoom <= 0.6}
-          >
-            <Minus size={16} />
-          </button>
-          <output aria-label="Přiblížení mapy">
-            {Math.round(camera.zoom * 100)} %
-          </output>
-          <button
-            className="icon-button"
-            aria-label="Přiblížit mapu"
-            onClick={() => zoomBy(1.2)}
-            disabled={camera.zoom >= 2.8}
-          >
-            <Plus size={16} />
-          </button>
-          <span className="control-divider" />
-          <button
-            className="icon-button"
-            aria-label="Zobrazit celou mapu"
-            onClick={reset}
-          >
-            <Expand size={16} />
-          </button>
-        </div>
+        {renderControls ? (
+          renderControls({
+            zoom: camera.zoom,
+            canZoomIn: camera.zoom < 2.8,
+            canZoomOut: camera.zoom > 0.6,
+            zoomIn: () => zoomBy(1.2),
+            zoomOut: () => zoomBy(1 / 1.2),
+            fitToView,
+          })
+        ) : (
+          <div className="map-controls">
+            <button
+              className="icon-button"
+              aria-label="Oddálit mapu"
+              onClick={() => zoomBy(1 / 1.2)}
+              disabled={camera.zoom <= 0.6}
+            >
+              <Minus size={16} />
+            </button>
+            <output aria-label="Přiblížení mapy">
+              {Math.round(camera.zoom * 100)} %
+            </output>
+            <button
+              className="icon-button"
+              aria-label="Přiblížit mapu"
+              onClick={() => zoomBy(1.2)}
+              disabled={camera.zoom >= 2.8}
+            >
+              <Plus size={16} />
+            </button>
+            <span className="control-divider" />
+            <button
+              className="icon-button"
+              aria-label="Zobrazit celou mapu"
+              onClick={reset}
+            >
+              <Expand size={16} />
+            </button>
+          </div>
+        )}
       </div>
       <div className="map-hint">
         <MousePointer2 size={12} />{' '}
         {denseSite
           ? `Zobrazeny vazby ${denseSite.domain}. Kliknutím vyberete stránku.`
           : `Táhněte domény od sebe. Síla vazeb: ${isFineConnectionStyle(connectionStyle) ? '1–100+' : '1–5+'}. Přesné počty v detailu.`}{' '}
-        <button onClick={reset} aria-label="Obnovit pohled">
-          <RotateCcw size={12} />
-        </button>
+        {!renderControls && (
+          <button onClick={reset} aria-label="Obnovit pohled">
+            <RotateCcw size={12} />
+          </button>
+        )}
       </div>
     </div>
   );
