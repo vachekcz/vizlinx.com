@@ -2377,6 +2377,25 @@ function AddSiteForm({
   );
 }
 
+function validateMapDomains(values: string[]) {
+  const domains: string[] = [];
+  const errors: string[] = values.map((value) => {
+    if (!value.trim()) return '';
+    try {
+      const domain = normalizeDomain(value);
+      if (domains.includes(domain)) return 'Tento web už máš zadaný.';
+      domains.push(domain);
+      return '';
+    } catch {
+      return 'Zkontroluj adresu webu.';
+    }
+  });
+  if (!domains.length && !errors.some(Boolean)) {
+    errors[0] = 'Zadej alespoň jeden web.';
+  }
+  return { domains, errors };
+}
+
 function NewMap({
   variant,
   domains,
@@ -2388,10 +2407,32 @@ function NewMap({
   onCancel: () => void;
   onStart: (domains: string[]) => void;
 }) {
-  const [values, setValues] = useState(domains);
+  const compact = variant === 2;
+  const [values, setValues] = useState(compact ? [''] : domains);
   const [error, setError] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
+  const pendingFocusRef = useRef<number | null>(null);
+  const validation = compact ? validateMapDomains(values) : null;
+  const fieldErrors = submitted ? validation?.errors : undefined;
+  const filledCount = values.filter((value) => value.trim()).length;
+  useLayoutEffect(() => {
+    if (pendingFocusRef.current === null) return;
+    inputsRef.current[pendingFocusRef.current]?.focus();
+    pendingFocusRef.current = null;
+  }, [values]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (validation) {
+      setSubmitted(true);
+      const invalidIndex = validation.errors.findIndex(Boolean);
+      if (invalidIndex !== -1) {
+        inputsRef.current[invalidIndex]?.focus();
+        return;
+      }
+      onStart(validation.domains);
+      return;
+    }
     try {
       const normalized = values
         .map((value) => value.trim())
@@ -2418,40 +2459,50 @@ function NewMap({
         Zpět k mapě
       </button>
       <div className="ux-new-layout">
-        <section>
-          <div className="ux-kicker">NOVÁ MAPA / PRVNÍ KROK</div>
-          <h1>
-            Které weby
-            <br />
-            spolu souvisí<span>?</span>
-          </h1>
-          <p>
-            Zadej až tři weby. My najdeme odkazy,
-            <br />
-            ty objevíš jejich souvislosti.
-          </p>
-          <div className="ux-new-steps">
-            <div>
-              <span>01</span>
-              <strong>Vyber weby</strong>
-              <p>Stačí adresa. Účet nepotřebuješ.</p>
+        {!compact && (
+          <section>
+            <div className="ux-kicker">NOVÁ MAPA / PRVNÍ KROK</div>
+            <h1>
+              Které weby
+              <br />
+              spolu souvisí<span>?</span>
+            </h1>
+            <p>
+              Zadej až tři weby. My najdeme odkazy,
+              <br />
+              ty objevíš jejich souvislosti.
+            </p>
+            <div className="ux-new-steps">
+              <div>
+                <span>01</span>
+                <strong>Vyber weby</strong>
+                <p>Stačí adresa. Účet nepotřebuješ.</p>
+              </div>
+              <div>
+                <span>02</span>
+                <strong>Sleduj, jak mapa roste</strong>
+                <p>Sken pokračuje i po zavření karty.</p>
+              </div>
+              <div>
+                <span>03</span>
+                <strong>Prozkoumej konkrétní vazby</strong>
+                <p>Od webu ke stránce a textu odkazu.</p>
+              </div>
             </div>
-            <div>
-              <span>02</span>
-              <strong>Sleduj, jak mapa roste</strong>
-              <p>Sken pokračuje i po zavření karty.</p>
+          </section>
+        )}
+        <form onSubmit={submit} noValidate={compact}>
+          {compact && (
+            <div className="ux-new-card-intro">
+              <h1>Nová mapa</h1>
+              <p>Zadej 1 až 3 weby, mezi kterými chceš najít odkazy.</p>
             </div>
-            <div>
-              <span>03</span>
-              <strong>Prozkoumej konkrétní vazby</strong>
-              <p>Od webu ke stránce a textu odkazu.</p>
-            </div>
-          </div>
-        </section>
-        <form onSubmit={submit}>
+          )}
           <div className="ux-form-heading">
             <h2>Tvoje weby</h2>
-            <span>{values.length}/3</span>
+            <span>
+              {compact ? `${filledCount} ze 3 webů` : `${values.length}/3`}
+            </span>
           </div>
           {values.map((value, index) => (
             <label className="ux-domain-field" key={index}>
@@ -2459,8 +2510,22 @@ function NewMap({
               <div>
                 <Globe2 size={18} />
                 <input
-                  required={index === 0}
+                  ref={(element) => {
+                    inputsRef.current[index] = element;
+                  }}
+                  autoFocus={compact && index === 0}
+                  required={!compact && index === 0}
                   aria-label={`Web ${index + 1}`}
+                  aria-invalid={
+                    compact ? Boolean(fieldErrors?.[index]) : undefined
+                  }
+                  aria-describedby={
+                    fieldErrors?.[index]
+                      ? `ux-new-web-error-${index}`
+                      : undefined
+                  }
+                  autoCapitalize={compact ? 'none' : undefined}
+                  spellCheck={compact ? false : undefined}
                   value={value}
                   placeholder="tvuj-web.cz"
                   onChange={(event) =>
@@ -2476,21 +2541,38 @@ function NewMap({
                     type="button"
                     className="ux-icon"
                     aria-label={`Odebrat web ${index + 1}`}
-                    onClick={() =>
-                      setValues(values.filter((_, i) => i !== index))
-                    }
+                    onClick={() => {
+                      if (compact)
+                        pendingFocusRef.current = Math.min(
+                          index,
+                          values.length - 2,
+                        );
+                      setValues(values.filter((_, i) => i !== index));
+                    }}
                   >
                     <X size={15} />
                   </button>
                 )}
               </div>
+              {fieldErrors?.[index] && (
+                <span
+                  className="ux-form-error ux-field-error"
+                  id={`ux-new-web-error-${index}`}
+                  role="alert"
+                >
+                  {fieldErrors[index]}
+                </span>
+              )}
             </label>
           ))}
           {values.length < 3 && (
             <button
               type="button"
               className="ux-add-site"
-              onClick={() => setValues([...values, ''])}
+              onClick={() => {
+                if (compact) pendingFocusRef.current = values.length;
+                setValues([...values, '']);
+              }}
             >
               <Plus size={15} />
               Přidat další web
@@ -2513,6 +2595,11 @@ function NewMap({
             Vytvořit mapu a spustit sken
             <ArrowRight size={17} />
           </button>
+          {compact && (
+            <p className="ux-new-reassurance">
+              Bez účtu. Sken pokračuje i po zavření karty.
+            </p>
+          )}
           <p className="ux-form-footnote">
             V této studii se zobrazí ukázková data. Nic se skutečně neskenuje
             ani neukládá.

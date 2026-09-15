@@ -2261,18 +2261,67 @@
   font-size: 11px;
   margin-bottom: 17px;
 }
-.ux-new-2 {
-  max-width: 1040px;
+.ux-new-map.ux-new-2 {
+  width: 100%;
+  max-width: 540px;
+  padding: 24px 20px 40px;
 }
-.ux-new-2 .ux-new-layout {
-  grid-template-columns: 1fr 420px;
-  gap: 50px;
+.ux-new-map.ux-new-2 .ux-new-layout {
+  display: block;
 }
-.ux-new-2 h1 {
-  font-size: 45px;
+.ux-new-2 .ux-back {
+  margin-bottom: 18px;
 }
 .ux-new-2 form {
-  border-radius: 20px;
+  border-radius: 14px;
+  padding: 24px;
+}
+.ux-new-2 .ux-new-card-intro h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  letter-spacing: -0.7px;
+}
+.ux-new-card-intro p {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+.ux-new-2 .ux-form-heading {
+  margin-bottom: 16px;
+}
+.ux-new-2 .ux-form-heading h2 {
+  font-size: 13px;
+  letter-spacing: 0;
+}
+.ux-new-2 .ux-domain-field input {
+  min-width: 0;
+}
+.ux-new-2 .ux-domain-field > div > svg {
+  flex-shrink: 0;
+}
+.ux-new-2 .ux-domain-field > div:has([aria-invalid='true']) {
+  border-color: var(--site-journal);
+}
+.ux-new-2 .ux-field-error {
+  display: block;
+  margin: 6px 0 0;
+  font-weight: 400;
+}
+.ux-new-2 .ux-form-limits {
+  margin: 20px 0;
+  padding: 13px;
+}
+.ux-new-2 form > .ux-primary {
+  white-space: normal;
+  font-size: 12px;
+}
+.ux-new-reassurance {
+  margin-top: 12px;
+  font-size: 10px;
+  text-align: center;
+}
+.ux-new-2 .ux-form-footnote {
+  margin-top: 8px;
 }
 .ux-new-3 .ux-new-layout {
   grid-template-columns: 1fr 1fr;
