@@ -46,7 +46,7 @@ async function openExpandedAtlasLink(page: Page) {
     .press('Enter');
   const detail = page.getByRole('complementary', { name: 'Detail výběru' });
   await detail
-    .getByRole('button', { name: 'Prozkoumat 5 stránek', exact: true })
+    .getByRole('button', { name: 'Zobrazit stránky v mapě', exact: true })
     .click();
   await detail
     .getByRole('button', {
@@ -106,7 +106,7 @@ test('fits the current drawing without losing moved domains, expanded pages or t
   expect(await domainGeometry(page)).toEqual(geometry);
   await expect(
     page.getByRole('button', { name: /^Stránka atlas.example/ }),
-  ).toHaveCount(5);
+  ).toHaveCount(6);
   await expect(selectedEdge).toHaveAttribute('opacity', '1');
   await expect(
     page.locator('.page-edge > path[marker-end][opacity="1"]'),
@@ -171,7 +171,7 @@ test('fits the current drawing without losing moved domains, expanded pages or t
     detail.getByRole('heading', { name: 'atlas.example', exact: true }),
   ).toBeVisible();
   await expect(
-    detail.getByRole('button', { name: 'Sbalit stránky', exact: true }),
+    detail.getByRole('button', { name: 'Sbalit stránky v mapě', exact: true }),
   ).toBeVisible();
 });
 

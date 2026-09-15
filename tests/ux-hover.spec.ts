@@ -122,7 +122,7 @@ for (const mode of ['pulse', 'quiet', 'focus']) {
     await expect(graph.locator('[data-highlight-connection]')).toHaveCount(0);
     await expect(graph.locator('.graph-preview-muted')).toHaveCount(0);
     await detail
-      .getByRole('button', { name: 'Prozkoumat 5 stránek', exact: true })
+      .getByRole('button', { name: 'Zobrazit stránky v mapě', exact: true })
       .click();
     await outgoing.hover();
     await expect(
@@ -310,7 +310,7 @@ for (const query of ['', '?hover=pulse']) {
     await neutral.hover();
     await expect(persistent).toHaveCount(0);
     await detail
-      .getByRole('button', { name: 'Prozkoumat 5 stránek', exact: true })
+      .getByRole('button', { name: 'Zobrazit stránky v mapě', exact: true })
       .click();
     await detail
       .getByRole('button', {

@@ -49,10 +49,21 @@ import ExternalLink from '../ExternalLink';
 import StudyLogDialog from './StudyLogDialog';
 import StudyMapControls from './StudyMapControls';
 import StudyDetailSheet from './StudyDetailSheet';
+import StudyPages, { StudyPageStatus, type PageListState } from './StudyPages';
+import { useStudyPageScans } from './useStudyPageScans';
+import PageScanButton from '../PageScanButton';
+import { SCAN_LIMITS } from '../../shared/scan';
 import type { StudyDetailSheetControls } from './StudyDetailSheet';
 import type { StudyScanIssue } from './StudyLogDialog';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
-import type { Connection, GraphDataset, Link, Selection, Site } from '../data';
+import type {
+  Connection,
+  GraphDataset,
+  Link,
+  Page,
+  Selection,
+  Site,
+} from '../data';
 import { useTheme } from '../themes';
 import './ux-studies.css';
 
@@ -141,7 +152,7 @@ function normalizeDomain(value: string): string {
   return url.hostname;
 }
 
-function createDataset(domains: string[]): GraphDataset {
+function createDataset(domains: string[], allKnownPages = false): GraphDataset {
   const scannedIds = demoDataset.sites
     .slice(0, domains.length)
     .map((site) => site.id);
@@ -162,7 +173,11 @@ function createDataset(domains: string[]): GraphDataset {
   return {
     sites: sites.filter((site) => site.scanned || usedSites.has(site.id)),
     links,
-    pages: demoDataset.pages.filter((page) => usedPages.has(page.id)),
+    pages: demoDataset.pages.filter((page) =>
+      allKnownPages
+        ? scannedIds.includes(page.siteId) || usedSites.has(page.siteId)
+        : usedPages.has(page.id),
+    ),
   };
 }
 
@@ -209,7 +224,10 @@ export default function UxStudies() {
   );
   if (!concept) return <Gallery />;
   return (
-    <GraphDataProvider dataset={createDataset(domains)} live={false}>
+    <GraphDataProvider
+      dataset={createDataset(domains, variant === 2)}
+      live={false}
+    >
       <Study
         variant={concept.id}
         domains={domains}
@@ -327,6 +345,24 @@ function Study({
   const [sitesOpen, setSitesOpen] = useState(false);
   const [siteQuery, setSiteQuery] = useState('');
   const [addingSite, setAddingSite] = useState(false);
+  const [mapRevision, setMapRevision] = useState(0);
+  const pageListMemory = useRef(new Map<string, PageListState>());
+  const manualOnlyScan = useRef(false);
+  const runKey = `${mapRevision}:${run}`;
+  const displayedRunKey = `${mapRevision}:${archivedRun ?? run}`;
+  const pageScans = useStudyPageScans(
+    runKey,
+    displayedRunKey,
+    state === 'paused',
+    pausedSites,
+  );
+  useEffect(() => {
+    if (manualOnlyScan.current && pageScans.pendingSiteIds.length === 0) {
+      manualOnlyScan.current = false;
+      setActiveSites([]);
+      setState('completed');
+    }
+  }, [pageScans.pendingSiteIds.length]);
   const workspaceRef = useRef<HTMLElement>(null);
   const getFitObstacles = useCallback(
     () =>
@@ -402,6 +438,63 @@ function Study({
             level: index === 2 ? 'warning' : 'error',
           }))
       : [];
+  const detailPages = pages.map((page): Page => {
+    const url = pageUrl(page);
+    const issue = scanIssues.find((item) => item.url === url);
+    const result = pageScans.apply({
+      ...page,
+      url,
+      status: loadedPageIds.has(page.id)
+        ? 'ok'
+        : issue?.level === 'warning'
+          ? 'robots_denied'
+          : issue?.httpStatus
+            ? 'http_error'
+            : issue
+              ? 'network_error'
+              : 'known',
+      error: issue?.message,
+    });
+    return {
+      ...result,
+      scanDisabledReason:
+        result.status !== 'known'
+          ? undefined
+          : archived
+            ? 'V archivu nelze spouštět sken.'
+            : state === 'paused' || pausedSites.includes(page.siteId)
+              ? 'Sken je pozastavený. Nejprve pokračuj ve skenování.'
+              : undefined,
+    };
+  });
+  const loadedPageCount = detailPages.filter(
+    (page) => page.status === 'ok',
+  ).length;
+  const scanPage = (url: string) => {
+    const page = detailPages.find((item) => item.url === url);
+    if (
+      !page ||
+      archived ||
+      page.scanDisabledReason ||
+      page.status !== 'known' ||
+      page.scanState
+    )
+      return;
+    pageScans.scan(page);
+    if (state === 'completed') {
+      manualOnlyScan.current = true;
+      setState('running');
+      setActiveSites([page.siteId]);
+    } else {
+      setActiveSites((previous) =>
+        previous.includes(page.siteId) ? previous : [...previous, page.siteId],
+      );
+    }
+  };
+  const pageMemoryKey = `${displayedRunKey}:${selection?.type === 'site' ? selection.id : ''}`;
+  if (!pageListMemory.current.has(pageMemoryKey)) {
+    pageListMemory.current.set(pageMemoryKey, { query: '', scrollTop: 0 });
+  }
   const errorCount = scanIssues.filter(
     (issue) => issue.level === 'error',
   ).length;
@@ -544,6 +637,7 @@ function Study({
     setView('map');
   };
   const start = () => {
+    manualOnlyScan.current = false;
     setArchivedRun(null);
     setState('running');
     if (variant === 2) {
@@ -565,6 +659,7 @@ function Study({
     if (archived) return;
     const currentState = siteState(site.id);
     if (currentState === 'completed') {
+      manualOnlyScan.current = false;
       setActiveSites((previous) => [...previous, site.id]);
       setPausedSites((previous) => previous.filter((id) => id !== site.id));
       if (state === 'completed') setRun((previous) => previous + 1);
@@ -786,6 +881,10 @@ function Study({
       onBack={backDetail}
       previewEvents={hoverStudy.previewEvents}
       previewTarget={hoverStudy.target}
+      knownPages={detailPages}
+      pageListMemory={pageListMemory.current.get(pageMemoryKey)!}
+      pageMemoryKey={pageMemoryKey}
+      onScanPage={scanPage}
     />
   );
   const siteList = (
@@ -827,11 +926,9 @@ function Study({
             })}
             disabled={archived}
             loadedPages={
-              new Set(
-                currentLinks
-                  .filter((link) => link.source.siteId === site.id)
-                  .map((link) => link.source.id),
-              ).size
+              detailPages.filter(
+                (page) => page.siteId === site.id && page.status === 'ok',
+              ).length
             }
             knownUrls={pages.filter((page) => page.siteId === site.id).length}
             onSelect={() => {
@@ -974,7 +1071,8 @@ function Study({
           </label>
         ))}
         <small>
-          Nejvýše 100 stránek na web.
+          Nejvýše {SCAN_LIMITS.pagesPerSite.toLocaleString('cs-CZ')} stránek na
+          web.
           <br />
           Veřejné HTML, bez JavaScriptu.
         </small>
@@ -1092,6 +1190,9 @@ function Study({
           domains={domains}
           onCancel={() => setView('map')}
           onStart={(next) => {
+            manualOnlyScan.current = false;
+            setMapRevision((previous) => previous + 1);
+            pageListMemory.current.clear();
             onDomainsChange(next);
             setArchivedRun(null);
             setState('running');
@@ -1367,7 +1468,7 @@ function Study({
                     {primaryAction}
                   </div>
                   <div data-map-obstacle className="ux-dock-scan-summary">
-                    <span>Načteno {loadedPageIds.size}</span>
+                    <span>Načteno {loadedPageCount}</span>
                     <span>·</span>
                     <span>Neúspěšné / vynechané: {scanIssues.length}</span>
                   </div>
@@ -1573,7 +1674,7 @@ function Study({
           run={archivedRun ?? run}
           archived={archived}
           activeSiteIds={activeSites.filter((id) => !pausedSites.includes(id))}
-          countLabel={formatPageCount(loadedPageIds.size)}
+          countLabel={formatPageCount(loadedPageCount)}
           issues={scanIssues}
           onClose={() => setLogOpen(false)}
           onComplete={() => {
@@ -1588,7 +1689,7 @@ function Study({
         <LogDialog
           sites={scanned}
           state={archived ? 'completed' : state}
-          count={variant === 2 ? loadedPageIds.size : pageCount}
+          count={variant === 2 ? loadedPageCount : pageCount}
           issues={scanIssues}
           onClose={() => setLogOpen(false)}
           onComplete={() => {
@@ -1742,6 +1843,10 @@ function Detail({
   onBack,
   previewEvents,
   previewTarget,
+  knownPages,
+  pageListMemory,
+  pageMemoryKey,
+  onScanPage,
 }: {
   selection: Selection;
   links: Link[];
@@ -1755,6 +1860,10 @@ function Detail({
   onBack?: () => void;
   previewEvents?: PreviewEvents;
   previewTarget?: GraphHighlightTarget | null;
+  knownPages: Page[];
+  pageListMemory: PageListState;
+  pageMemoryKey: string;
+  onScanPage: (url: string) => void;
 }) {
   const { getSite, getPage, pageUrl, aggregateConnections, pages } =
     useGraphData();
@@ -1763,7 +1872,11 @@ function Detail({
     selection.type === 'link'
       ? links.find((item) => item.id === selection.id)
       : null;
-  const page = selection.type === 'page' ? getPage(selection.id) : null;
+  const page =
+    selection.type === 'page'
+      ? (knownPages.find((item) => item.id === selection.id) ??
+        getPage(selection.id))
+      : null;
   const selectedLinks = site
     ? links.filter(
         (item) =>
@@ -1875,8 +1988,12 @@ function Detail({
           >
             <Maximize2 size={15} />
             {expanded.includes(site.id)
-              ? 'Sbalit stránky'
-              : `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`}
+              ? contextual
+                ? 'Sbalit stránky v mapě'
+                : 'Sbalit stránky'
+              : contextual
+                ? 'Zobrazit stránky v mapě'
+                : `Prozkoumat ${pages.filter((item) => item.siteId === site.id).length} stránek`}
           </button>
           <h3>Propojené weby</h3>
           {contextual
@@ -1952,6 +2069,16 @@ function Detail({
                   <ChevronRight size={14} />
                 </button>
               ))}
+          {contextual && (
+            <StudyPages
+              key={pageMemoryKey}
+              pages={knownPages.filter((page) => page.siteId === site.id)}
+              memory={pageListMemory}
+              onSelect={onSelect}
+              onScanPage={onScanPage}
+              previewEvents={previewEvents}
+            />
+          )}
         </>
       ) : link ? (
         <>
@@ -2076,6 +2203,18 @@ function Detail({
                 : 'konkrétních vazeb'}
             </span>
           </div>
+          {contextual && page && (
+            <div className="ux-page-inspection">
+              <StudyPageStatus page={page} />
+              <ExternalLink url={pageUrl(page)} />
+              <PageScanButton page={page} onScanPage={onScanPage} />
+              {(page.error || page.scanDisabledReason) && (
+                <small className="ux-page-reason">
+                  {page.error ?? page.scanDisabledReason}
+                </small>
+              )}
+            </div>
+          )}
           {selectedLinks.map((item) => (
             <button
               className="ux-link-card"
@@ -2681,7 +2820,8 @@ function NewMap({
           <div className="ux-form-limits">
             <ShieldCheck size={18} />
             <p>
-              <strong>Šetrně k webům</strong>Nejvýše 100 stránek na web.
+              <strong>Šetrně k webům</strong>Nejvýše{' '}
+              {SCAN_LIMITS.pagesPerSite.toLocaleString('cs-CZ')} stránek na web.
               Procházíme veřejné HTML; odkazy vytvořené JavaScriptem nemusíme
               najít.
             </p>

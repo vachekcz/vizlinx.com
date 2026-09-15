@@ -92,7 +92,7 @@ test('creates a demo map from filled fields without crawling and starts the next
     }),
   ).toBeVisible();
   await expect(
-    form.getByText('Nejvýše 100 stránek na web.', { exact: false }),
+    form.getByText('Nejvýše 1 000 stránek na web.', { exact: false }),
   ).toBeVisible();
   await expect(
     form.getByText('Procházíme veřejné HTML;', { exact: false }),

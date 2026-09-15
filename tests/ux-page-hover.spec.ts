@@ -10,7 +10,7 @@ async function openExpandedAtlas(page: Page, mobile: boolean, query = '') {
     .getByRole('button', { name: 'atlas.example', exact: true })
     .click();
   await page
-    .getByRole('button', { name: 'Prozkoumat 5 stránek', exact: true })
+    .getByRole('button', { name: 'Zobrazit stránky v mapě', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'Zavřít detail', exact: true })
