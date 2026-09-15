@@ -9,6 +9,7 @@ for (const mode of ['pulse', 'quiet', 'focus']) {
       await page.getByRole('button', { name: /Skenované weby ·/ }).click();
     }
     const graph = page.locator('.graph');
+    await expect(graph).toHaveAttribute('data-framing-ready', 'true');
     const viewBox = await graph.getAttribute('viewBox');
     const camera = await page
       .getByTestId('graph-camera')
@@ -327,7 +328,7 @@ for (const query of ['', '?hover=pulse']) {
       'journal:atlas',
     );
     await expect(travel).toHaveCount(3);
-    await detail.getByRole('button', { name: 'Zavřít detail' }).click();
+    await page.getByRole('button', { name: 'Zavřít detail' }).click();
     await expect(persistent).toHaveCount(0);
     await expect(travel).toHaveCount(0);
   });

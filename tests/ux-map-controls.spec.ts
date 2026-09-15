@@ -62,7 +62,7 @@ async function openExpandedAtlasLink(page: Page) {
 
 test('fits the current drawing without losing moved domains, expanded pages or the detail path', async ({
   page,
-}) => {
+}, testInfo) => {
   await page.goto('/ux/2');
   await page.evaluate(() => document.fonts.ready);
   await waitForInitialFraming(page);
@@ -96,6 +96,12 @@ test('fits the current drawing without losing moved domains, expanded pages or t
   await page
     .getByRole('button', { name: 'Zobrazit celou mapu', exact: true })
     .click();
+  if (testInfo.project.name === 'mobile') {
+    await expect(page.locator('.ux-floating-detail')).toHaveAttribute(
+      'data-sheet-position',
+      'collapsed',
+    );
+  }
   await expect(camera).not.toHaveAttribute('transform', beforeCamera!);
   expect(await domainGeometry(page)).toEqual(geometry);
   await expect(
@@ -148,6 +154,11 @@ test('fits the current drawing without losing moved domains, expanded pages or t
       );
       expect(clearance).toBeGreaterThanOrEqual(22.5);
     }
+  }
+  if (testInfo.project.name === 'mobile') {
+    await page
+      .getByRole('button', { name: 'Otevřít detail', exact: true })
+      .click();
   }
   const detail = page.getByRole('complementary', { name: 'Detail výběru' });
   await expect(

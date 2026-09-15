@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react';
 import type { FormEvent, HTMLAttributes, ReactNode, Ref } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Activity,
   AlertTriangle,
@@ -47,6 +48,8 @@ import type { PreviewEvents } from './HoverStudies';
 import ExternalLink from '../ExternalLink';
 import StudyLogDialog from './StudyLogDialog';
 import StudyMapControls from './StudyMapControls';
+import StudyDetailSheet from './StudyDetailSheet';
+import type { StudyDetailSheetControls } from './StudyDetailSheet';
 import type { StudyScanIssue } from './StudyLogDialog';
 import { demoDataset, GraphDataProvider, useGraphData } from '../graph-data';
 import type { Connection, GraphDataset, Link, Selection, Site } from '../data';
@@ -332,13 +335,18 @@ function Study({
           '[data-map-obstacle]',
         ) ?? [],
       )
-        .filter((element) => element.checkVisibility())
+        .filter(
+          (element) =>
+            element.checkVisibility() &&
+            getComputedStyle(element).visibility !== 'hidden',
+        )
         .map((element) => element.getBoundingClientRect())
         .filter((rect) => rect.width > 0 && rect.height > 0),
     [],
   );
   const sitesPanelRef = useRef<HTMLElement>(null);
   const floatingDetailRef = useRef<HTMLDivElement>(null);
+  const detailSheetControlsRef = useRef<StudyDetailSheetControls>(null);
   const detailPanelRef = useRef<HTMLElement>(null);
   const [detailHistory, setDetailHistory] = useState<DetailStep[]>([]);
   const detailRestoreRef = useRef<Omit<DetailStep, 'selection'> | null>(null);
@@ -712,6 +720,20 @@ function Study({
             ? (controls) => (
                 <StudyMapControls
                   {...controls}
+                  fitToView={() => {
+                    if (window.matchMedia('(max-width: 680px)').matches) {
+                      // Fit against the collapsed panel's committed bounds.
+                      flushSync(() =>
+                        detailSheetControlsRef.current?.collapse(),
+                      );
+                    }
+                    controls.fitToView();
+                  }}
+                  fitDescription={
+                    window.matchMedia('(max-width: 680px)').matches
+                      ? 'Sbalí detail a ukáže celou mapu. Polohy bublin a otevřené stránky zachová.'
+                      : undefined
+                  }
                   onRestoreLayout={() => {
                     setResetKey((previous) => previous + 1);
                     setExpanded([]);
@@ -724,6 +746,32 @@ function Study({
       />
     </div>
   );
+  const detailLabel =
+    selection?.type === 'site'
+      ? 'Detail webu'
+      : selection?.type === 'page'
+        ? 'Detail stránky'
+        : selection?.type === 'link'
+          ? 'Detail odkazu'
+          : 'Odkazy mezi weby';
+  const selectedLink =
+    selection?.type === 'link'
+      ? currentLinks.find((link) => link.id === selection.id)
+      : undefined;
+  const selectedConnection =
+    selection?.type === 'connection'
+      ? connections.find((connection) => connection.id === selection.id)
+      : undefined;
+  const detailTitle =
+    selection?.type === 'site'
+      ? (sites.find((site) => site.id === selection.id)?.domain ?? 'Web')
+      : selection?.type === 'page'
+        ? (pages.find((page) => page.id === selection.id)?.title ?? 'Stránka')
+        : selectedLink
+          ? `${selectedLink.source.path} → ${selectedLink.target.path}`
+          : selectedConnection
+            ? `${selectedConnection.source.domain} → ${selectedConnection.target.domain}`
+            : 'Propojení';
   const detail = selection && (
     <Detail
       selection={selection}
@@ -1222,13 +1270,16 @@ function Study({
                 {externalToggle}
               </div>
               {view === 'map' && detail && (
-                <div
-                  data-map-obstacle
-                  className="ux-floating-detail"
-                  ref={floatingDetailRef}
+                <StudyDetailSheet
+                  containerRef={floatingDetailRef}
+                  controlsRef={detailSheetControlsRef}
+                  selectionKey={`${selection!.type}:${selection!.id}`}
+                  title={detailTitle}
+                  label={detailLabel}
+                  onClose={closeDetail}
                 >
                   {detail}
-                </div>
+                </StudyDetailSheet>
               )}
               {view !== 'map' && (
                 <section

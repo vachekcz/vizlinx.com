@@ -251,7 +251,7 @@ test('starts a new detail path when changing sites or closing the panel', async 
   await expect(
     detail.getByRole('button', { name: 'Zpět na journal.example' }),
   ).toBeVisible();
-  await detail.getByRole('button', { name: 'Zavřít detail' }).click();
+  await page.getByRole('button', { name: 'Zavřít detail' }).click();
   await expect(detail).toHaveCount(0);
   await expect(page.locator('.ux-scan-row.is-selected')).toHaveCount(0);
   await openSites();

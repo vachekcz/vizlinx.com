@@ -128,15 +128,32 @@ test('preserves a manually panned camera through hover, selection and changed pa
   await expect(detail).toBeVisible();
   await settleLayout(page);
   await expect(camera).toHaveAttribute('transform', manualCamera);
-  await page.locator('.ux-floating-detail').evaluate((element) => {
-    element.style.height = '220px';
-  });
+  if (testInfo.project.name === 'mobile') {
+    await page
+      .getByRole('button', { name: 'Roztáhnout detail', exact: true })
+      .click();
+  } else {
+    await page.locator('.ux-floating-detail').evaluate((element) => {
+      element.style.height = '220px';
+    });
+  }
   await settleLayout(page);
   await expect(camera).toHaveAttribute('transform', manualCamera);
   await page
     .getByRole('button', { name: 'Zobrazit celou mapu', exact: true })
     .click();
+  if (testInfo.project.name === 'mobile') {
+    await expect(page.locator('.ux-floating-detail')).toHaveAttribute(
+      'data-sheet-position',
+      'collapsed',
+    );
+  }
   await expectSafeFraming(page);
+  if (testInfo.project.name === 'mobile') {
+    await page
+      .getByRole('button', { name: 'Otevřít detail', exact: true })
+      .click();
+  }
   await expect(
     detail.getByRole('heading', { name: 'atlas.example', exact: true }),
   ).toBeVisible();

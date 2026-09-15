@@ -68,8 +68,9 @@ export default function StudyMapControls({
   zoomIn,
   zoomOut,
   fitToView,
+  fitDescription = 'Ukáže celou mapu mimo panely. Zachová polohy bublin i otevřené stránky.',
   onRestoreLayout,
-}: GraphControls & { onRestoreLayout: () => void }) {
+}: GraphControls & { onRestoreLayout: () => void; fitDescription?: string }) {
   const [tooltip, setTooltip] = useState<string | null>(null);
   const tooltipProps = { tooltip, onTooltipChange: setTooltip };
   useEffect(() => {
@@ -110,7 +111,7 @@ export default function StudyMapControls({
       <ControlButton
         {...tooltipProps}
         label="Zobrazit celou mapu"
-        description="Ukáže celou mapu mimo panely. Zachová polohy bublin i otevřené stránky."
+        description={fitDescription}
         onClick={fitToView}
       >
         <Expand size={16} />

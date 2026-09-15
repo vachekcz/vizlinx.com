@@ -76,13 +76,3 @@
     height: 40px;
   }
 }
-@media (max-width: 760px) {
-  .ux-immersive .ux-floating-detail {
-    bottom: 210px;
-  }
-}
-@media (max-width: 360px) {
-  .ux-immersive .ux-floating-detail {
-    bottom: 215px;
-  }
-}
