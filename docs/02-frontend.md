@@ -98,6 +98,10 @@ Přesnou identitu URL určuje sdílený URL kontrakt. Serverem potvrzené aliasy
 
 Povolené přesměrování, jehož cílový řetězec je úspěšný nebo dosud čeká na výsledek, nezvyšuje počet neúspěšných/vynechaných stránek ani seznam neúplných výsledků. Log nadále ukazuje původní URL, cílovou URL a HTTP stav každého uloženého kroku, včetně `robots.txt`. Rozlišuje nepovolený externí cíl, neplatnou adresu, zacyklení a limit přesměrování. Stejné zobrazení platí pro archivní běhy; staré události `external` si zachovávají význam „nenásledováno“.
 
+### Rozlišení chyb robots.txt
+
+Log, podrobnosti a inspektor odlišují `robots_denied` (zákaz načteným pravidlem) od `robots_unavailable` (načtení pravidel selhalo, skenování zastaveno). `robots_unavailable` se počítá do chybového odznaku. Starší archivní záznamy se nepřeklasifikují.
+
 ---
 
 ## Styling a theming

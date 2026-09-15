@@ -1686,6 +1686,90 @@ test('redirected robots uses individual paced requests, keeps its original polic
   assert.equal(robotsEvents[1].status, 'ok');
 });
 
+test('www redirects like aitom.cz scan public pages while retaining robots path restrictions', async () => {
+  const source = 'https://aitom.cz';
+  const canonical = 'https://www.aitom.cz';
+  const robots =
+    'User-agent: *\nDisallow: /core/wp-admin/\nAllow: /core/wp-admin/admin-ajax.php\nDisallow: /app/uploads/wpo/wpo-plugins-tables-list.json\nDisallow: /?s=\nDisallow: /page/*/?s=\nDisallow: /search/\nDisallow: /*filterTax=\nDisallow: /*filterTerm\n\nUser-agent: User-Agent\nDisallow: /Amazonbot\n';
+  respond = (request) => {
+    const url = new URL(request.url);
+    if (url.origin === source)
+      return new Response(null, {
+        status: 301,
+        headers: { Location: `${canonical}${url.pathname}` },
+      });
+    if (url.pathname === '/robots.txt') return new Response(robots);
+    return html(
+      url.pathname === '/' ? ['/sluzby/', '/search/', '/core/wp-admin/'] : [],
+    );
+  };
+  const id = await create([{ ...site, origin: source, seedUrl: `${source}/` }]);
+  await start(id);
+  await drain();
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [
+      `${source}/robots.txt`,
+      `${canonical}/robots.txt`,
+      `${source}/`,
+      `${canonical}/robots.txt`,
+      `${canonical}/`,
+      `${canonical}/sluzby/`,
+    ],
+  );
+  const results = await pages(id);
+  for (const path of ['/', '/sluzby/']) {
+    const result = results.find(
+      (page) => page.sourceUrl === `${canonical}${path}`,
+    );
+    assert.equal(result.status, 'ok');
+    assert.equal(result.siteOrigin, source);
+  }
+  for (const path of ['/search/', '/core/wp-admin/'])
+    assert.equal(
+      results.find((page) => page.sourceUrl === `${canonical}${path}`).status,
+      'robots_denied',
+    );
+  assert.equal((await scan(id)).status, 'completed');
+  assert.ok(
+    (await events(id))
+      .filter((event) => event.type === 'robots_checked')
+      .every((event) => event.level === 'info'),
+  );
+});
+
+test('robots HTTP failures stop pages without claiming a Disallow rule and remain cached on resume', async () => {
+  for (const status of [403, 429, 503]) {
+    const before = requests.length;
+    respond = () => new Response('Unavailable', { status });
+    const id = await create();
+    await start(id);
+    await drain();
+    assert.equal(requests.length - before, 1);
+    const [result] = await pages(id);
+    assert.equal(result.status, 'robots_unavailable');
+    assert.equal(
+      result.httpStatus,
+      null,
+      'The page itself was never requested',
+    );
+    assert.match(result.error, /could not be loaded/);
+    assert.equal(
+      (await events(id)).find((event) => event.type === 'page_finished').level,
+      'error',
+    );
+    const entry = (await events(id)).find(
+      (event) => event.type === 'robots_checked',
+    );
+    assert.equal(entry.status, 'robots_unavailable');
+    assert.equal(entry.httpStatus, status);
+    assert.equal(entry.level, 'error');
+    await start(id);
+    await drain();
+    assert.equal(requests.length - before, 1);
+  }
+});
+
 test('robots redirect loops, overlong chains and unrelated domains fail closed with an explicit log', async () => {
   for (const scenario of ['loop', 'limit', 'external']) {
     const before = requests.length;
@@ -1711,11 +1795,12 @@ test('robots redirect loops, overlong chains and unrelated domains fail closed w
     await start(id);
     await drain();
     assert.equal(requests.length - before, scenario === 'limit' ? 6 : 1);
-    assert.equal((await pages(id))[0].status, 'robots_denied');
+    assert.equal((await pages(id))[0].status, 'robots_unavailable');
     const entry = (await events(id))
       .filter((event) => event.type === 'robots_checked')
       .at(-1);
-    assert.equal(entry.level, 'warning');
+    assert.equal(entry.level, 'error');
+    assert.equal(entry.status, 'robots_unavailable');
     assert.equal(entry.httpStatus, 307);
     assert.equal(
       entry.redirect.kind,

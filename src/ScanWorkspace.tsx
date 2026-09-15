@@ -750,6 +750,8 @@ export default function ScanWorkspace() {
                           redirect_unresolved:
                             'přesměrování vyžaduje zadat cílovou URL',
                           robots_denied: 'zakázáno robots.txt',
+                          robots_unavailable:
+                            'robots.txt se nepodařilo načíst – skenování zastaveno',
                           not_html: 'není HTML',
                           too_large: 'stránka je příliš velká',
                           ok: 'načteno',

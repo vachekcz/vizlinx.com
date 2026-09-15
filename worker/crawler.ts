@@ -730,7 +730,9 @@ async function storeResult(
         at: new Date().toISOString(),
         type: 'page_finished',
         ...(preview ? { crawlMode: 'preview' as const } : {}),
-        level: ['http_error', 'network_error'].includes(result.status)
+        level: ['http_error', 'network_error', 'robots_unavailable'].includes(
+          result.status,
+        )
           ? 'error'
           : result.status === 'ok' || isFollowableRedirect(result.redirect)
             ? 'info'
@@ -1116,13 +1118,13 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
           at: new Date().toISOString(),
           type: 'robots_checked',
           ...(preview ? { crawlMode: 'preview' as const } : {}),
-          level: policy.denied && !continuing ? 'warning' : 'info',
+          level: policy.denied && !continuing ? 'error' : 'info',
           origin: site.origin,
           url: robotsUrl,
           status: continuing
             ? 'redirect_unresolved'
             : policy.denied
-              ? 'robots_denied'
+              ? 'robots_unavailable'
               : 'ok',
           ...(policy.httpStatus !== undefined
             ? { httpStatus: policy.httpStatus }
@@ -1189,8 +1191,10 @@ async function tick(env: Env, message: Message<CrawlMessage>): Promise<void> {
     ? await fetchServerPage(candidate.url, networkOrigin)
     : emptyResult(
         candidate.url,
-        'robots_denied',
-        'Crawling is not allowed by the site robots policy.',
+        policy.denied ? 'robots_unavailable' : 'robots_denied',
+        policy.denied
+          ? 'Crawling stopped because the site robots policy could not be loaded.'
+          : 'Crawling is not allowed by the site robots policy.',
       );
   await storeResult(env, lease, result, scanSites, candidate, frontier);
   await checkpoint(env, lease);

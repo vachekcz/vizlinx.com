@@ -418,6 +418,50 @@ describe('scan history', () => {
     );
   });
 
+  test('rescan preserves robots loading failures in history and reads recovered rules in the new run', async () => {
+    fixtureResponse = () => new Response('Unavailable', { status: 503 });
+    const cookie = await visitor();
+    const scan = await create(cookie);
+    const started = await request(`/scans/${scan.id}/start`, {
+      method: 'POST',
+      cookie,
+      body: { runId: scan.runId },
+    });
+    assert.equal(started.status, 200);
+    await drainCrawls();
+    const original = await snapshot(cookie, scan.id);
+    assert.equal(original.results[0].status, 'robots_unavailable');
+    const originalLog = await (
+      await request(`/scans/${scan.id}/log`, { cookie })
+    ).json();
+    const robotsEvent = originalLog.events.find(
+      (entry) => entry.type === 'robots_checked',
+    );
+    assert.equal(robotsEvent.status, 'robots_unavailable');
+    assert.equal(robotsEvent.httpStatus, 503);
+    fixtureResponse = (request) =>
+      new URL(request.url).pathname === '/robots.txt'
+        ? new Response('User-agent: *\nAllow: /')
+        : new Response('<title>Recovered</title>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+    await restart(cookie, original);
+    await drainCrawls();
+    assert.equal((await snapshot(cookie, scan.id)).results[0].status, 'ok');
+    assert.deepEqual(
+      (await snapshot(cookie, scan.id, original.runId)).results,
+      original.results,
+    );
+    assert.deepEqual(
+      await (
+        await request(`/scans/${scan.id}/runs/${original.runId}/log`, {
+          cookie,
+        })
+      ).json(),
+      originalLog,
+    );
+  });
+
   test('API promotion reuses landing evidence, expands saved links and archives preview metadata on a fresh rescan', async () => {
     const second = {
       ...site,

@@ -18,6 +18,7 @@ import {
 export const ROBOT_AGENT = 'VizlinxBot';
 export type StoredRobots = {
   body: string;
+  // Fail-closed loading state, not a parsed Disallow rule.
   denied: boolean;
   delayMs: number;
   httpStatus?: number;

@@ -73,6 +73,8 @@ export function pageStatusLabel(page: Page) {
       return 'HTTP přesměrování';
     case 'robots_denied':
       return 'Zakázáno robots.txt';
+    case 'robots_unavailable':
+      return 'Robots.txt se nepodařilo načíst – skenování zastaveno';
     case 'not_html':
       return 'Obsah není HTML';
     case 'too_large':

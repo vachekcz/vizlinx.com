@@ -108,6 +108,7 @@ export function pageResult(value: unknown, scope: ScanSite[]): PageResult {
       'network_error',
       'redirect_unresolved',
       'robots_denied',
+      'robots_unavailable',
       'not_html',
       'too_large',
     ].includes(status)

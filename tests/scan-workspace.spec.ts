@@ -1440,6 +1440,114 @@ for (const archived of [false, true]) {
   });
 }
 
+for (const status of ['robots_unavailable', 'robots_denied'] as const) {
+  test(`distinguishes ${status} from a successful robots check and preserves it after reload`, async ({
+    page,
+  }) => {
+    const id = '00000000-0000-4000-8000-000000000096';
+    const result: PageResult = {
+      ...savedResult,
+      status,
+      httpStatus: null,
+      links: [],
+    };
+    const unavailable = status === 'robots_unavailable';
+    const failureLabel =
+      'Robots.txt se nepodařilo načíst – skenování zastaveno';
+    await mockApi(page, [
+      snapshot(id, { status: 'completed', results: [result], pageCount: 1 }),
+    ]);
+    await page.route(`**${API_PREFIX}/scans/${id}/log`, (route) =>
+      route.fulfill({
+        json: {
+          truncated: false,
+          events: [
+            {
+              id: 1,
+              type: 'robots_checked',
+              at: result.observedAt,
+              level: 'info',
+              url: 'https://other.org/robots.txt',
+              status: 'ok',
+            },
+            {
+              id: 2,
+              type: 'robots_checked',
+              at: result.observedAt,
+              level: unavailable ? 'error' : 'warning',
+              url: `${site.origin}/robots.txt`,
+              status,
+            },
+            {
+              id: 3,
+              type: 'page_finished',
+              at: result.observedAt,
+              level: unavailable ? 'error' : 'warning',
+              url: result.sourceUrl,
+              status,
+            },
+            ...(unavailable
+              ? [
+                  {
+                    id: 4,
+                    type: 'robots_checked',
+                    at: result.observedAt,
+                    level: 'error',
+                    url: 'https://www.example.com/robots-loop',
+                    status,
+                    redirect: {
+                      kind: 'invalid',
+                      reason: 'redirect_loop',
+                      targetUrl: `${site.origin}/robots.txt`,
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+      }),
+    );
+    await page.goto(`/scan?id=${id}`);
+    await expect(page.getByTestId('scan-activity')).toContainText(
+      'Sken skončil bez načtených stránek',
+    );
+    await page
+      .getByText('Podrobnosti neúplných výsledků', { exact: true })
+      .click();
+    await expect(page.locator('.scan-issues')).toContainText(
+      unavailable ? failureLabel.toLowerCase() : 'zakázáno robots.txt',
+    );
+    const trigger = page.getByRole('button', { name: /^Průběh skenu/ });
+    if (unavailable) await expect(trigger).toContainText('1 chyba');
+    await trigger.click();
+    const panel = page.getByRole('dialog', { name: 'Průběh skenu' });
+    await expect(panel).toContainText('Zkontrolována pravidla robots.txt');
+    await expect(panel).toContainText(
+      unavailable ? failureLabel : 'Robots.txt nepovoluje skenování',
+    );
+    await expect(panel).toContainText(
+      unavailable ? failureLabel : 'Skenování zakázáno v robots.txt',
+    );
+    if (unavailable) {
+      await expect(panel).not.toContainText('nepovoluje skenování');
+      await expect(panel).not.toContainText('zakázáno');
+      await expect(panel).toContainText(
+        `${failureLabel} · Přesměrování se zacyklilo – zastaveno`,
+      );
+      await panel.getByLabel('Jen chyby').check();
+      await expect(panel).toContainText(failureLabel);
+      await expect(panel).not.toContainText(
+        'Zkontrolována pravidla robots.txt',
+      );
+    }
+    await page.reload();
+    await trigger.click();
+    await expect(page.getByRole('dialog')).toContainText(
+      unavailable ? failureLabel : 'Robots.txt nepovoluje skenování',
+    );
+  });
+}
+
 test('opens saved log, filters by origin and errors, restores focus and does not poll while closed', async ({
   page,
 }, testInfo) => {

@@ -86,6 +86,8 @@ npm run deploy:check            # build + wrangler deploy --dry-run, bez tokenu
 
 ---
 
+Regrese robots pokrývá přesměrování podle odpovědí aitom.cz na www, povolené veřejné stránky a zakázané cesty. Chyby HTTP i nedokončené řetězce mají `robots_unavailable`; historie zachová selhání a nový běh po obnovení dostupnosti načte pravidla znovu. Prohlížečová sada rozlišuje zákaz a chybu načtení v logu a podrobnostech výsledků.
+
 ## Konvence a testovací data
 
 - **Data si zakládá test sám** přes API nebo přímé `db.prepare` na Miniflare D1; žádné sdílené fixtures ani seedy. Miniflare instance je per soubor (`before` / `after`), stav mezi testy se čistí v `afterEach`.

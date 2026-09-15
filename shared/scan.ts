@@ -29,6 +29,7 @@ export type PageStatus =
   | 'network_error'
   | 'redirect_unresolved'
   | 'robots_denied'
+  | 'robots_unavailable'
   | 'not_html'
   | 'too_large';
 export type FoundLink = {

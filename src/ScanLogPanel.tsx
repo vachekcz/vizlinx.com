@@ -22,6 +22,7 @@ const pageLabels: Record<PageStatus, string> = {
   network_error: 'Stránku se nepodařilo načíst',
   redirect_unresolved: 'Přesměrování – zadej cílovou URL',
   robots_denied: 'Skenování zakázáno v robots.txt',
+  robots_unavailable: 'Robots.txt se nepodařilo načíst – skenování zastaveno',
   not_html: 'Vynecháno – není HTML',
   too_large: 'Stránka překročila limit velikosti',
 };
@@ -60,6 +61,10 @@ function eventLabel(event: ScanLogEvent) {
     case 'settings_changed':
       return 'Změněno nastavení skenu';
     case 'robots_checked':
+      if (event.status === 'robots_unavailable')
+        return event.redirect
+          ? `${pageLabels.robots_unavailable} · ${redirectLabel(event.redirect)}`
+          : pageLabels.robots_unavailable;
       if (event.redirect)
         return `Robots.txt · ${redirectLabel(event.redirect)}`;
       return event.status === 'robots_denied'
@@ -460,7 +465,9 @@ export default function ScanLogPanel({
   const [logErrors, setLogErrors] = useState(0);
   const resultErrors = scan.results.filter(
     (result) =>
-      result.status === 'http_error' || result.status === 'network_error',
+      result.status === 'http_error' ||
+      result.status === 'network_error' ||
+      result.status === 'robots_unavailable',
   ).length;
   const errors = Math.max(resultErrors, logErrors);
   return (
