@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { FormEvent, HTMLAttributes, ReactNode, Ref } from 'react';
 import {
   Activity,
@@ -318,6 +324,19 @@ function Study({
   const [sitesOpen, setSitesOpen] = useState(false);
   const [siteQuery, setSiteQuery] = useState('');
   const [addingSite, setAddingSite] = useState(false);
+  const workspaceRef = useRef<HTMLElement>(null);
+  const getFitObstacles = useCallback(
+    () =>
+      Array.from(
+        workspaceRef.current?.querySelectorAll<HTMLElement>(
+          '[data-map-obstacle]',
+        ) ?? [],
+      )
+        .filter((element) => element.checkVisibility())
+        .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0),
+    [],
+  );
   const sitesPanelRef = useRef<HTMLElement>(null);
   const floatingDetailRef = useRef<HTMLDivElement>(null);
   const detailPanelRef = useRef<HTMLElement>(null);
@@ -612,6 +631,7 @@ function Study({
   );
   const status = (
     <span
+      data-map-obstacle={variant === 2 ? true : undefined}
       className={`ux-status ${state === 'running' && !archived ? 'is-running' : ''}`}
     >
       {state === 'completed' || archived ? (
@@ -684,6 +704,7 @@ function Study({
         running={state === 'running' && !archived}
         resetKey={resetKey}
         connectionStyle="silk"
+        getFitObstacles={variant === 2 ? getFitObstacles : undefined}
         highlight={view === 'map' ? graphHighlight : undefined}
         previewEvents={variant === 2 ? hoverStudy.previewEvents : undefined}
         renderControls={
@@ -1165,11 +1186,12 @@ function Study({
 
           {variant === 2 && (
             <main
+              ref={workspaceRef}
               className={`ux-immersive ${view !== 'map' ? 'has-sheet' : ''} ${selection ? 'has-selection' : ''}`}
             >
               <div className="ux-immersive-canvas">{graph}</div>
               <div className="ux-floating-heading">
-                <div>
+                <div data-map-obstacle>
                   <h1>Studio Atlas</h1>
                   <span>
                     {connections.length} propojení. Jeden společný příběh.
@@ -1179,6 +1201,7 @@ function Study({
               </div>
               <aside
                 ref={sitesPanelRef}
+                data-map-obstacle
                 className={`ux-floating-sites ${sitesOpen ? 'is-open' : ''}`}
               >
                 <button
@@ -1195,9 +1218,15 @@ function Study({
                 </button>
                 {siteList}
               </aside>
-              <div className="ux-floating-options">{externalToggle}</div>
+              <div data-map-obstacle className="ux-floating-options">
+                {externalToggle}
+              </div>
               {view === 'map' && detail && (
-                <div className="ux-floating-detail" ref={floatingDetailRef}>
+                <div
+                  data-map-obstacle
+                  className="ux-floating-detail"
+                  ref={floatingDetailRef}
+                >
                   {detail}
                 </div>
               )}
@@ -1249,11 +1278,11 @@ function Study({
                 </section>
               )}
               {archived && (
-                <div className="ux-floating-archive">
+                <div data-map-obstacle className="ux-floating-archive">
                   <ArchiveNotice onReturn={() => setArchivedRun(null)} />
                 </div>
               )}
-              <div className="ux-map-dock">
+              <div data-map-obstacle className="ux-map-dock">
                 {navigation}
                 <span className="ux-dock-divider" />
                 <div className="ux-dock-scan">
@@ -1286,20 +1315,20 @@ function Study({
                     </button>
                     {primaryAction}
                   </div>
-                  <div className="ux-dock-scan-summary">
+                  <div data-map-obstacle className="ux-dock-scan-summary">
                     <span>Načteno {loadedPageIds.size}</span>
                     <span>·</span>
                     <span>Neúspěšné / vynechané: {scanIssues.length}</span>
                   </div>
                 </div>
               </div>
-              <details className="ux-canvas-note">
+              <details data-map-obstacle className="ux-canvas-note">
                 <summary>
                   <ShieldCheck size={12} />
                   Přístup k mapě je vázaný na tento prohlížeč.
                   <CircleHelp size={12} />
                 </summary>
-                <p>
+                <p data-map-obstacle>
                   Výsledky se ukládají na serveru na 30 dní od založení mapy.
                   Smazáním dat prohlížeče můžeš ztratit přístup.
                 </p>

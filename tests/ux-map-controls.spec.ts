@@ -21,6 +21,12 @@ async function domainGeometry(page: Page) {
   );
 }
 
+async function waitForInitialFraming(page: Page) {
+  await expect(
+    page.getByLabel('Interaktivní mapa odkazů mezi weby'),
+  ).toHaveAttribute('data-framing-ready', 'true');
+}
+
 async function panMap(page: Page) {
   const graph = page.getByLabel('Interaktivní mapa odkazů mezi weby');
   await graph.scrollIntoViewIfNeeded();
@@ -59,6 +65,7 @@ test('fits the current drawing without losing moved domains, expanded pages or t
 }) => {
   await page.goto('/ux/2');
   await page.evaluate(() => document.fonts.ready);
+  await waitForInitialFraming(page);
   const initial = await domainGeometry(page);
   const atlas = page.getByRole('button', {
     name: 'Doména atlas.example',
@@ -104,25 +111,43 @@ test('fits the current drawing without losing moved domains, expanded pages or t
   const frame = (await page
     .getByLabel('Interaktivní mapa odkazů mezi weby')
     .boundingBox())!;
-  const drawing = (await camera.boundingBox())!;
-  expect(
-    Math.abs(drawing.x + drawing.width / 2 - (frame.x + frame.width / 2)),
-    'The full drawing should be horizontally centered in the SVG frame',
-  ).toBeLessThanOrEqual(1);
-  expect(
-    Math.abs(drawing.y + drawing.height / 2 - (frame.y + frame.height / 2)),
-    'The full drawing should be vertically centered in the SVG frame',
-  ).toBeLessThanOrEqual(1);
+  const obstacles = await page
+    .locator('[data-map-obstacle]')
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => {
+          const style = getComputedStyle(element);
+          return (
+            element.checkVisibility() &&
+            style.display !== 'none' &&
+            style.visibility !== 'hidden'
+          );
+        })
+        .map((element) => {
+          const { x, y, width, height } = element.getBoundingClientRect();
+          return { x, y, width, height };
+        })
+        .filter(({ width, height }) => width > 0 && height > 0),
+    );
   for (const node of await page.locator('.site-node').all()) {
     const bounds = (await node.boundingBox())!;
-    expect(bounds.x).toBeGreaterThanOrEqual(frame.x - 1);
-    expect(bounds.y).toBeGreaterThanOrEqual(frame.y - 1);
+    expect(bounds.x).toBeGreaterThanOrEqual(frame.x + 30.5);
+    expect(bounds.y).toBeGreaterThanOrEqual(frame.y + 30.5);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(
-      frame.x + frame.width + 1,
+      frame.x + frame.width - 30.5,
     );
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(
-      frame.y + frame.height + 1,
+      frame.y + frame.height - 30.5,
     );
+    for (const obstacle of obstacles) {
+      const clearance = Math.max(
+        obstacle.x - (bounds.x + bounds.width),
+        bounds.x - (obstacle.x + obstacle.width),
+        obstacle.y - (bounds.y + bounds.height),
+        bounds.y - (obstacle.y + obstacle.height),
+      );
+      expect(clearance).toBeGreaterThanOrEqual(22.5);
+    }
   }
   const detail = page.getByRole('complementary', { name: 'Detail výběru' });
   await expect(
@@ -144,7 +169,9 @@ test('restores the default layout, collapses pages and clears the detail selecti
 }) => {
   await page.goto('/ux/2');
   await page.evaluate(() => document.fonts.ready);
+  await waitForInitialFraming(page);
   const initial = await domainGeometry(page);
+  const initialZoom = await page.getByLabel('Přiblížení mapy').textContent();
   const atlas = page.getByRole('button', {
     name: 'Doména atlas.example',
     exact: true,
@@ -158,7 +185,8 @@ test('restores the default layout, collapses pages and clears the detail selecti
   await page
     .getByRole('button', { name: 'Obnovit rozložení', exact: true })
     .click();
-  await expect(page.getByLabel('Přiblížení mapy')).toHaveText('100 %');
+  await waitForInitialFraming(page);
+  await expect(page.getByLabel('Přiblížení mapy')).toHaveText(initialZoom!);
   await expect(page.getByRole('button', { name: /^Stránka / })).toHaveCount(0);
   await expect(
     page.getByRole('complementary', { name: 'Detail výběru' }),
@@ -178,6 +206,7 @@ test('offers one accessible set of controls with persistent zoom, wheel and pan 
   }
   await page.goto('/ux/2');
   await page.evaluate(() => document.fonts.ready);
+  await waitForInitialFraming(page);
   const controls = page.locator('.ux-map-controls');
   await expect(controls).toHaveCount(1);
   await expect(
@@ -205,21 +234,24 @@ test('offers one accessible set of controls with persistent zoom, wheel and pan 
   }
   const geometry = await domainGeometry(page);
   const zoom = controls.getByLabel('Přiblížení mapy');
-  await expect(zoom).toHaveText('100 %');
+  const initialZoom = (await zoom.textContent())!;
+  const initialZoomValue = Number.parseFloat(initialZoom);
   await controls
     .getByRole('button', { name: 'Přiblížit mapu', exact: true })
     .click();
-  await expect(zoom).toHaveText('120 %');
+  await expect
+    .poll(async () => Number.parseFloat((await zoom.textContent())!))
+    .toBeGreaterThan(initialZoomValue);
   await controls
     .getByRole('button', { name: 'Oddálit mapu', exact: true })
     .click();
-  await expect(zoom).toHaveText('100 %');
+  await expect(zoom).toHaveText(initialZoom);
   const graphBox = (await page
     .getByLabel('Interaktivní mapa odkazů mezi weby')
     .boundingBox())!;
   await page.mouse.move(graphBox.x + 8, graphBox.y + 8);
   await page.mouse.wheel(0, -180);
-  await expect(zoom).not.toHaveText('100 %');
+  await expect(zoom).not.toHaveText(initialZoom);
   const zoomAfterWheel = await zoom.textContent();
   await panMap(page);
   await expect(zoom).toHaveText(zoomAfterWheel!);

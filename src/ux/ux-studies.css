@@ -1371,11 +1371,8 @@
 }
 .ux-immersive-canvas {
   position: absolute;
-  inset: 95px 27px 91px 260px;
+  inset: 0;
   display: flex;
-}
-.ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
-  left: 590px;
 }
 .ux-immersive .graph-area {
   background: transparent;
@@ -1384,21 +1381,25 @@
   display: none;
 }
 .ux-immersive .map-bottom {
-  bottom: 2px;
-  right: 7px;
+  bottom: 93px;
+  right: 34px;
 }
-.ux-immersive .graph {
-  inset: 8px 0 42px;
-  height: calc(100% - 50px);
+.ux .ux-immersive .graph {
+  inset: 0;
+  height: 100%;
   width: 100%;
 }
 .ux-floating-heading {
+  pointer-events: none;
   position: absolute;
   inset: 30px 32px auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
+}
+.ux-floating-heading > * {
+  pointer-events: auto;
 }
 .ux-floating-heading h1 {
   font-size: 25px;
@@ -2564,18 +2565,12 @@
   .ux-report-bottom > p {
     max-width: 250px;
   }
-  .ux-immersive-canvas {
-    left: 215px;
-  }
   .ux-immersive {
     --ux-sites-width: 193px;
     --ux-sites-left: 17px;
   }
   .ux-floating-sites .ux-site-dot {
     display: none;
-  }
-  .ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
-    left: 215px;
   }
   .ux-concepts {
     gap: 12px;
@@ -2893,16 +2888,12 @@
   .ux-floating-options .ux-switch {
     font-size: 9px;
   }
-  .ux-immersive-canvas,
-  .ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
-    inset: 160px 0 150px;
-  }
   .ux-immersive .ux-canvas,
   .ux-immersive .graph-area {
     min-height: 380px;
   }
   .ux-immersive .map-bottom {
-    bottom: 0;
+    bottom: 150px;
     right: 16px;
   }
   .ux-map-dock {
@@ -3256,8 +3247,7 @@
   .ux-map-dock > .ux-primary {
     justify-self: end;
   }
-  .ux-immersive-canvas,
-  .ux-immersive.has-selection:not(.has-sheet) .ux-immersive-canvas {
+  .ux-immersive .map-bottom {
     bottom: 155px;
   }
   .ux-immersive .ux-canvas,

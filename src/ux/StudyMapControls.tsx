@@ -82,6 +82,7 @@ export default function StudyMapControls({
   }, [tooltip]);
   return (
     <div
+      data-map-obstacle
       className="map-controls ux-map-controls"
       role="group"
       aria-label="Ovládání mapy"
@@ -109,7 +110,7 @@ export default function StudyMapControls({
       <ControlButton
         {...tooltipProps}
         label="Zobrazit celou mapu"
-        description="Vycentruje mapu. Zachová rozmístění bublin i otevřené stránky."
+        description="Ukáže celou mapu mimo panely. Zachová polohy bublin i otevřené stránky."
         onClick={fitToView}
       >
         <Expand size={16} />

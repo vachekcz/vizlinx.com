@@ -23,6 +23,7 @@ import {
   isFineConnectionStyle,
 } from './connectionStyles';
 import type { ConnectionStyleId } from './connectionStyles';
+import { fitAroundObstacles } from './graph-framing';
 
 export type GraphHighlightTarget = Extract<
   Selection,
@@ -59,6 +60,7 @@ type Props = {
   highlight?: GraphHighlight;
   previewEvents?: (target: GraphHighlightTarget) => DOMAttributes<Element>;
   renderControls?: (controls: GraphControls) => ReactNode;
+  getFitObstacles?: () => DOMRect[];
 };
 
 type Point = { x: number; y: number };
@@ -369,6 +371,7 @@ export default function Graph({
   highlight,
   previewEvents,
   renderControls,
+  getFitObstacles,
 }: Props) {
   const {
     pages: allPages,
@@ -441,6 +444,8 @@ export default function Graph({
   const cameraRef = useRef<SVGGElement>(null);
   const [compact, setCompact] = useState(() => window.innerWidth <= 760);
   const [camera, setCamera] = useState({ x: 0, y: 0, zoom: 1 });
+  const [framedKey, setFramedKey] = useState<number | null>(null);
+  const minimumZoom = getFitObstacles ? 0.1 : 0.6;
   const [dragFrame, setDragFrame] = useState<string | null>(null);
   const dragging = dragFrame !== null;
   const [siteBounds, setSiteBounds] = useState<Record<string, SiteBounds>>({});
@@ -720,8 +725,8 @@ export default function Graph({
   }, []);
 
   useEffect(() => {
-    setCamera({ x: 0, y: 0, zoom: 1 });
-  }, [resetKey, compact]);
+    if (!getFitObstacles) setCamera({ x: 0, y: 0, zoom: 1 });
+  }, [resetKey, compact, getFitObstacles]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -736,7 +741,10 @@ export default function Graph({
       setCamera((previous) => {
         const zoom = Math.min(
           2.8,
-          Math.max(0.6, previous.zoom * Math.exp(-event.deltaY * 0.002)),
+          Math.max(
+            Math.min(minimumZoom, previous.zoom),
+            previous.zoom * Math.exp(-event.deltaY * 0.002),
+          ),
         );
         const ratio = zoom / previous.zoom;
         return {
@@ -748,12 +756,15 @@ export default function Graph({
     };
     svg.addEventListener('wheel', onWheel, { passive: false });
     return () => svg.removeEventListener('wheel', onWheel);
-  }, [centerX, centerY]);
+  }, [centerX, centerY, minimumZoom]);
 
   const zoomBy = (factor: number) =>
     setCamera((previous) => ({
       ...previous,
-      zoom: Math.min(2.8, Math.max(0.6, previous.zoom * factor)),
+      zoom: Math.min(
+        2.8,
+        Math.max(Math.min(minimumZoom, previous.zoom), previous.zoom * factor),
+      ),
     }));
   const reset = () => {
     previousLayout.current = null;
@@ -776,6 +787,64 @@ export default function Graph({
       frame.height <= 32
     )
       return;
+    if (getFitObstacles) {
+      const scale = Math.hypot(matrix.a, matrix.b);
+      const toRect = (box: DOMRect) => ({
+        left: box.x * scale,
+        top: box.y * scale,
+        right: (box.x + box.width) * scale,
+        bottom: (box.y + box.height) * scale,
+      });
+      const nodes = Array.from(
+        scene.querySelectorAll<SVGGElement>('.site-node'),
+      ).map((node) => {
+        const box = toRect(node.getBBox());
+        const id = node
+          .querySelector('[data-drag-site]')
+          ?.getAttribute('data-drag-site');
+        const site = sites.find((item) => item.id === id);
+        if (!site) return box;
+        const extent = boundsFor(site);
+        return {
+          left: Math.min(box.left, (site.x + extent.left) * scale),
+          top: Math.min(box.top, (site.y + extent.top) * scale),
+          right: Math.max(box.right, (site.x + extent.right) * scale),
+          bottom: Math.max(box.bottom, (site.y + extent.bottom) * scale),
+        };
+      });
+      const drawing = toRect(bounds);
+      const placement = fitAroundObstacles(
+        {
+          left: Math.min(drawing.left, ...nodes.map((node) => node.left)),
+          top: Math.min(drawing.top, ...nodes.map((node) => node.top)),
+          right: Math.max(drawing.right, ...nodes.map((node) => node.right)),
+          bottom: Math.max(drawing.bottom, ...nodes.map((node) => node.bottom)),
+        },
+        nodes,
+        {
+          left: frame.left + 32,
+          top: frame.top + 32,
+          right: frame.right - 32,
+          bottom: frame.bottom - 32,
+        },
+        getFitObstacles().map((rect) => ({
+          left: rect.left - 24,
+          top: rect.top - 24,
+          right: rect.right + 24,
+          bottom: rect.bottom + 24,
+        })),
+      );
+      if (!placement) return;
+      const origin = new DOMPoint(placement.x, placement.y).matrixTransform(
+        matrix.inverse(),
+      );
+      setCamera({
+        zoom: placement.zoom,
+        x: origin.x - centerX * (1 - placement.zoom),
+        y: origin.y - centerY * (1 - placement.zoom),
+      });
+      return;
+    }
     const zoom = Math.min(
       2.8,
       Math.max(
@@ -796,6 +865,22 @@ export default function Graph({
       y: target.y - centerY - (bounds.y + bounds.height / 2 - centerY) * zoom,
     });
   };
+  useLayoutEffect(() => {
+    if (
+      !getFitObstacles ||
+      framedKey === resetKey ||
+      !fontRevision ||
+      !sites.length
+    )
+      return;
+    // Wait for measured labels and collision layout to settle. Panel changes and
+    // manual navigation never request another automatic fit.
+    const frame = requestAnimationFrame(() => {
+      fitToView();
+      setFramedKey(resetKey);
+    });
+    return () => cancelAnimationFrame(frame);
+  });
   const pointFromEvent = (event: PointerEvent<SVGSVGElement>) => {
     const matrix = event.currentTarget.getScreenCTM();
     return matrix
@@ -878,6 +963,9 @@ export default function Graph({
       )}
       <svg
         ref={svgRef}
+        data-framing-ready={
+          getFitObstacles ? framedKey === resetKey : undefined
+        }
         className={`graph ${dragging ? 'is-dragging' : ''}`}
         data-highlight-style={highlight?.style}
         viewBox={dragFrame ?? `${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
@@ -1521,7 +1609,7 @@ export default function Graph({
           renderControls({
             zoom: camera.zoom,
             canZoomIn: camera.zoom < 2.8,
-            canZoomOut: camera.zoom > 0.6,
+            canZoomOut: camera.zoom > minimumZoom,
             zoomIn: () => zoomBy(1.2),
             zoomOut: () => zoomBy(1 / 1.2),
             fitToView,
