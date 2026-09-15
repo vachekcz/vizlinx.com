@@ -27,12 +27,13 @@
 - **Řešení / workaround:** v aplikaci žádný. Pomůže jen web, který má odkazy v HTML (SSR, prerender). Jeden origin má jeden seed, další URL nelze doplnit ručně.
 - **Stav:** hranice první verze; JS rendering by vyžadoval rozhodnutí správce a měření spotřeby.
 
-## robots.txt zavře celý web i při dočasné chybě
+## Nedostupný robots.txt zastaví web do nového běhu
 
-- **Symptom:** v logu `robots_checked` s varováním a všechny stránky originu `robots_denied` bez jediného požadavku na stránku, přestože web v prohlížeči funguje.
-- **Příčina:** `fetchServerRobots` (`worker/server-fetch.ts:50`) povoluje jen 2xx s čitelným tělem do 64 KiB a 404/410; 429, 5xx, redirect (i `http → https` nebo na `www`), timeout či nadlimitní tělo = *fail closed*. Politika se ukládá per běh do `crawl_robots`, do konce běhu se neopakuje.
-- **Řešení / workaround:** zadat origin ve tvaru, který robots.txt vrací bez redirectu (typicky `https://www.…`); po opravě na straně webu „Skenovat znovu“ — nový běh načte robots znovu. Antibot nebo CAPTCHA před robots.txt zablokuje web stejně.
-- **Stav:** záměrně konzervativní; změna by byla ve `fetchServerRobots`.
+- **Symptom:** v novém logu `robots_checked` s chybou `robots_unavailable` a stránky originu se stejným stavem bez požadavku na stránku. Skutečný zákaz načteným pravidlem má odlišný stav `robots_denied`.
+- **Příčina:** 429, 5xx, autentizační chyba, timeout nebo nadlimitní tělo robots = *fail closed*. Politika se ukládá per běh do `crawl_robots`, do konce běhu se neopakuje. Log zachovává dostupný HTTP stav. Antibot nebo CAPTCHA před robots může mít stejný výsledek.
+- **Přesměrování:** HTTP/HTTPS a www varianta se následují v samostatných krocích, maximálně pět přechodů. Smyčka, delší řetězec, neplatný cíl nebo jiná doména zastaví načítání; log obsahuje zdroj, cíl a důvod. Běžné `aitom.cz → www.aitom.cz` tedy sken samo nezablokuje.
+- **Řešení / workaround:** po obnovení dostupnosti „Skenovat znovu“ — nový běh načte pravidla znovu. Pouhé pokračování zachová uložený stav. Starší archivní záznamy mohou stále zobrazovat `robots_denied` i při chybě načtení; původní příčinu z nich nelze spolehlivě odvodit.
+- **Stav:** konzervativní chování při nedostupnosti; automatické opakování není implementované.
 
 ## HTTP 429 pozastaví origin, dokud ho vlastník nepovolí
 

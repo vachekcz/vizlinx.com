@@ -19,6 +19,7 @@ import ScanLogPanel, {
   redirectLabel,
 } from './ScanLogPanel';
 import { scanToDataset } from './scan-dataset';
+import { resolveScanResult } from './scan-results';
 import { useTheme } from './themes';
 import { API_PREFIX, normalizeScanUrl, SCAN_LIMITS } from '../shared/scan';
 import type {
@@ -457,6 +458,14 @@ export default function ScanWorkspace() {
   };
 
   if (scan && dataset) {
+    const resultsByUrl = new Map(
+      scan.results.map((result) => [result.sourceUrl, result]),
+    );
+    const incompleteResults = scan.results.filter((result) => {
+      if (result.truncated) return true;
+      const resolved = resolveScanResult(result, resultsByUrl);
+      return resolved !== undefined && resolved.status !== 'ok';
+    });
     const currentRun =
       runs.find((run) => !run.archived) ?? (!historical ? scan : null);
     const rescanIsPrimary =
@@ -558,7 +567,10 @@ export default function ScanWorkspace() {
           <span className="scan-stats">
             {scan.results.filter((result) => result.status === 'ok').length}{' '}
             načtených ·{' '}
-            {scan.results.filter((result) => result.status !== 'ok').length}{' '}
+            {
+              incompleteResults.filter((result) => result.status !== 'ok')
+                .length
+            }{' '}
             neúspěšných / vynechaných
           </span>
         </div>
@@ -720,42 +732,40 @@ export default function ScanWorkspace() {
             {notice}
           </p>
         )}
-        {scan.results.some(
-          (result) => result.status !== 'ok' || result.truncated,
-        ) && (
+        {incompleteResults.length > 0 && (
           <details className="scan-issues">
             <summary>Podrobnosti neúplných výsledků</summary>
             <ul>
-              {scan.results
-                .filter((result) => result.status !== 'ok' || result.truncated)
-                .map((result) => (
-                  <li key={result.sourceUrl}>
-                    <span>{result.sourceUrl}</span>{' '}
-                    <ExternalLink url={result.sourceUrl} /> —{' '}
-                    {result.redirect
-                      ? redirectLabel(result.redirect)
-                      : result.truncated
-                        ? 'výsledek zkrácen limitem'
-                        : {
-                            http_error: 'chyba HTTP',
-                            network_error: 'síťová chyba',
-                            redirect_unresolved:
-                              'přesměrování vyžaduje zadat cílovou URL',
-                            robots_denied: 'zakázáno robots.txt',
-                            not_html: 'není HTML',
-                            too_large: 'stránka je příliš velká',
-                            ok: 'načteno',
-                          }[result.status]}
-                    {result.httpStatus ? ` (${result.httpStatus})` : ''}
-                    {result.redirect?.targetUrl && (
-                      <span>
-                        {' '}
-                        → {result.redirect.targetUrl}{' '}
-                        <ExternalLink url={result.redirect.targetUrl} />
-                      </span>
-                    )}
-                  </li>
-                ))}
+              {incompleteResults.map((result) => (
+                <li key={result.sourceUrl}>
+                  <span>{result.sourceUrl}</span>{' '}
+                  <ExternalLink url={result.sourceUrl} /> —{' '}
+                  {result.redirect
+                    ? redirectLabel(result.redirect)
+                    : result.truncated
+                      ? 'výsledek zkrácen limitem'
+                      : {
+                          http_error: 'chyba HTTP',
+                          network_error: 'síťová chyba',
+                          redirect_unresolved:
+                            'přesměrování vyžaduje zadat cílovou URL',
+                          robots_denied: 'zakázáno robots.txt',
+                          robots_unavailable:
+                            'robots.txt se nepodařilo načíst – skenování zastaveno',
+                          not_html: 'není HTML',
+                          too_large: 'stránka je příliš velká',
+                          ok: 'načteno',
+                        }[result.status]}
+                  {result.httpStatus ? ` (${result.httpStatus})` : ''}
+                  {result.redirect?.targetUrl && (
+                    <span>
+                      {' '}
+                      → {result.redirect.targetUrl}{' '}
+                      <ExternalLink url={result.redirect.targetUrl} />
+                    </span>
+                  )}
+                </li>
+              ))}
             </ul>
           </details>
         )}
